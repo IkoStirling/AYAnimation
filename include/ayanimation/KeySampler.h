@@ -1,6 +1,6 @@
 #pragma once
 #include "Animation.h"
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 
 namespace ayt::anim
 {

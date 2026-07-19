@@ -1,7 +1,7 @@
 #pragma once
 #include "Animation.h"
 #include "Skeleton.h"
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include <vector>
 
 namespace ayt::anim

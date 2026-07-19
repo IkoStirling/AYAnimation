@@ -1,5 +1,5 @@
 #pragma once
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 #include <cstdint>
 #include <string>
 #include <unordered_map>

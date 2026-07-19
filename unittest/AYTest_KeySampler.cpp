@@ -5,7 +5,7 @@
 
 #include "AYAnimation.h"
 #include <AYTest.h>
-#include <AYMathTypes.h>
+#include <aymath/MathTypes.h>
 
 using namespace ayt::anim;
 

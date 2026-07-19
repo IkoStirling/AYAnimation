@@ -10,8 +10,8 @@
 
 #include "AYAnimation.h"
 #include <AYTest.h>
-#include <AYMathTypes.h>
-#include <AYMathUtils.h>
+#include <aymath/MathTypes.h>
+#include <aymath/MathUtils.h>
 
 using namespace ayt::anim;
 using namespace ayt::math;
