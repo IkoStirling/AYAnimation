@@ -4,10 +4,9 @@ project(AYAnimation)
 set(CMAKE_CXX_STANDARD 23)
 set(MODULE_NAME AYAnimation)
 
-# AN-01: Skeleton / Animation / AnimationPlayer / KeySampler — all in src/.
+# P0 (2026-07-26): Skeleton.cpp / Animation.cpp deleted — AnimationPlayer
+# now consumes ayt::resource::ISkeleton + ayt::resource::IAnimation directly.
 set(SRC_FILES
-    src/Skeleton.cpp
-    src/Animation.cpp
     src/AnimationPlayer.cpp
     src/KeySampler.cpp
 )
@@ -19,9 +18,10 @@ target_include_directories(${MODULE_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/ayanimation>
 )
 
-# AN-01 only needs Vec/Quat/Lerp/Slerp primitives. AYResource loader wiring is
-# deferred to the next PR to keep this static lib green from day one.
-target_link_libraries(${MODULE_NAME} PUBLIC AYMath)
+# P0 (2026-07-26): link AYResource so AnimationPlayer can read
+# IAnimation::getTrackTimes/Values, ISkeleton::getLocalPositions/Rotations/Scales,
+# and getInverseBindMatrices() directly.
+target_link_libraries(${MODULE_NAME} PUBLIC AYMath AYResource)
 
 enable_testing()
 add_subdirectory(unittest)
