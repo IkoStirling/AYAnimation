@@ -89,6 +89,11 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
     _anim = anim;
     _time = 0.0f;
     _paused = false;
+    // Phase 1.5: starting a new clip clears the per-frame notify queue
+    // and resets the prev-tick cursor so the first tick fires anything
+    // in [0, tick_dt).
+    _pendingNotifies.clear();
+    _prevTickTime = 0.0f;
 
     _tracks.clear();
     if (anim == nullptr) return;
@@ -166,6 +171,10 @@ void AnimationPlayer::stop()
 {
     _time   = 0.0f;
     _paused = false;
+    // Phase 1.5: reset the dispatch cursor so a later play() doesn't
+    // re-fire markers across [0, prevSavedTime) spuriously.
+    _prevTickTime = 0.0f;
+    _pendingNotifies.clear();
 }
 
 void AnimationPlayer::pause()  { _paused = true; }
@@ -180,23 +189,141 @@ void AnimationPlayer::setTime(float t)
             _time = t - std::floor(t / d) * d;   // wrap [0, d)
         }
     }
+    // Phase 1.5: setTime is a seek. No notify fires on the seek itself;
+    // mark prev = current so the next tick() fires anything in
+    // [current, current + dt).
+    _prevTickTime = _time;
+    _pendingNotifies.clear();
 }
 
 void AnimationPlayer::tick(float dt)
 {
+    // Phase 1.5: when paused or no clip, keep prev in sync with _time so
+    // the next un-paused tick won't fire markers across [prev, _time)
+    // for the time spent paused.
     if (_paused || _anim == nullptr) {
+        _prevTickTime = _time;
         return;
     }
+
+    const float prev = _time;
     _time += dt * _playRate;
     const float d = _anim->getDuration();
+    bool wrapped = false;
     if (d > 0.0f) {
         if (_loop) {
+            const float raw = _time;
             _time = _time - std::floor(_time / d) * d;   // wrap to [0, d)
+            // wrapped == true if the raw (un-wrapped) value lay outside
+            // [0, d) — i.e. we crossed at least one endpoint forward or
+            // backward. Capture BEFORE _time assignment comparison by
+            // checking `raw` vs [0, d).
+            wrapped = (raw >= d) || (raw < 0.0f);
         } else if (_time > d) {
             _time = d;
             _paused = true;   // clamp to end-of-clip when not looping
         }
     }
+
+    // Phase 1.5: dispatch any AnimNotifyMarker the new _time has crossed.
+    // Both the host sink and the queue get the same record list, in
+    // chronological order. Either path can be skipped (no sink → callback
+    // no-op; consumePendingNotifies() empty → bus emit skipped by
+    // AnimationSystem).
+    dispatchPendingNotifies(prev, _time, wrapped);
+    _prevTickTime = _time;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.5 — AnimNotify dispatch
+//
+// dispatchPendingNotifies scans the [prev, next) interval (or wrap-aware
+// [prev, d) ∪ [0, next) for looping clips crossing an endpoint) and emits
+// one record per marker whose `time` lies in that interval. Backward
+// seeking (`new < prev`) fires everything in [new, prev] in the same
+// order-on-arrival regardless of direction — callers needing strict
+// forward order across seeks should re-bind the clip.
+//
+// The implementation assumes markers are sorted ascending by time (the
+// Converter enforces this). Linear scan with early-exit is correct for
+// unsorted input up to one full iteration; for notify counts typical of
+// production clips (10–100), linear is cheaper than binary search.
+void AnimationPlayer::dispatchPendingNotifies(float prev,
+                                              float next,
+                                              bool  wrapped)
+{
+    if (_anim == nullptr) return;
+    const uint32_t n = _anim->getNotifyCount();
+    if (n == 0u) return;
+
+    // Dual-exit dispatch (Phase 1.5 decision): every crossed marker is
+    // both pushed to the per-frame _pendingNotifies queue (for AYEntity's
+    // AnimationSystem → EventBus bridge) AND forwarded to the optional
+    // host sink (for callers that prefer an inline callback). When no
+    // host sink is registered we still build the queue so consumePending
+    // Notifies() returns it.
+    const bool wantSink = static_cast<bool>(_animNotifySink);
+
+    auto fireOne = [&](uint32_t i) {
+        const char* nm = _anim->getNotifyName(i);
+        const float  tm = _anim->getNotifyTime(i);
+        const float  pl = _anim->getNotifyPayload(i);
+        if (wantSink) {
+            _animNotifySink(nm, tm, pl);
+        }
+        _pendingNotifies.push_back({nm, tm, pl});
+    };
+
+    // Three cases share the same sorted-iterator machinery:
+    //   (1) forward, no wrap       → scan [min(prev,next), max(prev,next)]
+    //                                 — covers [prev, next] when prev <= next,
+    //                                 and [next, prev] when next < prev
+    //                                 (negative dt or seek backward).
+    //   (2) forward+wrap (looping)  → scan [prev, d) ∪ [0, next]
+    //                                 where prev > next (the jump back IS the
+    //                                 wrap; the post-wrap time next is < prev).
+    //
+    // For (1) when next < prev, the semantics become "fire everything that
+    // crossed in the backward direction"; we use closed-[prev, next]
+    // behaviour because both seek and reverse-play cross markers in
+    // reverse-time order — the records delivered in arrival order match
+    // the order they would have fired under forward play.
+    const float dur = _anim->getDuration();
+    if (!wrapped) {
+        const float lo = std::min(prev, next);
+        const float hi = std::max(prev, next);
+        for (uint32_t i = 0; i < n; ++i) {
+            const float t = _anim->getNotifyTime(i);
+            if (t < lo) continue;
+            if (t > hi) break;          // sorted; nothing further to fire
+            fireOne(i);
+        }
+    } else {
+        // Forward loop wrap. Two contiguous sub-ranges:
+        //   A = [prev, dur)
+        //   B = [0, next]
+        // Both endpoints inclusive for `prev` (the start of the wrap) and
+        // exclusive for `next` (the new position is past the marker).
+        for (uint32_t i = 0; i < n; ++i) {
+            const float t = _anim->getNotifyTime(i);
+            const bool inA = (t >= prev) && (t <  dur);
+            const bool inB = (t >= 0.0f) && (t <= next);
+            if (inA || inB) fireOne(i);
+        }
+    }
+}
+
+const std::vector<AnimationPlayer::AnimNotifyRecord>&
+AnimationPlayer::consumePendingNotifies()
+{
+    // Strict contract: caller consumes by reference, then we eagerly clear
+    // so the next tick starts fresh. We use a static-thread-local return
+    // slot and swap-into-it to avoid invalidating iterators the caller
+    // holds during iteration. Cheap (one swap) and safe across frames.
+    static thread_local std::vector<AnimNotifyRecord> s_returnSlot;
+    s_returnSlot.clear();
+    s_returnSlot.swap(_pendingNotifies);   // move our data out; queue now empty
+    return s_returnSlot;
 }
 
 void AnimationPlayer::evaluate()

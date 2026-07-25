@@ -19,6 +19,11 @@
 #include <assetsImpl/AYSkeleton.h>
 #include <assetsImpl/AYAnimation.h>
 
+// Phase 1.5 — Anim Notify EventBus integration test (test #8) lives at the
+// bottom of this file and constructs an EventBus instance + subscribes to
+// AnimNotifyEvent; pull in the EventBus header here so the source builds.
+#include <ayevent/EventBus.h>
+
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -27,6 +32,8 @@
 
 using namespace ayt::anim;
 using namespace ayt::math;
+using namespace ayt::resource;
+using namespace ayt::event;
 using ayt::resource::Bone;
 using ayt::resource::Skeleton;
 using ayt::resource::Animation;
@@ -409,6 +416,243 @@ TEST_SUITE(AnimationPlayerTests)
                 CHECK(std::isfinite(skin(r, c)));
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase 1.5 — Anim Notify
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Helper: build a 2-second looping clip with three evenly-spaced notify
+    // markers at t=0.5, 1.0, 1.5 (name="M0.5/1.0/1.5", payload=10/20/30).
+    ayt::resource::Animation makeNotifyClip()
+    {
+        ayt::resource::Animation clip;
+        clip.setName("NotifyClip");
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(2.0f);
+
+        // No tracks — the helper below only cares about the notify block.
+        // (Pure-notify clips are valid: ticksPerSecond/duration are still
+        // meaningful for sink time stamping.)
+        clip.addNotify(AnimNotifyMarker{"M0.5", 0.5f, 10.0f});
+        clip.addNotify(AnimNotifyMarker{"M1.0", 1.0f, 20.0f});
+        clip.addNotify(AnimNotifyMarker{"M1.5", 1.5f, 30.0f});
+        return clip;
+    }
+
+    // Helper: build a 2-second looping clip with markers near 0 and near d
+    // — used to verify loop-wrap re-fires the marker just past 0.
+    ayt::resource::Animation makeWrapNotifyClip()
+    {
+        ayt::resource::Animation clip;
+        clip.setName("WrapNotifyClip");
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(2.0f);
+        clip.addNotify(AnimNotifyMarker{"NearEnd", 1.9f, 0.0f});
+        clip.addNotify(AnimNotifyMarker{"NearStart", 0.1f, 0.0f});
+        return clip;
+    }
+
+    TEST_CASE(notify_marks_fire_on_cross_within_frame) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation clip = makeNotifyClip();
+
+        std::vector<std::string> fired;
+        std::vector<float>        firedTimes;
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setAnimNotifySink([&](const char* name, float t, float) {
+            fired.emplace_back(name ? name : "");
+            firedTimes.push_back(t);
+        });
+        player.setLoop(true);
+        player.setPlayRate(1.0f);
+
+        // Frame 1: dt=0.2 from t=0.4 → crosses M0.5 (at t=0.5).
+        player.setTime(0.4f);
+        player.tick(0.2f);
+        // One marker crossed.
+        CHECK(fired.size() == 1u);
+        CHECK(fired[0]      == "M0.5");
+        CHECK(firedTimes[0] == 0.5f);
+        // Queue also populated.
+        CHECK(player.getPendingNotifyCount() == 1u);
+    }
+
+    TEST_CASE(notify_does_not_re_fire_same_frame) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation clip = makeNotifyClip();
+        int fireCount = 0;
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setAnimNotifySink([&](const char*, float, float) {
+            ++fireCount;
+        });
+        player.setLoop(true);
+        // tick crosses ONLY M1.0 (the [0.95,1.15] window does not include M0.5 at 0.5).
+        player.setTime(0.95f);
+        player.tick(0.2f);   // next=1.15 → crosses M1.0 once
+        CHECK(fireCount == 1);
+        // A zero-dt second tick should NOT re-fire.
+        player.tick(0.0f);
+        CHECK(fireCount == 1);
+    }
+
+    TEST_CASE(notify_re_fires_on_loop_wrap) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation clip = makeWrapNotifyClip();
+        std::vector<std::string> fired;
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setAnimNotifySink([&](const char* name, float, float) {
+            fired.emplace_back(name ? name : "");
+        });
+        player.setLoop(true);
+        // Start at 1.85, tick 0.5 → raw 2.35 wraps to 0.35 → crosses 1.9 then 0.1.
+        player.setTime(1.85f);
+        player.tick(0.5f);
+        CHECK(fired.size() == 2u);
+        if (fired.size() >= 2u) {
+            CHECK(fired[0] == "NearEnd");
+            CHECK(fired[1] == "NearStart");
+        }
+    }
+
+    TEST_CASE(notify_fires_only_when_sink_set) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation clip = makeNotifyClip();
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        // NO setAnimNotifySink — but the queue is still populated
+        // (dual-exit design: queue is for the AYEntity → EventBus bridge).
+        player.setLoop(true);
+
+        player.setTime(0.4f);
+        player.tick(0.2f);   // crosses M0.5
+        CHECK(player.getPendingNotifyCount() == 1u);
+
+        // Reset the sink and confirm a subsequent tick still records.
+        player.setAnimNotifySink(nullptr);
+        player.setTime(0.4f);
+        player.tick(0.2f);
+        CHECK(player.getPendingNotifyCount() == 1u);
+    }
+
+    TEST_CASE(notify_sink_receives_correct_payload) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        ayt::resource::Animation clip;
+        clip.setName("HitClip");
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(2.0f);
+        clip.addNotify(AnimNotifyMarker{"OnHit", 1.0f, 42.5f});
+
+        std::string gotName;
+        float gotTime = -1.0f;
+        float gotPayload = -1.0f;
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setAnimNotifySink([&](const char* name, float t, float p) {
+            gotName    = name ? name : std::string();
+            gotTime    = t;
+            gotPayload = p;
+        });
+        player.setLoop(true);
+        player.setTime(0.9f);
+        player.tick(0.2f);   // crosses 1.0
+
+        CHECK(gotName == "OnHit");
+        CHECK(gotTime == 1.0f);
+        CHECK(gotPayload == 42.5f);
+    }
+
+    TEST_CASE(notify_with_no_matching_name_silently_no_op) {
+        // A clip with zero markers must dispatch nothing; the player must
+        // tolerate callers that tick forever.
+        Skeleton skel = makeTwoBoneSkeleton();
+        ayt::resource::Animation clip;        // empty: 0 tracks, 0 notifies
+        clip.setName("Empty");
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(1.0f);
+
+        int fireCount = 0;
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setAnimNotifySink([&](const char*, float, float) {
+            ++fireCount;
+        });
+        player.setLoop(true);
+        for (int i = 0; i < 10; ++i) {
+            player.tick(0.05f);
+        }
+        CHECK(fireCount == 0);
+        CHECK(player.getPendingNotifyCount() == 0u);
+    }
+
+    TEST_CASE(consume_pending_notifies_drains_after_tick) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation clip = makeNotifyClip();
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&clip);
+        player.setLoop(true);
+        player.setTime(0.4f);
+        player.tick(0.2f);   // crosses M0.5
+
+        const std::vector<AnimationPlayer::AnimNotifyRecord>& first = player.consumePendingNotifies();
+        CHECK(first.size() == 1u);
+        if (first.size() == 1u) {
+            CHECK(std::string(first[0].name ? first[0].name : "") == "M0.5");
+            CHECK(first[0].time    == 0.5f);
+            CHECK(first[0].payload == 10.0f);
+        }
+
+        // Second consume on the same frame must yield nothing (drained).
+        const std::vector<AnimationPlayer::AnimNotifyRecord>& second = player.consumePendingNotifies();
+        CHECK(second.size() == 0u);
+    }
+
+    TEST_CASE(eventbus_animnotify_event_pod_carries_entity_id) {
+        // Phase 1.5 cross-module bridge sanity: the POD type round-trips
+        // through the AYEventSystem EventBus. We construct an instance and
+        // subscribe to it the same way AYEntity will in PR3.
+        //
+        // This test lives in AYAnimation because the type is defined here
+        // and we want the AYAnimation_unit_test target to own the basic
+        // golden test. PR3 will add a fully wired AYEntity-side integration
+        // test alongside.
+        using namespace ayt::anim;
+        ayt::event::EventBus bus;
+        bool                  hit = false;
+        AnimNotifyEvent       evt;
+        evt.entity     = 0xDEADBEEFu;
+        evt.clipName   = "test_clip";
+        evt.notifyName = "OnFootstep";
+        evt.notifyTime = 1.234f;
+        evt.payload    = 3.14159f;
+
+        bus.subscribe<AnimNotifyEvent>([&](const AnimNotifyEvent& e) {
+            hit = (e.entity     == evt.entity) &&
+                  (e.notifyTime == evt.notifyTime) &&
+                  (e.payload    == evt.payload) &&
+                  (std::strcmp(e.clipName,   "test_clip")   == 0) &&
+                  (std::strcmp(e.notifyName, "OnFootstep") == 0);
+        });
+        bus.emit<AnimNotifyEvent>(evt);
+        CHECK(hit == true);
+        // kTypeId pinned so cross-module subscribers get the same id.
+        CHECK(AnimNotifyEvent::kTypeId   == 0x000A'0001u);
+        CHECK(AnimNotifyEvent::kPriority == ayt::event::EventPriority::High);
     }
 
     TEST_SUITE_END

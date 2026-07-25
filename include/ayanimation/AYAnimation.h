@@ -8,6 +8,7 @@
 #pragma once
 
 #include "AnimationPlayer.h"
+#include "AnimNotifyEvent.h"
 #include "KeySampler.h"
 
 namespace ayt::anim
@@ -15,6 +16,6 @@ namespace ayt::anim
 
 constexpr int MAJOR_VERSION = 0;
 constexpr int MINOR_VERSION = 2;
-constexpr int PATCH_VERSION = 0;
+constexpr int PATCH_VERSION = 2;  // Phase 1.5: Anim Notify dispatch + EventBus bridge
 
 } // namespace ayt::anim

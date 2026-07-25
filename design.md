@@ -1,6 +1,6 @@
 # AYAnimation Design
 
-> **状态（2026-07-26 更新）**：AN-01 已 ship（最小单 clip 播放器，约 200 行真实代码 + 11 个 test case）。本设计文档自该版起 **重构目标** 明确为"AYAnimation 是 AYResource 的薄消费层"，不再独立维护 skeleton/animation 数据类型。
+> **状态（2026-07-26 更新）**：AN-01 已 ship（最小单 clip 播放器，约 200 行真实代码 + 11 个 test case）。本设计文档自该版起 **重构目标** 明确为"AYAnimation 是 AYResource 的薄消费层"，不再独立维护 skeleton/animation 数据类型。Phase 1.5 P1.1 **Anim Notify** 已 ship（2026-07-26, 175+7=182 tests 3-run stable across AYAnimation + AYEntity）。
 > 工业级对标：Unreal Engine Animation System / Unity Animator / Godot 4 AnimationTree / O3DE Animation Graph。
 
 ---
@@ -290,12 +290,20 @@ void tick(float dt) {
 
 **注意**：`tick` 不防 `dt < 0`。若宿主用 catch-up 时钟倒带，需在更上层 clamp。
 
-### 4.4 ❌ 不在本期（移至 Phase 2 §14）
+### 4.4 ✅ Anim Notify (Phase 1.5) — SHIP
+
+- ✅ Anim Notify marker channel on `IAnimation`（Phase 1.5 `VERSION 2`）—— 排序的 named time-keyed 事件，跟 tracks 并列一等通道
+- ✅ `AnimationPlayer::setAnimNotifySink(std::function<void(name, time, payload)>)` ── host 直接订阅，在 `tick()` 内同步触发
+- ✅ `AnimationPlayer::consumePendingNotifies()` ── 每 tick 跨过 marker 时 push 进 queue，AYEntity AnimationSystem 每帧 drain 并 `EventBus::emit<AnimNotifyEvent>`
+- ✅ Loop wrap 双区间扫描 ── `[prev, d) ∪ [0, next]` —— UE/Unity 行为
+- ✅ Seek (`setTime`) 不立刻 fire，prev snap to current，下一 tick 才 fire
+- ⚠️ notifyName / clipName 是 const ptr → IAnimation string (emit-only contract)，订阅者不要 retain
+
+### 4.5 ❌ 不在本期（移至 Phase 2 §14）
 
 - crossFade / blend / Additive ── **Phase 2**
 - 多 clip 同时播放 / Slot / Layer ── **Phase 2**
 - 骨骼遮罩 ── **Phase 2**
-- Anim Notify 事件（除 Float track sink 外）── **Phase 1.5**
 
 ---
 
@@ -477,7 +485,7 @@ AYAnimation/
 | 8 | 时间 clamp | UE `bLoop=false` | ✅ | AN-01 |
 | 9 | playRate 控制 | UE/Unity | ✅ | AN-01 |
 | 10 | **Float track 参数曲线出口** | UE `UAnimInstance::GetCurveValue` | 🔧 | P0 |
-| 11 | Anim Notify 事件 | UE `FAnimNotifyEvent` | ❌ | Phase 1.5 |
+| 11 | Anim Notify 事件 | UE `FAnimNotifyEvent` | ✅ | Phase 1.5 SHIP (2026-07-26) |
 | 12 | **拓扑序 assert** | UE `RebuildPoseCache` | 🔧 | P0 |
 | 13 | **矩阵方向 lock-test** | UE `FAnimationRuntime` | 🔧 | P0 |
 | 14 | **IBM = 0 NaN-safe** | UE `Check` macros | 🔧 | P0 |
@@ -530,7 +538,7 @@ AYAnimation/
 
 | Step | 内容 |
 |---|---|
-| P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）|
+| P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation notify channel (VERSION 2) + dispatchPendingNotifies + AnimNotifyEvent POCO + EventBus bridge via AYEntity AnimationSystem |
 | P1.2 | Additive 动画层 |
 | P1.3 | CrossFade in/out |
 | P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）|

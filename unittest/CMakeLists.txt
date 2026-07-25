@@ -8,7 +8,9 @@ set(SRC_FILES
 
 add_executable(${MODULE_NAME} ${SRC_FILES})
 
-target_link_libraries(${MODULE_NAME} PRIVATE AYAnimation AYTest)
+# Phase 1.5: AYEventSystem dependency for eventbus_animnotify_event_pod_carries_entity_id.
+# AnimationPlayer itself does NOT link AYEventSystem — only this test does.
+target_link_libraries(${MODULE_NAME} PRIVATE AYAnimation AYTest AYEventSystem)
 target_include_directories(${MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
