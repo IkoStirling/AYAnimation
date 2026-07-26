@@ -384,13 +384,150 @@ Default `AnimationComponent::additiveWeight = 1.0f` matches the
 AnimationPlayer's default `_additiveWeight`, so pre-P1.2 clips (no
 Additive tracks) behave bit-identically.
 
-### 4.7 ❌ 不在本期（移至 Phase 2 §14）
+### 4.7 ✅ Additive Layer 2 (Phase 1.3 P1.3) — Cross-Fade MVP — SHIP
 
-- crossFade / multi-clip / Slot / Layer ── **Phase 2**
-- per-bone / skeleton mask ── **P2.2**
-- local-space vs world-space additive ── **P2.x**
-- per-bone additiveWeight (currently one global scalar) ── **P2.x**
-- ref-pose capture path (currently assumes t=0 is ref pose) ── **P2.x**
+Phase 1.3 ships the **second clip source** on `AnimationPlayer`. Two
+independent `IAnimation*` slots stacked on a single player:
+
+- **Base source** (renamed internal: `_anim` → `_baseClip`): bound via
+  the existing `play(IAnimation*)` API. Owns `_tracks` and the base
+  playhead `_time` / `_playRate` / `_loop` / `_pendingNotifies`.
+- **Additive source** (NEW): bound via `setAdditiveSource(IAnimation*,
+  float playRate=1.0f, bool loop=true)`. Owns `_additiveTracks` and
+  the additive playhead `_additiveTime` / `_additivePlayRate` /
+  `_additiveLoop` / `_additivePendingNotifies`. Cleared via
+  `clearAdditiveSource()` (or `setAdditiveSource(nullptr)`).
+
+Both sources tick INDEPENDENTLY (UE `UAnimMontage` semantics) — the
+additive source has its own loop wrap and notify dispatch. A host can
+drive hit-react on a separate time scale from locomotion.
+
+**5 invariants** (asserted in `evaluate()` header, debug-only):
+
+| Inv | Statement |
+|-----|-----------|
+| INV-1 | `_additiveClip == nullptr \|\| _blendWeight <= 0.f` ⇒ Phase 1b loop skipped entirely (null and zero-weight are equivalent "off" states) |
+| INV-2 | `_localPos.size()==n*3 && _localRot.size()==n*4 && _localScl.size()==n*3` — maintained by `setSkeleton` ONLY; Phase 1b writes elements 0..n-1, never resizes |
+| INV-3 | `_blendWeight ∈ [0, 1]` post-every-setter (inline saturate) |
+| INV-4 | `_baseClip == nullptr && _additiveClip != nullptr` ⇒ evaluate early-return after rest-pose seed (degenerate state during clip swap window) |
+| INV-5 | `_additiveClip == nullptr` ⇒ Phase 1a output identical to P1.2 single-clip output (zero-regression invariant — existing 197 tests pass unchanged) |
+
+**State-machine entry points** (5 main + 3 auxiliary):
+
+| # | Entry | Post-condition | Additive layer impact |
+|---|-------|----------------|----------------------|
+| 1 | `setSkeleton(skel)` | resize `_local*` to n*stride | **preserved** |
+| 2 | `play(baseClip)` | rebuild `_tracks`, `_time=0` | **preserved** (state machine: swap base keeps layer) |
+| 3 | `setAdditiveSource(src, rate, loop)` | copy tracks → `_additiveTracks`, `_additiveTime=0`, clear `_additivePendingNotifies` | base untouched |
+| 4 | `setBlendWeight(w)` | saturate `[0,1]`; assigns `_blendWeight` | neither touched |
+| 5 | `tick(dt)` | base + additive axes advanced independently | both axes ticked |
+| A | `stop()` | base cleared + `clearAdditiveSource()` | additive cleared |
+| B | `setTime(t)` | base + additive both seek to `t`, fire no notify on either | both jumped |
+| C | `pause()` / `resume()` | base only in MVP (additive ticks onward) | base paused |
+
+**Phase 1b math** (reuse of P1.2's three formulas with `_additiveWeight`
+renamed → `_blendWeight`; the additive source's per-track `AnimBlendMode`
+byte is honored from its own clip):
+
+| Property | Additive source Override | Additive source Additive |
+|----------|---------------------------|---------------------------|
+| `position` | `_localPos[k] = sample[k]` (blendWeight ignored for Override — confusing semantic, callers wanting partial override should mark Additive) | `_localPos[k] += sample[k] * _blendWeight` |
+| `rotation` | `_localRot[q] = sample[q]` | `(base * sample.pow(_blendWeight)).normalize()` — weight==0 short-circuit before pow |
+| `scale` | `_localScl[k] = sample[k]` | `_localScl[k] *= (1 + sample[k] * _blendWeight)` — UE convention, relative blend |
+| Float | push to `setFloatCurveSink` at `_additiveTime` (P1.2 invariant: additive concept is local-TRS only) | (same — Float tracks not affected by blendMode) |
+
+**`_additiveWeight` → `_blendWeight` rename**: the P1.2 setter/getter
+remain as **deprecated inline-forward wrappers** (`setAdditiveWeight(w)`
+calls `setBlendWeight(w)`; `getAdditiveWeight()` returns `_blendWeight`)
+so the 197-test P1.2 baseline and `AYAnimationSystem`'s existing
+`setAdditiveWeight(anim->additiveWeight)` call keep compiling without
+modification. `setBlendWeight` is the canonical P1.3 API; remove the
+wrappers in P1.6.
+
+**AYEntity bridge** (mirror of P1.2 push wiring):
+
+```cpp
+// AnimationComponent (P1.3 additions; P1.2 fields preserved)
+AY_PROPERTY(std::string, additiveClipPath, kAttrSerialize)  // default ""
+AY_PROPERTY(float,       additivePlayRate, kAttrSerialize)  // default 1.0
+AY_PROPERTY(float,       blendWeight,      kAttrSerialize)  // default 1.0
+
+// AnimationSystem::onUpdate (3 lines parallel to existing base push)
+if (!anim->additiveClipPath.empty()) {
+    auto addClip = ResourceManager::load<IAnimation>(anim->additiveClipPath);
+    _additiveClipCache[path] = addClip;
+    if (_lastAppliedAdditivePath[e] != anim->additiveClipPath) {
+        skel->player.setAdditiveSource(addClip.get(), anim->additivePlayRate, true);
+        _lastAppliedAdditivePath[e] = anim->additiveClipPath;
+    }
+    skel->player.setBlendWeight(anim->blendWeight);
+} else if (!_lastAppliedAdditivePath[e].empty()) {
+    _lastAppliedAdditivePath[e] = "";
+    skel->player.setAdditiveSource(nullptr);
+}
+```
+
+Additive notify EventBus drain (`consumePendingNotifiesAdditive`) emits
+on the same `AnimNotifyEvent` channel with the additive clip's name as
+`clipNameStable`. Source-tag (Base | Additive) on the event is
+**deferred to P1.5** (UPGRADE-HOOK) — MVP hosts that need to
+distinguish which source fired a marker use clipName or external context.
+
+**Version bump (no on-disk change)**:
+- `IAYAnimation::VERSION` 3 → 4 (forward-compat reservation)
+- `.ayanm` file binary is **byte-identical** to v3 — v4 writes the same
+  layout (same track structure, same per-track blendMode byte, same
+  notify block). The bump locks in the AnimationPlayer-side dual-source
+  API contract for future forward-compat readers; `loadFromBinary` now
+  rejects any version > VERSION (5, 6, ...) so a future binary that
+  adds new bytes is caught loudly rather than silently mis-parsed.
+
+**Tests added (PR2 + PR3)**:
+
+| # | Module | Test name | Contract pinned |
+|---|--------|-----------|-----------------|
+| A1 | AYAnimation | `P1_3_LayerOff_SkipsPhase1b_IfSrcIsNull` | INV-1 null branch |
+| A2 | AYAnimation | `P1_3_LayerOff_SkipsPhase1b_IfWeightIsZero` | INV-1 weight branch |
+| A3 | AYAnimation | `P1_3_BlendWeightSaturate_ThreeState` | INV-3 (incl. deprecated forward) |
+| A4 | AYAnimation | `P1_3_DoubleTimeAxis_IndependentAdvance` | independent time axis |
+| A5 | AYAnimation | `P1_3_PlayBase_PreservesAdditiveLayer` | entry 2 contract |
+| A6 | AYAnimation | `P1_3_Stop_ClearsBothLayers` | stop() contract |
+| A7 | AYAnimation | `P1_3_SetTime_JumpsBoth_FiresNoNotify` | entry B contract |
+| A8 | AYAnimation | `P1_3_RotationPow_WeightZero_NoNaN` | rotation math guard |
+| A9 | AYAnimation | `P1_3_VectorAdditive_FormulaReused_Verified` | position += sample * w |
+| A10 | AYAnimation | `P1_3_NotifyIndependence_BaseAndAdditive` | dual notify queue |
+| E1 | AYEntity | `animation_component_additive_clip_path_loads_player_source` | bridge wiring |
+| E2 | AYEntity | `animation_component_additive_rebind_detected` | rebind detection |
+| E3 | AYEntity | `animation_component_empty_additive_path_no_layer` | empty-path = OFF |
+| R1 | AYResource | `LoadFromBinary_RejectsVersionAbove4` | forward-compat tripwire |
+
+**3-run stable proof (2026-07-26)**:
+- AYResource: 701 PASS (baseline 700 + 1 new R1)
+- AYAnimation: 261 PASS (baseline 224 + 37 new P1.3)
+- AYEntity: 177 PASS (baseline 174 + 3 new E1-E3)
+- **Zero regression** on all 25 prior AnimationPlayer tests, 8 prior
+  SkinnedAnimation tests, 13 prior AYResource loader tests.
+
+**UPGRADE-HOOK(P1.4+)** comments in code mark explicit extension points:
+
+- `// UPGRADE-HOOK(P1.4)` at `setBlendWeight`: discrete setter → keyframed FloatCurve sampler
+- `// UPGRADE-HOOK(P1.4)` at `_blendWeight` field: uniform weight → per-track weights (mask expression)
+- `// UPGRADE-HOOK(P1.4)` at `setAdditiveSource` / `tick`: `syncToBase` option
+- `// UPGRADE-HOOK(P1.4)` at `evaluate` Phase 0: ref-pose capture from current base pose (replace rest-pose assumption)
+- `// UPGRADE-HOOK(P1.5)` at `consumePendingNotifiesAdditive`: merged + source-tagged + dedup-by-(time,name)
+- `// UPGRADE-HOOK(P1.5)` at `_additiveTracks` / `_additiveClip`: single layer → `vector<AdditiveSlot>` stack
+- `// REMOVE-MARKER(P1.6)` at `setAdditiveWeight` / `getAdditiveWeight` deprecated wrappers
+
+### 4.8 ❌ Deferred to P1.4 / Phase 2 §14
+
+- cross-fade curve (`blendWeightOverTime(from, to, duration, easing)`) ── **P1.4**
+- per-track weight map (mask expression) ── **P1.5 / P2.2**
+- syncToBase axis option ── **P1.4**
+- ref-pose capture path (replace rest-pose assumption) ── **P1.4**
+- notify merge + source-tag + dedup-by-(time,name) ── **P1.5**
+- multi-source stack (`vector<AdditiveSlot>`) ── **P1.5**
+- additive layer obeys `pause()` ── **P1.4**
+- drop deprecated `setAdditiveWeight` wrapper ── **P1.6**
 
 ---
 
@@ -513,6 +650,7 @@ AYAnimation/
 - [x] IBM = 0 NaN-safe 行为验证
 - [x] **P1.1 Anim Notify**（2026-07-26）─ root pin `aa6bbdf`
 - [x] **P1.2 Additive Layer 1**（2026-07-26）─ per-track blendMode + global additiveWeight; IAnimation VERSION 3; 0 regression across 3 modules (697+197+165)
+- [x] **P1.3 Additive Layer 2 / Cross-Fade**（2026-07-26）─ dual-source AnimationPlayer; setAdditiveSource + setBlendWeight + 5 invariants + 2 notify queues; IAnimation VERSION 4 (no on-disk change); 0 regression across 3 modules (701+261+177)
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -581,6 +719,7 @@ AYAnimation/
 | 15 | CrossFade | UE `UAnimMontage` | ❌ | Phase 2 |
 | 16 | Blend 1D / 2D | UE `BlendSpace` | ❌ | Phase 2 |
 | 17 | Additive 动画 (Layer 1) | UE `bAdditive` | ✅ | Phase 1.2 SHIP (2026-07-26) |
+| 17b | Additive 动画 (Layer 2 / Cross-Fade) | UE `UAnimMontage` | ✅ | Phase 1.3 SHIP (2026-07-26) |
 | 18 | 骨骼遮罩 Mask | UE `FAnimationRuntime::BlendPosesInGraph` | ❌ | Phase 2 |
 | 19 | Montage / Slot / Layer | UE `UAnimMontage` | ❌ | Phase 2 |
 | 20 | AnimGraph (Node-based) | UE `UAnimGraphSchema` | ❌ | Phase 3 |
@@ -629,7 +768,7 @@ AYAnimation/
 |---|---|
 | P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation notify channel (VERSION 2) + dispatchPendingNotifies + AnimNotifyEvent POCO + EventBus bridge via AYEntity AnimationSystem |
 | P1.2 | Additive Layer 1 MVP（per-track blendMode + global additiveWeight）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 3 + v2 backward compat + AnimationPlayer Phase 1 additive branch (position += / rotation pow / scale *= (1+)) + AYEntity AnimationComponent.additiveWeight + 7 new tests (1 AYResource v2 + 6 AnimationPlayer) |
-| P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) |
+| P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) ── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 4 (no on-disk change) + 5 invariants + AnimationPlayer dual-source state machine + Phase 1b additive branch (reuses P1.2 three formulas) + 2 notify queues + AYEntity AnimationComponent.{additiveClipPath,additivePlayRate,blendWeight} + 14 new tests (1 AYResource forward-compat + 10 AnimationPlayer + 3 AYEntity integration) |
 | P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）|
 | P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）|
 
