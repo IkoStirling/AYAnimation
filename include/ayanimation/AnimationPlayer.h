@@ -192,6 +192,101 @@ enum class CaptureState : ayt::math::UInt8 {
     Stale = 2,   // skeleton has been swapped since last capture; needs re-fill
 };
 
+// ---------------------------------------------------------------------------
+// P1.5 — Multi-source stack (vector<AdditiveSlot> + Notify Merge)
+//
+// One AdditiveSlot bundles EVERY per-slot state that P1.3 + P1.4 spread
+// across 8 single-slot fields (_additiveClip / _additiveTime / ... / _curve).
+// A vector of slots means N additive layers can stack simultaneously (UE
+// `LayerObjects[]`, Unity `AnimationLayerMixerPlayable.SetLayerCount`).
+//
+// Hard cap of 8 mirrors UE's MaxLayerCount = 8; 8 × 100-bone × 40-byte
+// captured buffers = 32 KB worst case — small enough to live in the player.
+// ---------------------------------------------------------------------------
+
+// P1.5 — hard cap on simultaneous additive slots. UE / Unity production
+// convention. 8 covers upper-body + lower-body + hit-react + weapon +
+// knockback + breathing + breathing-variation + emergency-flash without
+// requiring dynamic allocation growth. Bumped later only if a real
+// host needs more.
+constexpr uint32_t kMaxAdditiveSlots = 8;
+
+// P1.5 — Anim Notify record, hoisted from AnimationPlayer class scope
+// so AdditiveSlot (declared above) can hold a std::vector of them.
+// One record per AnimNotifyMarker crossed by a single tick() call;
+// emitted via the dual sink + queue model (see class header for full
+// description).
+//
+// P1.5 added `sourceTag` (default Base). P1.3 + P1.4 callers that never
+// read it keep working — the merged queue still produces the same
+// chronological order, just with an extra byte per record.
+//
+// The `name` pointer points into the IAnimation asset (lifetime =
+// ResourceManager cache); valid only for the duration of the consume
+// callback. Do NOT retain past the call.
+struct AnimNotifyRecord {
+    const char*           name      = nullptr;
+    float                 time      = 0.0f;
+    float                 payload   = 0.0f;
+    AnimNotifySourceTag   sourceTag = AnimNotifySourceTag::Base;
+};
+
+// P1.5 — per-layer state container. Default-constructed represents
+// "slot is empty / not bound" (clip == nullptr; evaluate() skips it).
+// Once a host binds a clip via setAdditiveLayerSource(slotId, src),
+// the slot grows into a full state machine identical to the P1.3
+// single-slot design, with P1.4 cross-fade flags per-slot.
+struct AdditiveSlot {
+    // Source ── mirror P1.3 single-slot fields.
+    const ayt::resource::IAnimation* clip              = nullptr;
+    float                            time              = 0.0f;
+    float                            playRate          = 1.0f;
+    bool                             loop              = true;
+    float                            prevTickTime      = 0.0f;
+    std::vector<TrackSlice>          tracks;
+    std::vector<AnimNotifyRecord>    pendingNotifies;
+
+    // P1.4 fields ── each slot owns its own flag set, independent of
+    // every other slot. A host can enable syncToBase on slot 0 while
+    // leaving slot 1's time axis independent (INV-10, structural).
+    bool          syncToBase       = false;
+    bool          refPoseCapture   = false;
+    bool          paused           = false;
+    BlendCurve    curve;
+    CaptureState  captureState     = CaptureState::Fresh;
+    std::vector<float> capturedLocalPos;   // n*3, sized by setSkeleton
+    std::vector<float> capturedLocalRot;   // n*4
+    std::vector<float> capturedLocalScl;   // n*3
+
+    // P1.5 — per-track mask expression (opt-in). Empty = uniform 1.0f
+    // (P1.3 behavior); non-empty = per-track scalar multiplier keyed
+    // by track index within this slot's `tracks` array. Lets a host
+    // suppress individual bones (e.g. only apply the additive rotation
+    // to spine + chest, not the lower body).
+    std::vector<float> trackWeights;
+};
+
+// P1.5 — source tag attached to every AnimNotifyRecord in the merged
+// queue. Lets AYEntity's AnimationSystem distinguish base markers
+// (AnimNotifyEvent with kTypeId 0x000A'0001 — same as Phase 1.5) from
+// per-slot additive markers so subscribers can route them differently
+// (e.g. UI sfx vs. gameplay logic).
+//
+// Numeric encoding chosen so the Base tag is 0 (default-constructed
+// record remains Base — backward-compat with all P1.3/P1.4 callers
+// that never read sourceTag). Additive_N = 1..8 maps to slot index 0..7.
+enum class AnimNotifySourceTag : ayt::math::UInt8 {
+    Base        = 0,
+    Additive_0  = 1,
+    Additive_1  = 2,
+    Additive_2  = 3,
+    Additive_3  = 4,
+    Additive_4  = 5,
+    Additive_5  = 6,
+    Additive_6  = 7,
+    Additive_7  = 8,
+};
+
 class AnimationPlayer {
 public:
     // Sink signature: (boneName, property, value-at-_time).
@@ -214,11 +309,11 @@ public:
     // Phase 1.5 — public record exposed via consumePendingNotifies().
     // The AYEntity AnimationSystem drains this queue each tick and posts
     // one AnimNotifyEvent per record into the AYEventSystem bus.
-    struct AnimNotifyRecord {
-        const char* name    = nullptr;
-        float       time    = 0.0f;
-        float       payload = 0.0f;
-    };
+    //
+    // P1.5 hoisted to namespace scope above (struct AnimNotifyRecord).
+    // Use `ayt::anim::AnimNotifyRecord` or the class-qualified form
+    // `AnimationPlayer::AnimNotifyRecord` interchangeably.
+    using AnimNotifyRecord = ::ayt::anim::AnimNotifyRecord;
 
     AnimationPlayer() = default;
 
@@ -384,6 +479,75 @@ public:
     void  setAdditivePaused(bool paused);
     bool  isAdditivePaused() const { return _additivePaused; }
 
+    // === P1.5 — Multi-source stack (vector<AdditiveSlot>) ===
+    //
+    // The 18 single-slot methods above all redirect to slot[0] — their
+    // semantics are preserved bit-for-bit when callers haven't adopted
+    // the per-slot API yet. Once a host wants N simultaneous additive
+    // layers (UE `LayerObjects[]`-style), the 14 per-slot methods below
+    // are the canonical path.
+    //
+    // Slot index range [0, kMaxAdditiveSlots). Bounds-checked; an
+    // out-of-range slotId is silently ignored (defensive — never crash).
+    //
+    // Slot-count semantics: getAdditiveLayerCount() returns the number
+    // of slots whose `clip != nullptr` (i.e. bound slots). Slot vector
+    // itself is sparse: a host can bind slot 4 without binding 0..3
+    // first; the implementation pads with empty slots as needed.
+
+    // Source bind ── per-slot replacement for setAdditiveSource.
+    // Returns true on successful bind (slotId in range AND src != null);
+    // false if slotId >= kMaxAdditiveSlots (caller hit the cap).
+    bool  setAdditiveLayerSource(uint32_t slotId,
+                                 const ayt::resource::IAnimation* src,
+                                 float playRate = 1.0f,
+                                 bool  loop     = true);
+    void  clearAdditiveLayerSource(uint32_t slotId);
+
+    // Layer count = number of slots whose clip != nullptr. Bounded by
+    // kMaxAdditiveSlots. 0 = "no additive layer active" (mirrors
+    // P1.3 single-slot "off" state).
+    int32_t getAdditiveLayerCount() const;
+
+    // Weight + curve (P1.4 per-slot generalization).
+    void    setAdditiveLayerWeight(uint32_t slotId, float w);
+    float   getAdditiveLayerWeight(uint32_t slotId) const;
+    void    blendLayerWeightOverTime(uint32_t slotId,
+                                     float from, float to, float duration,
+                                     BlendEasing easing = BlendEasing::Linear);
+    void    cancelLayerBlendCurve(uint32_t slotId);
+    bool    isLayerBlendCurveActive(uint32_t slotId) const;
+
+    // Sync / pause / ref-pose (P1.4 per-slot generalization).
+    void    setAdditiveLayerSyncToBase(uint32_t slotId, bool v);
+    bool    isAdditiveLayerSyncToBase(uint32_t slotId) const;
+    void    setAdditiveLayerPaused(uint32_t slotId, bool v);
+    bool    isAdditiveLayerPaused(uint32_t slotId) const;
+    void    setAdditiveLayerRefPoseCapture(uint32_t slotId, bool v);
+    bool    isAdditiveLayerRefPoseCapture(uint32_t slotId) const;
+
+    // Per-track mask expression (P1.5 NEW). Empty vector = uniform
+    // 1.0f (P1.3 behavior); non-empty = per-track scalar multiplier
+    // keyed by track index within the slot's `tracks` array. A track
+    // with index >= trackWeights.size() reverts to uniform.
+    void setAdditiveLayerTrackWeights(uint32_t slotId,
+                                     const std::vector<float>& weights);
+    const std::vector<float>& getAdditiveLayerTrackWeights(uint32_t slotId) const;
+
+    // Merged notify queue (P1.5 NEW). Replaces the dual
+    // consumePendingNotifies() + consumePendingNotifiesAdditive() pattern
+    // with a single sorted-by-time vector carrying source tags. Dedup
+    // rule: a (time, name) collision between base and slot K keeps the
+    // BASE record and drops the slot K record (base wins — gameplay
+    // subscribers want base reasoning, additive is enrichment).
+    //
+    // The old consumePendingNotifiesAdditive() is kept as a
+    // slot[0]-only wrapper for backward compat with P1.3/P1.4 hosts;
+    // it is DEPRECATE-P1.5 and may be removed in P1.6 alongside the
+    // deprecated `setAdditiveWeight` wrapper.
+    const std::vector<AnimNotifyRecord>& consumePendingNotifiesMerged();
+    size_t getPendingNotifyCountMerged() const { return _pendingNotifiesMerged.size(); }
+
     float getTime() const             { return _time; }
     float getPlayRate() const         { return _playRate; }
     float getDuration() const         { return _baseClip ? _baseClip->getDuration() : 0.0f; }
@@ -440,6 +604,9 @@ private:
     // setter + consumePendingNotifies() instead.
     void dispatchPendingNotifies(float prev, float next, bool wrapped);
     // P1.3 — mirror dispatch for the additive source's notify markers.
+    // P1.5: still kept for backward compat (consumePendingNotifiesAdditive
+    // uses it indirectly via the slot[0] path); the per-slot version is
+    // dispatchSlotNotifies(slotRef, ...).
     void dispatchAdditiveNotifies(float prev, float next, bool wrapped);
 
     // P1.4 — bone index cache management. See TrackSlice header for the
@@ -448,7 +615,8 @@ private:
     // invalidateBoneIndexCache resets every TrackSlice.boneIdx back to
     // kBoneUnresolved so the next evaluate() rebuilds the cache against
     // the new skeleton. Called from setSkeleton() once the skeleton
-    // pointer (and therefore the bone name table) has changed.
+    // pointer (and therefore the bone name table) has changed. P1.5:
+    // iterates every slot's tracks in addition to base _tracks.
     //
     // resolveBoneIdxOnce is the lazy single-slice resolver used inside
     // evaluate(). When boneIdx == kBoneUnresolved AND _skeleton != nullptr
@@ -457,18 +625,42 @@ private:
     void invalidateBoneIndexCache();
     void resolveBoneIdxOnce(TrackSlice& slice);
 
-    // P1.4 cross-fade — implementation helpers. See setBlendWeight,
-    // setAdditiveSyncToBase, setAdditiveRefPoseCapture, blendWeightOverTime,
-    // cancelBlendCurve, setAdditivePaused, evaluate Phase 0/1a for use sites.
+    // P1.5 — Multi-source stack helpers.
     //
-    // sampleBlendCurve() returns the currently-effective layer weight.
-    //   - if _curve.active == false → static _blendWeight
-    //   - if _curve.active == true  → lerp(from, to, eased(t01))
-    //     where t01 = clamp01((_time - _curve.startTime) / _curve.duration).
-    // On the first frame past the curve's end, the implementation
-    // disarms _curve.active back to false so subsequent ticks revert
-    // to the static _blendWeight — the host can chain a fresh curve
-    // without first calling cancelBlendCurve().
+    // ensureSlot(slotId) returns a reference to slot[slotId], resizing
+    // the vector with empty slots if necessary. Bounds-checked; out-of-
+    // range slotId triggers an assert in debug and a no-op in release.
+    AdditiveSlot& ensureSlot(uint32_t slotId);
+    AdditiveSlot* getSlot(uint32_t slotId);       // nullptr if OOR or vector too small
+    const AdditiveSlot* getSlot(uint32_t slotId) const;
+
+    // Rebuild TrackSlice for a slot (mirror of setAdditiveSource body
+    // used by setAdditiveLayerSource). Hoisted so the single-slot and
+    // multi-slot paths share the same TrackSlice-rebuild code.
+    void rebuildSlotTracks(AdditiveSlot& slot, const ayt::resource::IAnimation* src);
+
+    // Per-slot P1.4 helpers.
+    float sampleLayerBlendCurve(const AdditiveSlot& slot) const;
+    void  captureRefPoseFromSlot(AdditiveSlot& slot);
+    void  applyCapturedRefPoseFromSlot(AdditiveSlot& slot);
+
+    // Per-slot dispatch (P1.5). Mirrors dispatchAdditiveNotifies but
+    // operates on a slot reference.
+    void dispatchSlotNotifies(AdditiveSlot& slot, float prev, float next, bool wrapped);
+
+    // Merged notify rebuild + consume.
+    void rebuildMergedNotifies();
+    const std::vector<AnimNotifyRecord>& consumePendingNotifies();
+
+    // P1.4 cross-fade — single-slot helpers. These three are kept as
+    // thin wrappers around `_additiveSlots[0]` so old P1.4 callers (the
+    // 312-test AYAnimation + 187-test AYEntity baselines) keep working
+    // bit-for-bit. The per-slot generalisations live in
+    // sampleLayerBlendCurve / captureRefPoseFromSlot / applyCapturedRefPoseFromSlot.
+    //
+    // sampleBlendCurve() returns the currently-effective layer weight
+    // for slot[0]. See AdditiveSlot::curve for the math; equivalent to
+    // sampleLayerBlendCurve(_additiveSlots[0]).
     float sampleBlendCurve() const;
     void  captureRefPoseFromLocal();
     void  applyCapturedRefPoseToLocal();
@@ -479,26 +671,18 @@ private:
     bool  _paused   = false;
     bool  _loop     = true;
     // P1.3 rename: _additiveWeight → _blendWeight. Same field semantics
-    // (saturate [0,1], default 1.0f) — the new name reflects its broader
-    // role as the global layer-mix weight (covers both Layer 1 per-track
-    // additive within a clip AND Layer 2 cross-clip blending).
-    //
-    // P1.3 also extends its semantics: when setAdditiveSource is bound,
-    // _blendWeight gates Phase 1b (per INV-1). Phase 1a (per-track
-    // additive within base) still uses the same scalar.
+    // (saturate [0,1], default 1.0f). P1.5 still uses this for slot[0]
+    // (the single-slot backward-compat path); per-slot weights live in
+    // AdditiveSlot::curve. Phase 1a (per-track additive within base)
+    // still uses this scalar.
     float _blendWeight = 1.0f;
 
-    // P1.3 — Additive Layer 2 state. All six fields below are owned by
-    // setAdditiveSource / clearAdditiveSource (entry point 3 in the state
-    // machine). INV-1: when _additiveClip == nullptr OR _blendWeight == 0,
-    // Phase 1b is skipped and the layer contributes nothing to evaluate().
-    const ayt::resource::IAnimation* _additiveClip       = nullptr;
-    float                            _additiveTime       = 0.0f;
-    float                            _additivePlayRate   = 1.0f;
-    bool                             _additiveLoop       = true;
-    float                            _additivePrevTickTime = 0.0f;
-    std::vector<TrackSlice>          _additiveTracks;
-    std::vector<AnimNotifyRecord>    _additivePendingNotifies;
+    // P1.5 — Multi-source stack. _additiveSlots[i] holds slot i's full
+    // state machine (P1.3 single-slot fields + P1.4 per-slot flags).
+    // _additiveSlots.size() == 0 means no slot bound (P1.3 "off" state).
+    // After P1.5 the old _additiveClip / _additiveTime / ... fields are
+    // GONE — slot[0] is the single source of truth.
+    std::vector<AdditiveSlot> _additiveSlots;
 
     // Per-bone local TRS working buffers (float-array form to avoid
     // per-frame allocate / align to P0 hot-path goal).
@@ -510,44 +694,21 @@ private:
 
     // Pre-normalized track data (built once in play()). The TrackSlice
     // struct itself is defined at namespace scope above the class so the
-    // P1.3 _additiveTracks member (declared earlier in the private
-    // section) can refer to it without a forward-decl dependency.
+    // P1.5 _additiveSlots member can refer to it without a forward-decl
+    // dependency.
     std::vector<TrackSlice> _tracks;
 
     FloatCurveSink _floatSink;
 
     // Phase 1.5 — Anim Notify (see header comment above for the dual-exit
-    // sink + queue model).
+    // sink + queue model). P1.5: _pendingNotifies still holds BASE records;
+    // per-slot records live in AdditiveSlot::pendingNotifies; the merged
+    // vector (rebuilt by rebuildMergedNotifies) lives in
+    // _pendingNotifiesMerged and is drained by consumePendingNotifiesMerged.
     AnimNotifySink                  _animNotifySink;
     std::vector<AnimNotifyRecord>  _pendingNotifies;
+    std::vector<AnimNotifyRecord>  _pendingNotifiesMerged;   // P1.5 NEW
     float                           _prevTickTime = 0.0f;
-
-    // P1.4 cross-fade — runtime-only config. Defaults chosen so P1.3
-    // behavior is bit-identical when these are all at their untouched
-    // values: sync off, ref-pose off (rest pose base), no curve (static
-    // _blendWeight wins), additive axis not separately paused.
-    bool        _syncToBase     = false;
-    bool        _refPoseCapture = false;
-    BlendCurve  _curve;
-    // CaptureState — 3-state machine mirrors kBoneUnresolved sentinel:
-    //   Fresh  = no capture yet against this skeleton
-    //   Valid  = _capturedLocal* is in sync with last Phase 1a write
-    //   Stale  = skeleton was swapped; next evaluate must recapture
-    // setSkeleton() flips Valid → Stale; setAdditiveRefPoseCapture(false)
-    // flips back to Fresh (semantically "stale" but kept distinct because
-    // captureStale + captureState=Fresh differ in whether we apply the
-    // captured buffer vs ignore it).
-    CaptureState _captureState  = CaptureState::Fresh;
-    bool         _additivePaused = false;
-
-    // P1.4 — ref-pose capture buffers. Sized by setSkeleton() (or by
-    // captureRefPoseFromLocal() on first capture). Filled lazily: the
-    // first evaluate() after enable copies the post-Phase-1a _local*
-    // into these, then on subsequent evaluates Phase 0 re-seeds from
-    // these instead of the skeleton's bind-pose arrays.
-    std::vector<float> _capturedLocalPos;   // n*3
-    std::vector<float> _capturedLocalRot;   // n*4
-    std::vector<float> _capturedLocalScl;   // n*3
 };
 
 } // namespace ayt::anim
