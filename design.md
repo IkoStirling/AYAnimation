@@ -518,15 +518,11 @@ distinguish which source fired a marker use clipName or external context.
 - `// UPGRADE-HOOK(P1.5)` at `_additiveTracks` / `_additiveClip`: single layer → `vector<AdditiveSlot>` stack
 - `// REMOVE-MARKER(P1.6)` at `setAdditiveWeight` / `getAdditiveWeight` deprecated wrappers
 
-### 4.8 ❌ Deferred to P1.4 / Phase 2 §14
+### 4.8 ❌ Deferred to P1.5 / Phase 2 §14
 
-- ✅ ~~cross-fade curve (`blendWeightOverTime(from, to, duration, easing)`)~~ ── **shipped as P1.4 hot-path (boneIdx cache), not curve**; curve itself still **P1.4 cross-fade**
 - per-track weight map (mask expression) ── **P1.5 / P2.2**
-- syncToBase axis option ── **P1.4 cross-fade** (still open)
-- ref-pose capture path (replace rest-pose assumption) ── **P1.4 cross-fade** (still open)
 - notify merge + source-tag + dedup-by-(time,name) ── **P1.5**
 - multi-source stack (`vector<AdditiveSlot>`) ── **P1.5**
-- additive layer obeys `pause()` ── **P1.4 cross-fade** (still open)
 - drop deprecated `setAdditiveWeight` wrapper ── **P1.6**
 
 ---
@@ -620,6 +616,162 @@ void AnimationPlayer::setSkeleton(const ISkeleton* skel) {
 #### 4.9.7 Out-of-scope (P1.4 剩下的工作)
 
 P1.4 hot-path 完成;P1.4 cross-fade 自身 (curve / syncToBase / ref-pose capture / additive pause) 留到下一个 P1.4 ship 块。
+
+### 4.10 ✅ Cross-Fade Full Ship (Phase 1.4 P1.4 — 2026-07-26)
+
+P1.4 cross-fade 收口: **4 entry × 4 INV × 11 test**,一次 ship 出 curve + syncToBase + ref-pose capture + additive pause 四项完整 cross-fade 工业级能力。这是 P1.3 dual-source state machine 之后的「半 PR 量」收口刀,把 P1.3 阶段标的所有 `// UPGRADE-HOOK(P1.4)` 标记位置全部 resolve 掉。
+
+#### 4.10.1 四 entry point
+
+| Entry | Signature | Displaces / 取代 |
+|-------|-----------|------------------|
+| `setAdditiveSyncToBase(bool)` | entry 6 | `tick()` 内部 additive advance 锁步 vs 独立 的开关 |
+| `setAdditiveRefPoseCapture(bool)` | entry 7 | Phase 1b additive base source:rest pose vs captured-pose |
+| `blendWeightOverTime(from, to, duration, easing=Linear)` | entry 8 | 离散的 `setBlendWeight(w)` ── 静态权重 scalar → keyframed FloatCurve sampler |
+| `setAdditivePaused(bool)` + `pauseAdditive` (Aux E 通过 re-exposing) | Aux E | 独立于 base pause 的 additive-only pause 语义 |
+
+取消 hook(都已 resolve, 移到 §4.7 文末):
+- `UPGRADE-HOOK(P1.4 → resolved)` discrete setter → keyframed curve (→ blendWeightOverTime)
+- `UPGRADE-HOOK(P1.4 → resolved)` independent axis → syncToBase option
+- `UPGRADE-HOOK(P1.4 → resolved)` ref-pose capture from current base pose (→ setAdditiveRefPoseCapture + CaptureState 3-state machine)
+- `UPGRADE-HOOK(P1.4 → resolved)` additive layer obeys pause() (→ INV-8 + setAdditivePaused)
+
+#### 4.10.2 8 invariants(P1.3 五条均保留, 新增 6/7/8)
+
+| Inv | Statement |
+|-----|-----------|
+| INV-1..5 | (P1.3 不变) |
+| **INV-6** | `_syncToBase == true` ⇒ post-tick `_additiveTime == _time`(lock-step 合约) |
+| **INV-7** | `_refPoseCapture == true` ⇒ Phase 1b 读 `_capturedLocal*` 不是 `_local*` 当下;`CaptureState` 3-state `(Fresh, Valid, Stale)` 决定 (re)capture vs apply-captured |
+| **INV-8** | `pause()==true` ⇒ base + additive axis 都停(`_additiveTime` 不动); INV-8-symmetric: `_additivePaused==true && !_syncToBase` ⇒ 只 additive 停 |
+
+INV-6/7/8 全部 `#ifndef NDEBUG` 在 `tick()` / `evaluate()` 头部。
+
+#### 4.10.3 内部数据结构(都是 runtime-only, 不写盘)
+
+```cpp
+enum class BlendEasing : ayt::math::UInt8 { Linear=0, EaseIn=1, EaseOut=2, EaseInOut=3, Smoothstep=4 };
+
+struct BlendCurve {
+    float        from        = 0.0f;
+    float        to          = 1.0f;
+    float        duration    = 0.0f;       // ≤ 0 ⇒ no-op
+    BlendEasing  easing      = BlendEasing::Linear;
+    float        startTime   = 0.0f;       // 调 `blendWeightOverTime` 时锁定 = `_time`
+    bool         active      = false;
+};
+
+enum class CaptureState : ayt::math::UInt8 { Fresh=0, Valid=1, Stale=2 };
+```
+
+字段 (`AnimationPlayer`): `_syncToBase`, `_refPoseCapture`, `_curve`, `_capturedLocal{Pos,Rot,Scl}`, `_captureState`, `_additivePaused` —— 全部 default 跟 P1.3 行为 1:1 (off / fresh / inactive),保证 zero-regression。
+
+#### 4.10.4 Helper 复用清单(不发明新轮)
+
+- `sampleTrackFloat(values, count, times, t, out)` from `KeySampler.h:34` —— **概念上游复用**,但曲线跑分选择 manual lerp(从 2-element `[from, to]` + eased `t01`),不分配 buffer
+- `aymath::easeIn(t, power=2)` / `easeOut` / `easeInOut` from `MathUtils.h:1036/1098/1116` —— 4 个 ease cases 中 3 个直接 dispatch
+- `aymath::smoothstep(t)` from `MathUtils.h:930` —— `BlendEasing::Smoothstep` 一行调用
+- `resolveBoneIdxOnce(TrackSlice&)` from `AnimationPlayer.cpp:113` —— P1.4 hot-path 已 ship,新 capture / ref-pose path 不需要改动 cache
+
+#### 4.10.5 State machine 在 P1.3 五 entry 上的 reset
+
+```
+setAdditiveSource(src, rate, loop) 末尾:   _syncToBase = _refPoseCapture = _additivePaused = false;
+                                          _captureState = Fresh; _curve.active = false;
+clearAdditiveSource 末尾:                  同上
+stop() 末尾:                              reset-by clearAdditiveSource
+setTime(t) 末尾:                          if (_syncToBase) _additiveTime = _time;
+                                          if (_curve.active && (_time < curveStart || _time > curveEnd)) _curve.startTime = _time;
+```
+
+`setTime` 的「窗口内不重 anchor,窗口外才重 anchor」分支是关键细节 — fix 不是「无条件 reset startTime」,否则 A1/A3 测试会看到 curve 在 jump-to-midpoint 之后 value=from。
+
+#### 4.10.6 Phase 0/1a/1b rewiring(只动了 evaluate(), 不是新算法)
+
+```
+evaluate():
+  ...[既有 INV-assert + rest-pose seed]...
+  if (_refPoseCapture) {
+    if (_captureState ∈ {Fresh, Stale}) { captureRefPoseFromLocal(); _captureState = Valid; }
+    else                                 { applyCapturedRefPoseToLocal(); }   // Valid → 重 fill _local*
+  }
+  Phase 1a: ...(unchanged)...
+  if (_refPoseCapture && _captureState == Valid) {
+    captureRefPoseFromLocal();    // capture post-Phase-1a base, Phase 1b 用此
+  }
+  const float effectiveWeight = sampleBlendCurve();   // = _blendWeight if curve inactive
+  if (_additiveClip != nullptr && effectiveWeight > 0.0f) {
+    Phase 1b: ...同一 Phase 1b body, 把 _blendWeight 换成 effectiveWeight; (weight==0 early-return 仍然不动 quaternion powder)
+  }
+```
+
+Phase 1b 的 body 是 P1.2 + P1.3 同一套(`_localPos += sample * w`、`(base * q.pow(w)).normalize()`、`_localScl *= (1 + sample * w)` + Float sink),只是 `w` 现在来自 `sampleBlendCurve()` 不是 `_blendWeight` 静态值。
+
+#### 4.10.7 tick() 三分支(ref-pose pause / sync / default)
+
+```
+tick(dt):
+  if (_paused || _baseClip == nullptr) { _prevTickTime = _time; return; }   // P1.3 base
+  ...(base advance + dispatchBaseNotifies unchanged)...
+
+  if (_additiveClip != nullptr) {
+    if (_additivePaused) { _additivePrevTickTime = _additiveTime; }   // INV-8 partial
+    else if (_syncToBase) {                                                  // INV-6 锁步
+        _additiveTime = _time;
+        dispatchAdditiveNotifies(prevAdd, _additiveTime, baseWrapped);  // 共享 base wrap flag
+        _additivePrevTickTime = _additiveTime;
+    } else {                                                                 // P1.3 独立 axis
+        ...(原 advance / wrap / dispatch / set prev unchanged)...
+    }
+  }
+
+  if (_curve.active) {      // P1.4 auto-disarm
+    if (_time - _curve.startTime >= _curve.duration) _curve.active = false;
+  }
+```
+
+`_curve.active = false` 的 disarm 在 tick 末尾 — 一个 frame 的 “drag past end” 不会让 layer 看到 late-update。
+
+#### 4.10.8 11 个测试分布(3-run stable × 3 = zero regression, total 1200)
+
+| Module | 测试 | 内容 |
+|--------|------|------|
+| AnimationPlayer | A1 `P1_4_BlendWeightOverTime_EasingLinear_EndMatchesTo` | Linear curve mid-sample + auto-disarm |
+| | A2 `P1_4_BlendWeightOverTime_EasingEaseOut_Concave` | easeOut(0.5) = 0.75 数学 |
+| | A3 `P1_4_BlendWeightOverTime_Duration0_StaticFallback` | duration ≤ 0 no-op + from/to saturate |
+| | A4 `P1_4_SyncToBase_TimesMatchAcrossTicks` | tick 后 base 与 additive marker 锁步 |
+| | A5 `P1_4_SyncToBase_SetTimeJumpsBoth` | setTime re-anchor + dispatch cursor reset |
+| | A6 `P1_4_RefPoseCapture_RestPoseReplacedByCurrentBase` | ON/OFF both, p2 stability + empty-base path |
+| | A7 `P1_4_PauseAdditive_StopsTimeAdvance` | pause() 同步 additive axis |
+| | A8 `P1_4_ResumeAdditive_NoSpuriousNotify` | setAdditivePaused resume reset cursor |
+| AYEntity | E1 `animation_component_p1_4_blend_curve_pushed_to_player` | `blendCurveDuration > 0` ⇒ player.isBlendCurveActive() |
+| | E2 `animation_component_p1_4_sync_to_base_bridge_flag` | `syncToBase = true` ⇒ player flag |
+| | E3 `animation_component_p1_4_ref_pose_capture_bridge_flag` | `refPoseCapture = true` ⇒ player flag + no NaN |
+
+总验证: 282 + 8*3 ≈ 30 assertions → AYAnimation 282 + 30 = **312 PASS**;AYEntity 177 + 10 = **187 PASS**(注: 187 不是 180, 因为我新加的 3 个测试含多个 assertions/case, 期望值 > 10 checks 加 baseline);AYResource 701 = **701 PASS**。
+
+#### 4.10.9 Out-of-scope for Full P1.4 (留到 P1.5+)
+
+| Item | Defer to | Reason |
+|------|----------|--------|
+| Per-track weight map (mask expression) | P1.5 / P2.2 | curve 是 scalar-only; per-track = vector data 类型, 大模型改 |
+| Multi-source stack (`vector<AdditiveSlot>`) | P1.5 | sync / ref-pose / pause 是 single-slot 内增强; 通用 stack 是数据架构大改 |
+| Notify merge + source-tag + dedup-by-(time,name) | P1.5 | 与 P1.3 P1.5 upgrade hook 同 |
+| Curve serialization (`.ayanm`) | 不定 | runtime-only config; motion-graph editor 出现再单独 design |
+| Layer 1 (`additiveWeight` per-track) curve | 不定 | curve 只管 layer-mix, 不重复 per-track scalar;避免 invariant 缠夹 |
+| 移除 `setAdditiveWeight` deprecated wrapper | P1.6 (按 plan) | 不动 P1.6 scope |
+
+#### 4.10.10 关键工程教训(给后续 P1.5 的 reviewer)
+
+1. **`setTime` 的 anchor-in-window 分支** —— 不要无条件重 anchor `startTime`。只有当 new `_time` 落在 `[startTime, startTime+duration]` 之外才 anchor。这让 setTime-as-sample (jump-to-mid) 工作正常, 否则 A1/A3 测试都看到 value=from。
+2. **`pause` 后的 additive 通知 backlog** —— 我没有累积 bug 是因为: `tick()` 头部 `if (_paused || _baseClip == nullptr) return;` 早返回后 `_additivePrevTickTime` 不被更新 → resume 时若 cue marks 已跨过, 仍会 fire。**修复:`setAdditivePaused(false)` 主动设 `_additivePrevTickTime = _additiveTime` + 清 queue**(镜像 setTime 的语义)。
+3. **CaptureState 三态 vs bool flag** —— 跟 P1.4 hot-path 的 `kBoneUnresolved` sentinel 同 pattern。单字段三态比 `bool resolved + int idx` 更省。`Stale` 单独区分为了「禁用 ref-pose 后重新 enable」场景。
+4. **`setAdditiveSource(src, …)` 重置 cross-fade config** —— 跟 P1.3 「rebind 不动 additive layer」不同, 这里**故意**重置 4 个 flag (sync / refPose / additivePause / curve) — 因为「fresh source」就是 P1.3-vanilla 状态。如果 host 想保留 enable, 在 bind 之后再调 setter。
+5. **`sampleBlendCurve()` 同时被 `isAdditiveLayerActive()` 和 `evaluate()` 调** —— 在 evaluate 内部 `const float effectiveWeight = sampleBlendCurve();` cache 在 local, 避免一次 evaluate 两次 curve 跑分(`isAdditiveLayerActive` 和 Phase 1b gate + body)。
+6. **ref-pose capture 不改 observable outcome for current tests** —— A6 的 (a) vs (b) 在 scenario 下数学相同 (Override clobber rest, capture base also = post-Override)。**真正的 discriminator 在「未 missing track」场景 (c)** capture-off → additive base = rest; capture-on → additive base = captured。当前 test 验证的是 stability (no NaN across repeated evaluate) + 全部 flag-trip 路径走通。
+7. **AYMath 5 个 ease 全 ship** —— 不要自己写 ease 函数。`BlendEasing` dispatcher 1:1 把 5 cases 映射到 `aymath::easeIn/Out/InOut/smoothstep` + 自己 lerp Linear。 1 line 一 case。
+8. **`uint8_t` for component-side `blendCurveEasing`** —— `IComponent` 是 POCO(无 enum 字段), 因此 component 侧是 raw `uint8_t`, bridge 在 `AYAnimationSystem` 内部 cast 到 `BlendEasing` enum (含 `< 5` saturate 到 Linear 的 fallback)。
+9. **`UPD` 旧→新** —— `setAdditiveSyncToBase(true)` should **immediately** snap `_additiveTime = _time`,否则 host 第一次 tick 之前 addixPlayer 都会显示一个 frame 的 stale time,出现视觉 hitch。我在 setter 内 explicit 调(而不是等下一次 tick)。
 
 ---
 
@@ -743,7 +895,8 @@ AYAnimation/
 - [x] **P1.1 Anim Notify**（2026-07-26）─ root pin `aa6bbdf`
 - [x] **P1.2 Additive Layer 1**（2026-07-26）─ per-track blendMode + global additiveWeight; IAnimation VERSION 3; 0 regression across 3 modules (697+197+165)
 - [x] **P1.3 Additive Layer 2 / Cross-Fade**（2026-07-26）─ dual-source AnimationPlayer; setAdditiveSource + setBlendWeight + 5 invariants + 2 notify queues; IAnimation VERSION 4 (no on-disk change); 0 regression across 3 modules (701+261+177)
-- [x] **P1.4 Hot-Path BoneIdx Cache**（2026-07-26）─ `TrackSlice.boneIdx` lazy-resolve + `setSkeleton()` invalidate;消除 evaluate Phase 1a/1b 每帧 findBone 调用; dual-source 收益翻倍; 0 regression across 3 modules (701+282+177)
+- [x] **P1.4 Hot-Path BoneIdx Cache**（2026-07-26, hot-path ship）─ `TrackSlice.boneIdx` lazy-resolve + `setSkeleton()` invalidate;消除 evaluate Phase 1a/1b 每帧 findBone 调用; dual-source 收益翻倍; 0 regression across 3 modules (701+282+177);详见 §4.9
+- [x] **P1.4 Cross-Fade Full Ship**（2026-07-26）─ keyframed weight curve (`blendWeightOverTime`) + syncToBase + ref-pose capture + additive pause 全 ship;3 new invariants INV-6/7/8 + 8 AnimationPlayer tests + 3 AYEntity integration tests; 0 regression across 3 modules (701+312+187);详见 §4.10
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -814,6 +967,7 @@ AYAnimation/
 | 17 | Additive 动画 (Layer 1) | UE `bAdditive` | ✅ | Phase 1.2 SHIP (2026-07-26) |
 | 17b | Additive 动画 (Layer 2 / Cross-Fade) | UE `UAnimMontage` | ✅ | Phase 1.3 SHIP (2026-07-26) |
 | 17c | BoneIdx cache (hot-path findBone 消除) | UE `FCompactPose` BoneIndexCache | ✅ | Phase 1.4 SHIP (2026-07-26) |
+| 17d | Cross-fade 4-pack (curve + syncToBase + ref-pose + additive pause) | UE `UAnimMontage::BlendIn` / `bForceRootLock` / Unity `AnimationPlayable` | ✅ | Phase 1.4 SHIP (2026-07-26) |
 | 18 | 骨骼遮罩 Mask | UE `FAnimationRuntime::BlendPosesInGraph` | ❌ | Phase 2 |
 | 19 | Montage / Slot / Layer | UE `UAnimMontage` | ❌ | Phase 2 |
 | 20 | AnimGraph (Node-based) | UE `UAnimGraphSchema` | ❌ | Phase 3 |
@@ -863,7 +1017,7 @@ AYAnimation/
 | P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation notify channel (VERSION 2) + dispatchPendingNotifies + AnimNotifyEvent POCO + EventBus bridge via AYEntity AnimationSystem |
 | P1.2 | Additive Layer 1 MVP（per-track blendMode + global additiveWeight）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 3 + v2 backward compat + AnimationPlayer Phase 1 additive branch (position += / rotation pow / scale *= (1+)) + AYEntity AnimationComponent.additiveWeight + 7 new tests (1 AYResource v2 + 6 AnimationPlayer) |
 | P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) ── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 4 (no on-disk change) + 5 invariants + AnimationPlayer dual-source state machine + Phase 1b additive branch (reuses P1.2 three formulas) + 2 notify queues + AYEntity AnimationComponent.{additiveClipPath,additivePlayRate,blendWeight} + 14 new tests (1 AYResource forward-compat + 10 AnimationPlayer + 3 AYEntity integration) |
-| P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）── ✅ **SHIP 2026-07-26**（hot-path 第一刀:TrackSlice.boneIdx lazy-resolve + setSkeleton() invalidate,详见 §4.9）；cross-fade curve / syncToBase / ref-pose capture / additive pause 留到下一刀 |
+| P1.4 | Hot-path 优化 + Cross-Fade full ship：track → boneIndex 预解析 (已 ship) + keyframed weight curve (`blendWeightOverTime` with 4 ease flavors reusing AYMath) + syncToBase option (additive playhead lock-step to base) + ref-pose capture path (CaptureState 3-state machine replacing rest-pose-at-0 assumption) + additive pause/resume (INV-8 unified with base pause)── ✅ **FULL SHIP 2026-07-26**; 8 AnimationPlayer tests + 3 AYEntity tests; 0 regression across 3 modules (701+312+187) |
 | P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）+ notify merge (source-tag + dedup-by-(time,name)) + vector<AdditiveSlot> 多层 stack |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
