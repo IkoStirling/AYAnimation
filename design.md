@@ -520,14 +520,106 @@ distinguish which source fired a marker use clipName or external context.
 
 ### 4.8 ❌ Deferred to P1.4 / Phase 2 §14
 
-- cross-fade curve (`blendWeightOverTime(from, to, duration, easing)`) ── **P1.4**
+- ✅ ~~cross-fade curve (`blendWeightOverTime(from, to, duration, easing)`)~~ ── **shipped as P1.4 hot-path (boneIdx cache), not curve**; curve itself still **P1.4 cross-fade**
 - per-track weight map (mask expression) ── **P1.5 / P2.2**
-- syncToBase axis option ── **P1.4**
-- ref-pose capture path (replace rest-pose assumption) ── **P1.4**
+- syncToBase axis option ── **P1.4 cross-fade** (still open)
+- ref-pose capture path (replace rest-pose assumption) ── **P1.4 cross-fade** (still open)
 - notify merge + source-tag + dedup-by-(time,name) ── **P1.5**
 - multi-source stack (`vector<AdditiveSlot>`) ── **P1.5**
-- additive layer obeys `pause()` ── **P1.4**
+- additive layer obeys `pause()` ── **P1.4 cross-fade** (still open)
 - drop deprecated `setAdditiveWeight` wrapper ── **P1.6**
+
+---
+
+### 4.9 ✅ Hot-Path BoneIdx Cache (Phase 1.4 — P1.4 SHIP — 2026-07-26)
+
+P1.3 双 source 后,`evaluate()` Phase 1a/1b 的 `_skeleton->findBone(tr.nodeName.c_str())` 调用从单 source 的 `O(track_count × framerate)` 翻倍到 dual source。`findBone` 在 `ISkeleton` 实现里是 hash lookup 或线性扫描,cheap per call 但 hot path multiply 后显著 cost — 每个 entity × 每帧 × 两 source 全跑一次 name 解析。
+
+**P1.4 解法**: 把 resolved bone index 缓存到 `TrackSlice.boneIdx`,**lazy-resolve on first evaluate**,**setSkeleton() invalidate**。这是零算法修改、纯 hot-path 优化。
+
+#### 4.9.1 Cache 字段
+
+```cpp
+struct TrackSlice {
+    // ... existing P0 + P1.2 fields ...
+    int32_t boneIdx = INT32_MIN;   // P1.4 — sentinel = "unresolved"
+};
+
+constexpr int32_t kBoneUnresolved = INT32_MIN;   // 命名空间级
+```
+
+Sentinel 语义:
+- `INT32_MIN` (kBoneUnresolved) = "未解析" (first-frame lazy resolve 状态)
+- `-1` = "解析过但 skeleton 里没这个名字" (cached negative — 不再重查)
+- `>= 0` = 有效 bone index (cached hit)
+
+为什么不是 `bool resolved` flag + `int idx` 合并:`INT32_MIN` 单一字段即可区分三态,节省 4 bytes per slice 且 branch 更简单。
+
+#### 4.9.2 State machine 加 2 个 private helpers
+
+```cpp
+// Set every TrackSlice.boneIdx back to kBoneUnresolved.
+// Called from setSkeleton() once the bone name table changes.
+void invalidateBoneIndexCache();
+
+// Lazy single-slice resolver. Called inside evaluate() at the start
+// of each Phase 1a/1b track iteration. If boneIdx is already
+// resolved (>= 0 or -1), no-op. Otherwise calls findBone once and
+// caches the result.
+void resolveBoneIdxOnce(TrackSlice& slice);
+```
+
+#### 4.9.3 Hot-path call site
+
+```cpp
+// evaluate() Phase 1a (existing _tracks loop):
+for (TrackSlice& tr : _tracks) {
+    resolveBoneIdxOnce(tr);          // O(1) after first frame
+    const int boneIdx = tr.boneIdx;  // cache hit — no findBone call
+    if (boneIdx < 0) {
+        // orphan-track policy (Float sink if Float type)
+        continue;
+    }
+    // ... sample + write _local* ...
+}
+
+// evaluate() Phase 1b (existing _additiveTracks loop, P1.3):
+for (TrackSlice& tr : _additiveTracks) {
+    resolveBoneIdxOnce(tr);          // same helper, additive layer
+    const int boneIdx = tr.boneIdx;
+    // ...
+}
+```
+
+#### 4.9.4 Invalidation contract
+
+`setSkeleton()` 末尾调 `invalidateBoneIndexCache()`:
+
+```cpp
+void AnimationPlayer::setSkeleton(const ISkeleton* skel) {
+    _skeleton = skel;
+    // ... resize _local*, seed rest pose, topology assert ...
+    invalidateBoneIndexCache();   // P1.4 — every slice rebuilds against new skeleton
+}
+```
+
+`play()` / `setAdditiveSource()` **不** invalidate — skeleton 没变,新加进 `_tracks` 的 slice `boneIdx = INT32_MIN`,第一个 evaluate 时 lazy resolve。
+
+#### 4.9.5 Invariants (debug-only asserts,可选)
+
+当前没 assert — lazy resolve 是 idempotent,contract 简单到不需要运行期检查。
+
+#### 4.9.6 Test coverage
+
+`AYTest_AnimationPlayer.cpp` +4 cases:
+- **P1.4.1** `BoneIdxCache_StableAcrossRepeatedEvaluates` — 多次 evaluate 输出 stable (cache hit 不变)
+- **P1.4.2** `BoneIdxCache_SetSkeletonInvalidates` — swap skeleton 后,output 反映新 skeleton 的 rest pose
+- **P1.4.3** `BoneIdxCache_MissingNameCachedAsNegative` — orphan track 不 crash, cached as -1
+- **P1.4.4** `BoneIdxCache_DualSource_BothCached` — 双 source 的 base + additive 都走 cache
+
+#### 4.9.7 Out-of-scope (P1.4 剩下的工作)
+
+P1.4 hot-path 完成;P1.4 cross-fade 自身 (curve / syncToBase / ref-pose capture / additive pause) 留到下一个 P1.4 ship 块。
 
 ---
 
@@ -651,6 +743,7 @@ AYAnimation/
 - [x] **P1.1 Anim Notify**（2026-07-26）─ root pin `aa6bbdf`
 - [x] **P1.2 Additive Layer 1**（2026-07-26）─ per-track blendMode + global additiveWeight; IAnimation VERSION 3; 0 regression across 3 modules (697+197+165)
 - [x] **P1.3 Additive Layer 2 / Cross-Fade**（2026-07-26）─ dual-source AnimationPlayer; setAdditiveSource + setBlendWeight + 5 invariants + 2 notify queues; IAnimation VERSION 4 (no on-disk change); 0 regression across 3 modules (701+261+177)
+- [x] **P1.4 Hot-Path BoneIdx Cache**（2026-07-26）─ `TrackSlice.boneIdx` lazy-resolve + `setSkeleton()` invalidate;消除 evaluate Phase 1a/1b 每帧 findBone 调用; dual-source 收益翻倍; 0 regression across 3 modules (701+282+177)
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -720,6 +813,7 @@ AYAnimation/
 | 16 | Blend 1D / 2D | UE `BlendSpace` | ❌ | Phase 2 |
 | 17 | Additive 动画 (Layer 1) | UE `bAdditive` | ✅ | Phase 1.2 SHIP (2026-07-26) |
 | 17b | Additive 动画 (Layer 2 / Cross-Fade) | UE `UAnimMontage` | ✅ | Phase 1.3 SHIP (2026-07-26) |
+| 17c | BoneIdx cache (hot-path findBone 消除) | UE `FCompactPose` BoneIndexCache | ✅ | Phase 1.4 SHIP (2026-07-26) |
 | 18 | 骨骼遮罩 Mask | UE `FAnimationRuntime::BlendPosesInGraph` | ❌ | Phase 2 |
 | 19 | Montage / Slot / Layer | UE `UAnimMontage` | ❌ | Phase 2 |
 | 20 | AnimGraph (Node-based) | UE `UAnimGraphSchema` | ❌ | Phase 3 |
@@ -769,8 +863,8 @@ AYAnimation/
 | P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation notify channel (VERSION 2) + dispatchPendingNotifies + AnimNotifyEvent POCO + EventBus bridge via AYEntity AnimationSystem |
 | P1.2 | Additive Layer 1 MVP（per-track blendMode + global additiveWeight）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 3 + v2 backward compat + AnimationPlayer Phase 1 additive branch (position += / rotation pow / scale *= (1+)) + AYEntity AnimationComponent.additiveWeight + 7 new tests (1 AYResource v2 + 6 AnimationPlayer) |
 | P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) ── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 4 (no on-disk change) + 5 invariants + AnimationPlayer dual-source state machine + Phase 1b additive branch (reuses P1.2 three formulas) + 2 notify queues + AYEntity AnimationComponent.{additiveClipPath,additivePlayRate,blendWeight} + 14 new tests (1 AYResource forward-compat + 10 AnimationPlayer + 3 AYEntity integration) |
-| P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）|
-| P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）|
+| P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）── ✅ **SHIP 2026-07-26**（hot-path 第一刀:TrackSlice.boneIdx lazy-resolve + setSkeleton() invalidate,详见 §4.9）；cross-fade curve / syncToBase / ref-pose capture / additive pause 留到下一刀 |
+| P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）+ notify merge (source-tag + dedup-by-(time,name)) + vector<AdditiveSlot> 多层 stack |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
 
