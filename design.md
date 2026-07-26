@@ -299,11 +299,98 @@ void tick(float dt) {
 - ✅ Seek (`setTime`) 不立刻 fire，prev snap to current，下一 tick 才 fire
 - ⚠️ notifyName / clipName 是 const ptr → IAnimation string (emit-only contract)，订阅者不要 retain
 
-### 4.5 ❌ 不在本期（移至 Phase 2 §14）
+### 4.5 ✅ Additive Layer 1 (Phase 1.2 P1.2) — SHIP
 
-- crossFade / blend / Additive ── **Phase 2**
-- 多 clip 同时播放 / Slot / Layer ── **Phase 2**
-- 骨骼遮罩 ── **Phase 2**
+- ✅ Per-track `AnimBlendMode {Override=0, Additive=1}` on `IAnimation::AnimTrack` (mirrors `AnimTrackType` shape — single byte, no parallel vector)
+- ✅ IAnimation VERSION 3 binary format: one byte per track between `valueType` and `timeCount`; `MAGIC` unchanged; v1/v2 backward compat (those formats have no byte at that slot, so the v3 reader skips reading and the field stays at struct default `Override` — bit-identical to pre-P1.2 behavior)
+- ✅ `AnimationPlayer::setAdditiveWeight(w)` saturating setter (clamps to `[0, 1]`); `_additiveWeight` private field (default 1.0f)
+- ✅ evaluate Phase 1 split: Override path is byte-identical to pre-P1.2; Additive path applies delta math:
+  - position: `_localPos[k] += sample[k] * weight`
+  - rotation: `(base * sample.pow(weight)).normalize()` — `pow` scales the rotation angle (NOT literal `*` which composes fully); weight==0 short-circuits before `pow()` to avoid a degenerate case in `MathTypes::FQuaternion::pow` that returns the original q (not identity) when `sinHalfAngle < 1e-6f`
+  - scale: `_localScl[k] *= (1.0f + sample[k] * weight)` — UE convention, relative blend, scale never collapses to zero
+  - Float tracks always go through `setFloatCurveSink` regardless of blend mode (additive is a local-TRS concept)
+- ✅ AYEntity bridge: `AnimationComponent::additiveWeight` field (default 1.0f, serialized via `kAttrSerialize`); `AnimationSystem::onUpdate` pushes it per frame next to `setPlayRate`/`setLoop`
+- ✅ Ref-pose-at-frame-0 assumption: additive clips must be authored with sample value = identity delta at t=0; documented in the IAnimation enum comment and in design §4.6 below. A `ref-pose` capture path from the skeleton's bind pose is deferred (Layer 2 / P2.x).
+- ❌ **OUT of scope (deferred)**: cross-fade between separate base + additive clips (P1.3), per-bone / skeleton mask (P2.2), local-space vs world-space additive, per-bone additive weight
+
+### 4.6 Additive Layer 1 contract (Phase 1.2 detail)
+
+Full contract for the additive blend layer — pin the math so future
+contributors don't accidentally change the semantics of a shipped API.
+
+**Blend modes** (`AnimBlendMode` enum on `IAYAnimation.h:38`):
+```cpp
+enum class AnimBlendMode : UInt8 {
+    Override = 0,   // default — bit-identical to v2 behavior
+    Additive = 1,   // local-TRS delta on top of the bone's rest pose /
+                    //         a prior Override track's write
+};
+```
+
+**Math per AnimTrack property type** (evaluated inside `AnimationPlayer::evaluate`
+Phase 1, after the rest-pose seed at the top of the function and BEFORE Phase 2
+world-matrix accumulation):
+
+| Property   | Override behavior (default) | Additive behavior (Layer 1) |
+|------------|------------------------------|------------------------------|
+| `position` | `_localPos[k] = sample[k]` | `_localPos[k] += sample[k] * _additiveWeight` |
+| `rotation` | `_localRot[q] = sample[q]` | `(base * sample.pow(_additiveWeight)).normalize()` — `base` is the rotation already in `_localRot` (rest-pose seed or a prior Override track's write); see caveat below |
+| `scale`    | `_localScl[k] = sample[k]` | `_localScl[k] *= (1.0f + sample[k] * _additiveWeight)` — relative (UE convention) |
+| `weight` / Float | push `(nodeName, property, value)` to `setFloatCurveSink` if registered | (same — Float tracks are NOT affected by blendMode) |
+
+**Caveat: rotation delta math uses `pow`, not literal `*`.**
+
+A quaternion has only one rotation amount (the angle). Literal `*` composes
+two rotations fully — `base * quarterY` gives a quarter-Y rotation regardless
+of `_additiveWeight`. `pow(weight)` scales the angle proportionally so
+`weight=0.5` means "half the delta", `weight=1.0` means the full delta,
+`weight=0` means "no rotation contribution".
+
+When `_additiveWeight == 0`, `FQuaternion::pow` returns the *original*
+quaternion in its `sinHalfAngle < 1e-6f` branch — NOT identity. Without an
+early-out that would yield `base * sample` instead of `base`. The early-out
+in `AnimationPlayer.cpp:497-501` keeps the no-op contract.
+
+**Authoring requirement (the "ref-pose-at-frame-0" assumption):**
+
+Additive clips must be authored with sample value = identity delta at t=0.
+That is, the sampled value at the first keyframe is `position = (0,0,0)`,
+`rotation = identity`, `scale = (1,1,1)` (or the equivalent "no change"
+delta). Non-ref-pose-at-0 exports will drift visually: the rest pose at t=0
+already shows the delta from the additive clip, and only subsequent
+keyframes carry correct additive behavior.
+
+This is the same assumption Unreal `UAnimSequence::bAdditive` makes
+(`AdditiveAnimSettings` documents it) and the same assumption Unity's
+`AnimationLayer.Additive` makes. A `ref-pose` capture path from the
+skeleton's bind pose is deferred to Layer 2 (P2.x).
+
+**`_additiveWeight` saturating setter:**
+
+`setAdditiveWeight(-0.5f)` clamps to 0; `setAdditiveWeight(2.0f)` clamps to 1.
+This is defensive against caller typos — a negative `pow(weight)` on a
+quaternion is undefined and would NaN the pose matrix.
+
+**Per-frame push from `AnimationSystem::onUpdate`:**
+
+```cpp
+skel->player.setPlayRate(anim->playRate);
+skel->player.setLoop(anim->looping);
+skel->player.setAdditiveWeight(anim->additiveWeight);  // P1.2
+```
+
+The push runs alongside the existing `setPlayRate` / `setLoop` pushes.
+Default `AnimationComponent::additiveWeight = 1.0f` matches the
+AnimationPlayer's default `_additiveWeight`, so pre-P1.2 clips (no
+Additive tracks) behave bit-identically.
+
+### 4.7 ❌ 不在本期（移至 Phase 2 §14）
+
+- crossFade / multi-clip / Slot / Layer ── **Phase 2**
+- per-bone / skeleton mask ── **P2.2**
+- local-space vs world-space additive ── **P2.x**
+- per-bone additiveWeight (currently one global scalar) ── **P2.x**
+- ref-pose capture path (currently assumes t=0 is ref pose) ── **P2.x**
 
 ---
 
@@ -413,17 +500,19 @@ AYAnimation/
 - [x] 时间管理 + 循环 wrap
 - [x] 11 unit tests 3-run stable
 
-### Phase 1.5: P0 修复收口 ── 🚧 进行中（2026-07-26 起）
+### Phase 1.5: P0 修复收口 ── ✅ SHIP（2026-07-26）
 
 - [x] 删 `ayt::anim::Skeleton` / `ayt::anim::Animation` parallel type
 - [x] 删 `AYEntity::adapter::load{Skeleton,Animation}` 适配器
 - [x] `AnimationPlayer::play(const IAnimation*)` 改消费 AYResource
 - [x] ticks → seconds 在 `setClip` 一次性预转换
 - [x] `KeySampler::sampleTrackQuaternion` 加 `dot < 0` 最短弧选优
-- [ ] Float track sink 出口 + host subscribe API
-- [ ] Topology 顺序 assert（parent index 必先于 child）
-- [ ] 矩阵方向约定 lock-test（IBM = bindWorld.inverse()）
-- [ ] IBM = 0 NaN-safe 行为验证
+- [x] Float track sink 出口 + host subscribe API
+- [x] Topology 顺序 assert（parent index 必先于 child）
+- [x] 矩阵方向约定 lock-test（IBM = bindWorld.inverse()）
+- [x] IBM = 0 NaN-safe 行为验证
+- [x] **P1.1 Anim Notify**（2026-07-26）─ root pin `aa6bbdf`
+- [x] **P1.2 Additive Layer 1**（2026-07-26）─ per-track blendMode + global additiveWeight; IAnimation VERSION 3; 0 regression across 3 modules (697+197+165)
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -491,7 +580,7 @@ AYAnimation/
 | 14 | **IBM = 0 NaN-safe** | UE `Check` macros | 🔧 | P0 |
 | 15 | CrossFade | UE `UAnimMontage` | ❌ | Phase 2 |
 | 16 | Blend 1D / 2D | UE `BlendSpace` | ❌ | Phase 2 |
-| 17 | Additive 动画 | UE `bAdditive` | ❌ | Phase 2 |
+| 17 | Additive 动画 (Layer 1) | UE `bAdditive` | ✅ | Phase 1.2 SHIP (2026-07-26) |
 | 18 | 骨骼遮罩 Mask | UE `FAnimationRuntime::BlendPosesInGraph` | ❌ | Phase 2 |
 | 19 | Montage / Slot / Layer | UE `UAnimMontage` | ❌ | Phase 2 |
 | 20 | AnimGraph (Node-based) | UE `UAnimGraphSchema` | ❌ | Phase 3 |
@@ -539,8 +628,8 @@ AYAnimation/
 | Step | 内容 |
 |---|---|
 | P1.1 | Anim Notify 事件系统（多播 `function<void(NotifyEvent)>`）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation notify channel (VERSION 2) + dispatchPendingNotifies + AnimNotifyEvent POCO + EventBus bridge via AYEntity AnimationSystem |
-| P1.2 | Additive 动画层 |
-| P1.3 | CrossFade in/out |
+| P1.2 | Additive Layer 1 MVP（per-track blendMode + global additiveWeight）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 3 + v2 backward compat + AnimationPlayer Phase 1 additive branch (position += / rotation pow / scale *= (1+)) + AYEntity AnimationComponent.additiveWeight + 7 new tests (1 AYResource v2 + 6 AnimationPlayer) |
+| P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) |
 | P1.4 | Hot-path 优化：track → boneIndex 预解析（消除每帧 hash + strcmp）|
 | P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）|
 
