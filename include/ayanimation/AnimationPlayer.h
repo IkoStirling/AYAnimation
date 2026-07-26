@@ -178,7 +178,8 @@ struct BlendCurve {
                                        // (or setTime t if the host seeks over the
                                        // active range)
     bool         active      = false;  // false → sampleBlendCurve() returns
-                                       // the static _blendWeight unchanged
+                                       // `from` (static per-slot weight;
+                                       // setBlendWeight mirrors onto slot[0])
 };
 
 // P1.4 — 3-state machine for the ref-pose capture path. Mirrors the

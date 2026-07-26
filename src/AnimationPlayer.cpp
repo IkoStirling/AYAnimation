@@ -470,11 +470,13 @@ void AnimationPlayer::setTime(float t)
             s.time = _time;
             s.prevTickTime = s.time;
         }
+        // P1.4: curve clock is base `_time`, not the (possibly looping)
+        // slot playhead — seeking outside the window re-anchors "now".
         if (s.curve.active) {
             const float curveStart = s.curve.startTime;
             const float curveEnd   = curveStart + s.curve.duration;
-            if (s.time < curveStart || s.time > curveEnd) {
-                s.curve.startTime = s.time;
+            if (_time < curveStart || _time > curveEnd) {
+                s.curve.startTime = _time;
             }
         }
     }
@@ -484,14 +486,18 @@ void AnimationPlayer::setTime(float t)
 
 // P1.3 — canonical weight setter (was setAdditiveWeight in P1.2). In
 // P1.5 the static blend weight lives on the base track path (_blendWeight)
-// AND on per-slot AdditiveSlot::curve. setBlendWeight writes the
-// base-side scalar that Phase 1a's per-track additive uses (P1.2
-// invariant); per-slot weight goes through setAdditiveLayerWeight.
+// AND on slot[0].curve.from (sampleLayerBlendCurve inactive path).
+// Phase 1a per-track Additive still reads _blendWeight (P1.2 invariant);
+// Phase 1b slot[0] reads sampleLayerBlendCurve → curve.from when inactive.
+// Keep both in sync so setBlendWeight remains the single-slot P1.3 API.
 void AnimationPlayer::setBlendWeight(float w)
 {
     if (w < 0.0f) w = 0.0f;
     if (w > 1.0f) w = 1.0f;
     _blendWeight = w;
+    if (AdditiveSlot* s = getSlot(0)) {
+        s->curve.from = w;
+    }
 }
 
 // ===========================================================================
@@ -569,11 +575,20 @@ void AnimationPlayer::tick(float dt)
             s.prevTickTime = s.time;
         }
 
-        // P1.4 — curve auto-disarm per-slot.
+        // P1.4 — curve auto-disarm per-slot on the BASE clock. Using
+        // s.time here wrongly restarts the window whenever an independent
+        // looping additive playhead wraps (tick past duration → t≈0 →
+        // elapsed tiny → active stays true forever).
         if (s.curve.active) {
-            const float elapsed = s.time - s.curve.startTime;
+            const float elapsed = _time - s.curve.startTime;
             if (elapsed >= s.curve.duration) {
                 s.curve.active = false;
+                // Latch end weight so inactive sampleLayerBlendCurve
+                // returns `to` (static weight takeover after the fade).
+                s.curve.from = s.curve.to;
+                if (&s == &_additiveSlots[0]) {
+                    _blendWeight = s.curve.to;
+                }
             }
         }
     }
@@ -968,6 +983,17 @@ void AnimationPlayer::evaluate()
         }
     }
 
+    // INV-7 Phase 0 — Valid slots re-seed `_local*` from the previous
+    // post-Phase-1a capture so bones the base clip does not write keep
+    // their captured base (not rest). Fresh/Stale skip apply; they
+    // capture after Phase 1a below.
+    for (AdditiveSlot& s : _additiveSlots) {
+        if (s.clip == nullptr || !s.refPoseCapture) continue;
+        if (s.captureState == CaptureState::Valid) {
+            applyCapturedRefPoseFromSlot(s);
+        }
+    }
+
     // Phase 1 — sample every track at _time, write into the matched bone's
     // local slot. Tracks whose nodeName doesn't resolve are silently skipped
     // (plan §5.4 — missing optional animation must not crash).
@@ -1062,33 +1088,30 @@ void AnimationPlayer::evaluate()
         }
     }
 
+    // INV-7 — capture post-Phase-1a base for every ref-pose slot.
+    // Phase 1b adds deltas on top of this `_local*`; it must NOT
+    // re-capture the post-additive final pose (that double-counts).
+    for (AdditiveSlot& s : _additiveSlots) {
+        if (s.clip == nullptr || !s.refPoseCapture) continue;
+        captureRefPoseFromSlot(s);
+        s.captureState = CaptureState::Valid;
+    }
+
     // Phase 1b — P1.5 ADDITIVE LAYER STACK.
     //
     // Per-slot loop over _additiveSlots (ordered: slot 0 first, slot 7
     // last). Each slot independently:
-    //   - Runs ref-pose capture / apply-captured via
-    //     captureRefPoseFromSlot / applyCapturedRefPoseFromSlot.
     //   - Samples every track at slot.time (per-slot independent axis).
     //   - Applies the per-track blendMode math (Override → write,
     //     Additive → += / *= / q.pow()).
     //   - Honors the per-track mask (slot K's trackWeights[] indexed by
     //     track index; empty → uniform 1.0f).
+    // Ref-pose apply/capture already ran above (Phase 0 / post-1a).
     for (uint32_t slotIdx = 0; slotIdx < _additiveSlots.size(); ++slotIdx) {
         AdditiveSlot& s = _additiveSlots[slotIdx];
         if (s.clip == nullptr) continue;
         const float effectiveWeight = sampleLayerBlendCurve(s);
         if (effectiveWeight <= 0.0f) continue;
-
-        // INV-7 per-slot — ref-pose capture lifecycle on this slot.
-        if (s.refPoseCapture) {
-            if (s.captureState == CaptureState::Fresh
-                || s.captureState == CaptureState::Stale) {
-                captureRefPoseFromSlot(s);
-                s.captureState = CaptureState::Valid;
-            } else {
-                applyCapturedRefPoseFromSlot(s);
-            }
-        }
 
         // Sample time = s.time (per-slot independent from base _time).
         for (TrackSlice& tr : s.tracks) {
@@ -1194,11 +1217,6 @@ void AnimationPlayer::evaluate()
                 }
             }
         }
-
-        // INV-7 per-slot post-capture (mirror of P1.4 single-slot block).
-        if (s.refPoseCapture && s.captureState == CaptureState::Valid) {
-            captureRefPoseFromSlot(s);
-        }
     }
 
     // Phase 2 — accumulate world = parent.world * localTRS.
@@ -1269,6 +1287,10 @@ bool AnimationPlayer::setAdditiveLayerSource(uint32_t slotId,
     s.captureState     = CaptureState::Fresh;
     s.paused           = false;
     s.curve.active     = false;
+    // Inherit the current static weight. Default BlendCurve::from is 0,
+    // which would make isAdditiveLayerActive / Phase 1b treat a freshly
+    // bound layer as weight-0 (silent no-op) until setBlendWeight.
+    s.curve.from       = (slotId == 0) ? _blendWeight : 1.0f;
     // P1.5 NEW — per-track mask resets to uniform (empty vector).
     s.trackWeights.clear();
     return true;
@@ -1314,6 +1336,10 @@ void AnimationPlayer::setAdditiveLayerWeight(uint32_t slotId, float w)
     if (w < 0.0f) w = 0.0f;
     if (w > 1.0f) w = 1.0f;
     s->curve.from = w;
+    // Slot 0 mirrors P1.3 _blendWeight (Phase 1a Additive + getBlendWeight).
+    if (slotId == 0) {
+        _blendWeight = w;
+    }
     // to is left at its current value so a future blendWeightOverTime
     // call still has a meaningful end value. If a curve is active,
     // the static weight only takes over after the curve disarms.
@@ -1346,7 +1372,9 @@ void AnimationPlayer::blendLayerWeightOverTime(uint32_t slotId,
     s->curve.to        = to;
     s->curve.duration  = duration;
     s->curve.easing    = easing;
-    s->curve.startTime = s->time;   // anchor to slot time, not base time
+    // P1.4 contract: curve window is keyed off base `_time` so an
+    // independent looping additive playhead cannot wrap the fade clock.
+    s->curve.startTime = _time;
     s->curve.active    = true;
 }
 
@@ -1408,12 +1436,11 @@ void AnimationPlayer::setAdditiveLayerRefPoseCapture(uint32_t slotId, bool v)
     AdditiveSlot* s = getSlot(slotId);
     if (s == nullptr || s->clip == nullptr) return;
     s->refPoseCapture = v;
+    // Do NOT eagerly capture here — `_local*` is still rest / stale until
+    // the next evaluate()'s Phase 1a. Leave Fresh so evaluate captures
+    // the post-Phase-1a base (INV-7 / design.md §4.10.6).
     if (!v) {
         s->captureState = CaptureState::Fresh;
-    } else if (s->captureState == CaptureState::Fresh && _skeleton != nullptr) {
-        // First-time-on path: capture now against the seeded _local*.
-        captureRefPoseFromSlot(*s);
-        s->captureState = CaptureState::Valid;
     }
 }
 
@@ -1485,9 +1512,12 @@ void AnimationPlayer::setAdditivePaused(bool paused)
 float AnimationPlayer::sampleLayerBlendCurve(const AdditiveSlot& slot) const
 {
     if (!slot.curve.active) {
+        // Static per-slot weight (setBlendWeight / setAdditiveLayerWeight /
+        // post-disarm latch of `to`).
         return slot.curve.from;
     }
-    const float elapsed = slot.time - slot.curve.startTime;
+    // Curve progress rides the base clock — see blendLayerWeightOverTime.
+    const float elapsed = _time - slot.curve.startTime;
     if (slot.curve.duration <= 0.0f) {
         return slot.curve.to;
     }
