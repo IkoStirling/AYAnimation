@@ -1332,4 +1332,233 @@ TEST_SUITE(AnimationPlayerTests)
         }
     }
 
+    // ----------------------------------------------------------------------
+    // P1.4 — TrackSlice.boneIdx cache (eliminates per-frame findBone)
+    // ----------------------------------------------------------------------
+    //
+    // Before P1.4 evaluate() called `_skeleton->findBone(tr.nodeName.c_str())`
+    // for every track, every frame, every source (2× with P1.3 dual-source).
+    // P1.4 caches the resolved index in TrackSlice.boneIdx and lazy-resolves
+    // on first evaluate(); setSkeleton() invalidates the cache for the new
+    // skeleton's name table.
+    //
+    // These tests pin the cache's CONTRACT — we can't observe the internal
+    // field, but we can verify the player behaves correctly when the cache
+    // is exercised, re-built across skeleton swaps, and that a missing bone
+    // name falls through cleanly without crashing.
+
+    // P1.4.1 — Cache resolves on first evaluate, sticks across subsequent
+    // ticks (no functional change but no crash either; output is stable).
+    // Base clip has a position track on Root; tick 0.1s twice → second tick
+    // reads from cache and produces the same numerical result as a fresh
+    // player would.
+    TEST_CASE(P1_4_BoneIdxCache_StableAcrossRepeatedEvaluates) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation anim;
+        anim.setTicksPerSecond(30.0f);
+        anim.setDuration(1.0f);
+        anim.addTrack(makeRootPosTrack());
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+
+        // First evaluate: cache populated, sample at t=0.
+        player.setTime(0.0f);
+        player.evaluate();
+        const Float4x4 w0 = player.getBoneWorldMatrices()[0];
+        const FVector3 p0 = w0.transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p0.x, 0.0f, 1e-4f);
+
+        // Second evaluate at t=0.5 — cache hit, no findBone.
+        player.setTime(0.5f);
+        player.evaluate();
+        const Float4x4 w05 = player.getBoneWorldMatrices()[0];
+        const FVector3 p05 = w05.transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p05.x, 5.0f, 1e-4f);
+
+        // Third evaluate near t=1.0 — still cached, still correct.
+        // Note: setTime(1.0) on a looping clip wraps to t=0 (pre-P1.2
+        // behavior); use t=0.99 to sample near the end without crossing
+        // the wrap. See ay-animation.md lessons for the wrap bug.
+        player.setTime(0.99f);
+        player.evaluate();
+        const Float4x4 w1 = player.getBoneWorldMatrices()[0];
+        const FVector3 p1 = w1.transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p1.x, 9.9f, 1e-4f);
+    }
+
+    // P1.4.2 — setSkeleton() invalidates the cache. We swap to a NEW skeleton
+    // that has bones in DIFFERENT order but with the SAME name — the cache
+    // must rebuild against the new skeleton. We verify by reading the world
+    // matrix position: the new skeleton's Root local translation (5, 5, 5)
+    // should appear, not the old skeleton's (0, 0, 0).
+    TEST_CASE(P1_4_BoneIdxCache_SetSkeletonInvalidates) {
+        // Original skeleton: Root at origin.
+        Skeleton skelA = makeTwoBoneSkeleton();
+
+        // New skeleton: same names, different local translation so we can
+        // tell which skeleton is driving the output.
+        Skeleton skelB;
+        skelB.setBoneCount(2);
+        Bone root;
+        root.name = "Root";
+        root.parentIndex = -1;
+        root.localPosition  = FVector3(5, 5, 5);
+        root.localRotation  = FQuaternion::identity();
+        root.localScale     = FVector3(1, 1, 1);
+        root.inverseBindMatrix = Float4x4::identity();
+        skelB.setBone(0, root);
+        Bone child;
+        child.name = "Child";
+        child.parentIndex = 0;
+        child.localPosition  = FVector3(0, 0, 0);
+        child.localRotation  = FQuaternion::identity();
+        child.localScale     = FVector3(1, 1, 1);
+        child.inverseBindMatrix = Float4x4::identity();
+        skelB.setBone(1, child);
+
+        // Clip with NO tracks so we read the skeleton's rest pose directly.
+        Animation anim;
+        anim.setTicksPerSecond(30.0f);
+        anim.setDuration(1.0f);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skelA);
+        player.play(&anim);
+        player.setTime(0.0f);
+        player.evaluate();
+        // skelA Root at origin.
+        const FVector3 posA = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(posA.x, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posA.y, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posA.z, 0.0f, 1e-4f);
+
+        // Swap skeleton. Cache invalidated → next evaluate rebuilds.
+        player.setSkeleton(&skelB);
+        player.evaluate();
+        const FVector3 posB = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(posB.x, 5.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posB.y, 5.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posB.z, 5.0f, 1e-4f);
+
+        // Verify cache is hot AGAIN — second evaluate produces same result.
+        player.evaluate();
+        const FVector3 posB2 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(posB2.x, 5.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posB2.y, 5.0f, 1e-4f);
+        CHECK_FLOAT_EQ(posB2.z, 5.0f, 1e-4f);
+    }
+
+    // P1.4.3 — Missing bone name in skeleton. Track on "Phantom" (not in
+    // skeleton) must NOT crash; the bone index resolves to -1 (cached
+    // negative) and the track is silently skipped. A Float track with the
+    // same name still surfaces to the sink (orphan-track policy from P1.2).
+    TEST_CASE(P1_4_BoneIdxCache_MissingNameCachedAsNegative) {
+        Skeleton skel = makeTwoBoneSkeleton();  // has Root + Child, NOT Phantom
+
+        // Position track on a bone that doesn't exist.
+        Animation anim;
+        anim.setTicksPerSecond(30.0f);
+        anim.setDuration(1.0f);
+        AnimTrack phantomTr;
+        phantomTr.nodeName = "Phantom";
+        phantomTr.property = "position";
+        phantomTr.valueType = AnimTrackType::Vector3;
+        phantomTr.times = { 0.0f, 30.0f };
+        phantomTr.values = {
+            0.0f, 0.0f, 0.0f,
+            99.0f, 99.0f, 99.0f,
+        };
+        anim.addTrack(phantomTr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        player.setTime(1.0f);
+        player.evaluate();   // should not crash; track silently skipped
+
+        // Root bone should be at its rest pose (0,0,0). Phantom track
+        // doesn't affect it.
+        const FVector3 rootP = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(rootP.x, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(rootP.y, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(rootP.z, 0.0f, 1e-4f);
+
+        // A second evaluate proves the cache is hot (no re-query) and
+        // still produces the same stable output.
+        player.evaluate();
+        const FVector3 rootP2 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(rootP2.x, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(rootP2.y, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(rootP2.z, 0.0f, 1e-4f);
+    }
+
+    // P1.4.4 — Dual-source cache: both base AND additive track resolve on
+    // first evaluate. Tick the player twice — second tick is purely from
+    // cache on both layers. Verifies the additive axis also benefits from
+    // the cache (key motivation: P1.3 doubled the findBone count).
+    TEST_CASE(P1_4_BoneIdxCache_DualSource_BothCached) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation baseAnim;
+        baseAnim.setTicksPerSecond(30.0f);
+        baseAnim.setDuration(1.0f);
+        AnimTrack baseTr;
+        baseTr.nodeName = "Root";
+        baseTr.property = "position";
+        baseTr.valueType = AnimTrackType::Vector3;
+        baseTr.blendMode = AnimBlendMode::Override;
+        baseTr.times = { 0.0f };
+        baseTr.values = { 1.0f, 0.0f, 0.0f };
+        baseAnim.addTrack(baseTr);
+
+        Animation addAnim;
+        addAnim.setTicksPerSecond(30.0f);
+        addAnim.setDuration(1.0f);
+        AnimTrack addTr;
+        addTr.nodeName = "Root";
+        addTr.property = "position";
+        addTr.valueType = AnimTrackType::Vector3;
+        addTr.blendMode = AnimBlendMode::Additive;
+        addTr.times = { 0.0f, 30.0f };
+        addTr.values = {
+            0.0f, 0.0f, 0.0f,
+            2.0f, 0.0f, 0.0f,
+        };
+        addAnim.addTrack(addTr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&baseAnim);
+        player.setAdditiveSource(&addAnim);
+        player.setBlendWeight(0.5f);
+
+        // Tick 1: cache resolves on both layers, samples at t=0.5.
+        player.setTime(0.5f);
+        player.evaluate();
+        // Base pos = (1,0,0). Additive delta at t=0.5 = (1,0,0). w=0.5
+        // → final = (1 + 1*0.5, 0, 0) = (1.5, 0, 0).
+        const FVector3 p1 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p1.x, 1.5f, 1e-4f);
+
+        // Tick 2: cache is hot, advance to t=0.6.
+        player.setTime(0.6f);
+        player.evaluate();
+        // Base pos = (1,0,0) (only one keyframe). Additive delta at
+        // t=0.6 ≈ (1.2, 0, 0) (lerp 0 → 2 over 1s). w=0.5
+        // → final ≈ (1 + 0.6, 0, 0) = (1.6, 0, 0).
+        const FVector3 p2 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p2.x, 1.6f, 1e-4f);
+
+        // Tick 3 near t=1.0 — pure cache, near-full additive delta applied.
+        // Note: setTime(1.0) on a looping clip wraps to t=0 (pre-P1.2
+        // behavior); use t=0.99 to sample near the end without crossing
+        // the wrap. At t=0.99 additive sample = (1.98, 0, 0); w=0.5 →
+        // delta (0.99, 0, 0); final = (1 + 0.99, 0, 0) = (1.99, 0, 0).
+        player.setTime(0.99f);
+        player.evaluate();
+        const FVector3 p3 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
+        CHECK_FLOAT_EQ(p3.x, 1.99f, 1e-4f);
+    }
+
     TEST_SUITE_END

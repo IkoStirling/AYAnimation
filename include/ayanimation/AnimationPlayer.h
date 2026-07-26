@@ -119,7 +119,17 @@ struct TrackSlice {
     // Default Override → byte-identical to pre-P1.2 behavior.
     ayt::resource::AnimBlendMode        blendMode = ayt::resource::AnimBlendMode::Override;
     std::vector<float>                  timesSec;
+    // P1.4 — bone index cache. Sentinel INT32_MIN ("unresolved"); 0+
+    // ("resolved to a real bone"); -1 ("looked up, name not found in
+    // skeleton — cached so we don't re-query every frame"). See
+    // AnimationPlayer::resolveBoneIdxOnce / invalidateBoneIndexCache.
+    int32_t                             boneIdx  = INT32_MIN;
 };
+
+// P1.4 — sentinel for the TrackSlice.boneIdx cache. Negative so it
+// never collides with a valid bone index (>= 0); distinct from -1 so
+// "not yet resolved" is distinguishable from "name not found".
+constexpr int32_t kBoneUnresolved = INT32_MIN;
 
 class AnimationPlayer {
 public:
@@ -273,6 +283,21 @@ private:
     void dispatchPendingNotifies(float prev, float next, bool wrapped);
     // P1.3 — mirror dispatch for the additive source's notify markers.
     void dispatchAdditiveNotifies(float prev, float next, bool wrapped);
+
+    // P1.4 — bone index cache management. See TrackSlice header for the
+    // sentinel semantics (kBoneUnresolved = INT32_MIN, -1 = cached miss).
+    //
+    // invalidateBoneIndexCache resets every TrackSlice.boneIdx back to
+    // kBoneUnresolved so the next evaluate() rebuilds the cache against
+    // the new skeleton. Called from setSkeleton() once the skeleton
+    // pointer (and therefore the bone name table) has changed.
+    //
+    // resolveBoneIdxOnce is the lazy single-slice resolver used inside
+    // evaluate(). When boneIdx == kBoneUnresolved AND _skeleton != nullptr
+    // it calls findBone once and writes the result back. After the first
+    // frame the cache is hot and the branch falls through in O(1).
+    void invalidateBoneIndexCache();
+    void resolveBoneIdxOnce(TrackSlice& slice);
 
     float _time     = 0.0f;
     float _playRate = 1.0f;

@@ -82,6 +82,56 @@ void AnimationPlayer::setSkeleton(const ayt::resource::ISkeleton* skel)
     assert(isTopologicallySorted(_skeleton) &&
            "AnimationPlayer: skeleton bone order must satisfy parentIndex < childIndex");
 #endif
+
+    // P1.4 — bone-index cache invalidation. The previous skeleton's
+    // bone name table is no longer the right lookup target — every
+    // TrackSlice.boneIdx entry must be re-resolved against the new
+    // skeleton. We do NOT proactively re-resolve here because the
+    // skeleton might be transiently null between calls; the first
+    // evaluate() resolves each slice lazily via resolveBoneIdxOnce.
+    invalidateBoneIndexCache();
+}
+
+// P1.4 — bone-index cache helpers. See TrackSlice header for the
+// sentinel semantics (INT32_MIN == "not yet resolved"; -1 == "name
+// not found in current skeleton"). After the first evaluate() the
+// cache is hot and every subsequent frame reads the cached index
+// directly — no more findBone() per track per frame per source.
+//
+// Both base (_tracks) and additive (_additiveTracks) slices share
+// the same skeleton so they all need to be invalidated together.
+void AnimationPlayer::invalidateBoneIndexCache()
+{
+    for (TrackSlice& tr : _tracks) {
+        tr.boneIdx = kBoneUnresolved;
+    }
+    for (TrackSlice& tr : _additiveTracks) {
+        tr.boneIdx = kBoneUnresolved;
+    }
+}
+
+void AnimationPlayer::resolveBoneIdxOnce(TrackSlice& slice)
+{
+    // Sentinel means "not yet resolved" — caller (evaluate()) checks
+    // before invoking us so we can assume it. If a slice has no
+    // skeleton bound we leave the sentinel in place; the evaluate()
+    // gate `if (boneIdx < 0)` handles the three cases:
+    //   -1    = name not found in skeleton (cached negative)
+    //   other = negative sentinel / null skeleton (skip the track)
+    //   >=0   = valid bone index
+    if (slice.boneIdx != kBoneUnresolved) return;
+    if (_skeleton == nullptr) {
+        // No skeleton to query against — leave sentinel so a later
+        // setSkeleton() + evaluate() can still resolve.
+        return;
+    }
+    const int found = _skeleton->findBone(slice.nodeName.c_str());
+    // Cache BOTH outcomes:
+    //   found >= 0  → bone index (hit)
+    //   found <  0  → -1 (miss; we still don't want to re-query next frame)
+    // We use -1 (not kBoneUnresolved) for the "looked up, not found"
+    // result so evaluate() can short-circuit without re-entering here.
+    slice.boneIdx = (found >= 0) ? static_cast<int32_t>(found) : -1;
 }
 
 void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
@@ -713,8 +763,20 @@ void AnimationPlayer::evaluate()
     // local slot. Tracks whose nodeName doesn't resolve are silently skipped
     // (plan §5.4 — missing optional animation must not crash).
     const bool hasSink = static_cast<bool>(_floatSink);
-    for (const TrackSlice& tr : _tracks) {
-        const int boneIdx = _skeleton->findBone(tr.nodeName.c_str());
+    for (TrackSlice& tr : _tracks) {
+        // P1.4 — boneIdx cache lookup. tr.boneIdx is either a valid
+        // bone index (>= 0), the cached "not found" sentinel (-1), or
+        // kBoneUnresolved (no skeleton yet OR first-frame lazy resolve).
+        // resolveBoneIdxOnce promotes the third case to one of the first
+        // two on first invocation; subsequent frames hit the cache.
+        //
+        // Cache is invalidated by setSkeleton() (via
+        // invalidateBoneIndexCache); play() / setAdditiveSource() leave
+        // it alone because they don't change the skeleton's name table —
+        // newly pushed slices start at kBoneUnresolved and are resolved
+        // on first evaluate().
+        resolveBoneIdxOnce(tr);
+        const int boneIdx = tr.boneIdx;
         if (boneIdx < 0) {
             // Even if no matching bone exists, float tracks still need to
             // surface their value to the sink so the host can wire it
@@ -871,8 +933,13 @@ void AnimationPlayer::evaluate()
     // case; the typical pattern is "additive clip authored with all
     // Additive tracks").
     if (_additiveClip != nullptr && _blendWeight > 0.0f) {
-        for (const TrackSlice& tr : _additiveTracks) {
-            const int boneIdx = _skeleton->findBone(tr.nodeName.c_str());
+        for (TrackSlice& tr : _additiveTracks) {
+            // P1.4 — same boneIdx cache as Phase 1a. Lazy-resolved on
+            // first evaluate(); invalidated by setSkeleton(). Same
+            // sentinel semantics (-1 = cached miss, kBoneUnresolved =
+            // lazy resolve).
+            resolveBoneIdxOnce(tr);
+            const int boneIdx = tr.boneIdx;
             if (boneIdx < 0) {
                 // Same orphan-Track policy as Phase 1a: Float tracks
                 // surface to the sink regardless of bone match.
