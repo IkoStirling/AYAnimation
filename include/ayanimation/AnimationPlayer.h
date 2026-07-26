@@ -211,6 +211,31 @@ enum class CaptureState : ayt::math::UInt8 {
 // host needs more.
 constexpr uint32_t kMaxAdditiveSlots = 8;
 
+// P1.5 — source tag attached to every AnimNotifyRecord in the merged
+// queue. Lets AYEntity's AnimationSystem distinguish base markers
+// (AnimNotifyEvent with kTypeId 0x000A'0001 — same as Phase 1.5) from
+// per-slot additive markers so subscribers can route them differently
+// (e.g. UI sfx vs. gameplay logic).
+//
+// Numeric encoding chosen so the Base tag is 0 (default-constructed
+// record remains Base — backward-compat with all P1.3/P1.4 callers
+// that never read sourceTag). Additive_N = 1..8 maps to slot index 0..7.
+//
+// Forward-declared ahead of AnimNotifyRecord so the record struct can
+// reference the enum type by value (P1.5 default-constructs sourceTag
+// to Base — backward-compat default).
+enum class AnimNotifySourceTag : ayt::math::UInt8 {
+    Base        = 0,
+    Additive_0  = 1,
+    Additive_1  = 2,
+    Additive_2  = 3,
+    Additive_3  = 4,
+    Additive_4  = 5,
+    Additive_5  = 6,
+    Additive_6  = 7,
+    Additive_7  = 8,
+};
+
 // P1.5 — Anim Notify record, hoisted from AnimationPlayer class scope
 // so AdditiveSlot (declared above) can hold a std::vector of them.
 // One record per AnimNotifyMarker crossed by a single tick() call;
@@ -266,26 +291,9 @@ struct AdditiveSlot {
     std::vector<float> trackWeights;
 };
 
-// P1.5 — source tag attached to every AnimNotifyRecord in the merged
-// queue. Lets AYEntity's AnimationSystem distinguish base markers
-// (AnimNotifyEvent with kTypeId 0x000A'0001 — same as Phase 1.5) from
-// per-slot additive markers so subscribers can route them differently
-// (e.g. UI sfx vs. gameplay logic).
-//
-// Numeric encoding chosen so the Base tag is 0 (default-constructed
-// record remains Base — backward-compat with all P1.3/P1.4 callers
-// that never read sourceTag). Additive_N = 1..8 maps to slot index 0..7.
-enum class AnimNotifySourceTag : ayt::math::UInt8 {
-    Base        = 0,
-    Additive_0  = 1,
-    Additive_1  = 2,
-    Additive_2  = 3,
-    Additive_3  = 4,
-    Additive_4  = 5,
-    Additive_5  = 6,
-    Additive_6  = 7,
-    Additive_7  = 8,
-};
+// P1.5 — AnimNotifySourceTag declared above (before AnimNotifyRecord)
+// so the record can default-init its `sourceTag` field at compile time.
+// Tag values are stable; do not reorder.
 
 class AnimationPlayer {
 public:
@@ -385,8 +393,15 @@ public:
     // (active → false after the duration window) reverts to the static
     // weight. Hence isAdditiveLayerActive remains a stable read for hosts.
     bool isAdditiveLayerActive() const {
+        // P1.5 — multi-aware. The layer is active iff slot[0] is bound
+        // AND its effective weight is > 0. Higher-index slots don't
+        // affect the layer-0 active flag (this is the legacy P1.3 /
+        // P1.4 contract); callers wanting a true multi-slot-active
+        // predicate should iterate via getAdditiveLayerCount() == 0
+        // check themselves.
+        const AdditiveSlot* s = getSlot(0);
         const float w = sampleBlendCurve();
-        return _additiveClip != nullptr && w > 0.0f;
+        return (s != nullptr && s->clip != nullptr) && w > 0.0f;
     }
 
     // === P1.4 cross-fade — syncToBase (entry 6) ===
@@ -409,7 +424,10 @@ public:
     // generalises 1:1.
     void setAdditiveSyncToBase(bool enabled);
 
-    bool isAdditiveSyncToBase() const { return _syncToBase; }
+    bool isAdditiveSyncToBase() const {
+        const AdditiveSlot* s = getSlot(0);
+        return (s != nullptr) && s->syncToBase;
+    }
 
     // === P1.4 cross-fade — ref-pose capture (entry 7) ===
     //
@@ -431,7 +449,10 @@ public:
     // setSkeleton() flips to Stale so the next evaluate() recaptures.
     void setAdditiveRefPoseCapture(bool enabled);
 
-    bool isAdditiveRefPoseCapture() const { return _refPoseCapture; }
+    bool isAdditiveRefPoseCapture() const {
+        const AdditiveSlot* s = getSlot(0);
+        return (s != nullptr) && s->refPoseCapture;
+    }
 
     // === P1.4 cross-fade — keyframed weight driver (entry 8) ===
     //
@@ -462,7 +483,10 @@ public:
     // Useful for "cancel current blend in" before a new one starts.
     void cancelBlendCurve();
 
-    bool isBlendCurveActive() const { return _curve.active; }
+    bool isBlendCurveActive() const {
+        const AdditiveSlot* s = getSlot(0);
+        return (s != nullptr) && s->curve.active;
+    }
 
     // === P1.4 cross-fade — additive-only pause (Aux E) ===
     //
@@ -477,7 +501,10 @@ public:
     // Resuming does NOT re-fire notifications that crossed during the
     // pause (cursor is reset to current time before the next tick).
     void  setAdditivePaused(bool paused);
-    bool  isAdditivePaused() const { return _additivePaused; }
+    bool  isAdditivePaused() const {
+        const AdditiveSlot* s = getSlot(0);
+        return (s != nullptr) && s->paused;
+    }
 
     // === P1.5 — Multi-source stack (vector<AdditiveSlot>) ===
     //
@@ -589,7 +616,11 @@ public:
     // UPGRADE-HOOK(P1.5): merged + source-tagged + dedup-by-(time,name).
     const std::vector<AnimNotifyRecord>& consumePendingNotifiesAdditive();
     size_t getPendingNotifyCountAdditive() const {
-        return _additivePendingNotifies.size();
+        // P1.5 — DEPRECATE-P1.5 wrapper. Returns slot[0]'s queue size.
+        // The canonical path is getPendingNotifyCountMerged() which
+        // counts records across every slot.
+        const AdditiveSlot* s = getSlot(0);
+        return (s != nullptr) ? s->pendingNotifies.size() : 0u;
     }
 
 private:
@@ -650,7 +681,10 @@ private:
 
     // Merged notify rebuild + consume.
     void rebuildMergedNotifies();
-    const std::vector<AnimNotifyRecord>& consumePendingNotifies();
+    // consumePendingNotifies() is declared in the public API above; the
+    // implementation in the .cpp swaps the thread-local return slot and
+    // is the single canonical consume path (consumePendingNotifiesAdditive
+    // and consumePendingNotifiesMerged layer on top of it).
 
     // P1.4 cross-fade — single-slot helpers. These three are kept as
     // thin wrappers around `_additiveSlots[0]` so old P1.4 callers (the
