@@ -114,6 +114,10 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
                              ? std::string(anim->getTrackProperty(ti))
                              : std::string();
         slice.type     = anim->getTrackType(ti);
+        // Phase 1.2 — cache the per-track blend mode at play() time so the
+        // hot path (evaluate Phase 1) reads from TrackSlice and never calls
+        // back into the IAnimation interface.
+        slice.blendMode = anim->getTrackBlendMode(ti);
 
         const uint32_t keyCount = anim->getTrackKeyframeCount(ti);
         const float* rawTimes = anim->getTrackTimes(ti);
@@ -194,6 +198,19 @@ void AnimationPlayer::setTime(float t)
     // [current, current + dt).
     _prevTickTime = _time;
     _pendingNotifies.clear();
+}
+
+// Phase 1.2 — saturating setter for the additive layer weight. Negative
+// values would silently produce base * q.pow(negative) which yields NaN
+// (quaternion power is undefined for negative scalars), so we clamp to
+// [0, 1]. The hot-path caller (AnimationSystem) just forwards the
+// component field, so saturating here is safe — a typo on the engine side
+// ("-0.5 meant 0.5") is silently corrected instead of corrupting the pose.
+void AnimationPlayer::setAdditiveWeight(float w)
+{
+    if (w < 0.0f) w = 0.0f;
+    if (w > 1.0f) w = 1.0f;
+    _additiveWeight = w;
 }
 
 void AnimationPlayer::tick(float dt)
@@ -392,13 +409,40 @@ void AnimationPlayer::evaluate()
                 sampleTrackVector3(tr.vec3Values.data(), tr.timesSec.size(),
                                    tr.timesSec, _time, v);
                 if (tr.property == "position") {
-                    _localPos[idx * 3 + 0] = v.x;
-                    _localPos[idx * 3 + 1] = v.y;
-                    _localPos[idx * 3 + 2] = v.z;
+                    if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
+                        // Pre-P1.2 path — byte-identical.
+                        _localPos[idx * 3 + 0] = v.x;
+                        _localPos[idx * 3 + 1] = v.y;
+                        _localPos[idx * 3 + 2] = v.z;
+                    } else {
+                        // Phase 1.2 Additive Layer 1: position delta = sample * weight
+                        // added on top of whatever the rest pose or a prior
+                        // Override track seeded into _localPos. The rest-pose
+                        // seed at the top of evaluate() is the "base" — additive
+                        // only makes sense layered above an Override track that
+                        // supplied the same bone's pose, but the math is
+                        // well-defined either way (delta accumulates).
+                        const float w = _additiveWeight;
+                        _localPos[idx * 3 + 0] += v.x * w;
+                        _localPos[idx * 3 + 1] += v.y * w;
+                        _localPos[idx * 3 + 2] += v.z * w;
+                    }
                 } else if (tr.property == "scale") {
-                    _localScl[idx * 3 + 0] = v.x;
-                    _localScl[idx * 3 + 1] = v.y;
-                    _localScl[idx * 3 + 2] = v.z;
+                    if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
+                        _localScl[idx * 3 + 0] = v.x;
+                        _localScl[idx * 3 + 1] = v.y;
+                        _localScl[idx * 3 + 2] = v.z;
+                    } else {
+                        // Phase 1.2 Additive Layer 1: scale delta is RELATIVE
+                        // (UE convention). base *= (1 + sample * weight) keeps
+                        // scale from collapsing to zero when an additive clip
+                        // pushes a negative delta — additive-on-negative
+                        // shrinks, but never flips the mesh inside-out.
+                        const float w = _additiveWeight;
+                        _localScl[idx * 3 + 0] *= (1.0f + v.x * w);
+                        _localScl[idx * 3 + 1] *= (1.0f + v.y * w);
+                        _localScl[idx * 3 + 2] *= (1.0f + v.z * w);
+                    }
                 }
                 // Unknown Vector3 property: silently ignored.
                 break;
@@ -408,14 +452,56 @@ void AnimationPlayer::evaluate()
                 sampleTrackQuaternion(tr.quatValues.data(), tr.timesSec.size(),
                                       tr.timesSec, _time, q);
                 if (tr.property == "rotation") {
-                    _localRot[idx * 4 + 0] = q.x;
-                    _localRot[idx * 4 + 1] = q.y;
-                    _localRot[idx * 4 + 2] = q.z;
-                    _localRot[idx * 4 + 3] = q.w;
+                    if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
+                        // Pre-P1.2 path — byte-identical.
+                        _localRot[idx * 4 + 0] = q.x;
+                        _localRot[idx * 4 + 1] = q.y;
+                        _localRot[idx * 4 + 2] = q.z;
+                        _localRot[idx * 4 + 3] = q.w;
+                    } else {
+                        // Phase 1.2 Additive Layer 1: rotation delta.
+                        //   result = (base * sample.pow(_additiveWeight)).normalize()
+                        //
+                        // Why pow and not literal `*`: a quaternion has only
+                        // a single rotation amount (the angle); `*` composes
+                        // two rotations fully (angle 90° + angle 90° = 180°),
+                        // which is NOT what "additive at half weight" should
+                        // give us (angle 45°). pow(weight) scales the angle
+                        // proportionally so weight=0.5 means "half the delta",
+                        // weight=1.0 means the full delta, weight=0 means
+                        // "no rotation contribution" → identity.
+                        //
+                        // Safety: when _additiveWeight is exactly 0 we skip
+                        // the pow() call entirely. MathTypes::FQuaternion::pow
+                        // (MathTypes.cpp:1777-1780) returns the *original*
+                        // quaternion in its `sinHalfAngle < 1e-6f` branch,
+                        // NOT identity — so without this early-return,
+                        // weight=0 would yield `base * sample` instead of
+                        // `base`. The early-return keeps the no-op guarantee.
+                        if (_additiveWeight <= 0.0f) {
+                            // leave _localRot untouched — the rest-pose seed
+                            // (or prior Override track's write) stays in place.
+                        } else {
+                            ayt::math::FQuaternion base(
+                                _localRot[idx * 4 + 0],
+                                _localRot[idx * 4 + 1],
+                                _localRot[idx * 4 + 2],
+                                _localRot[idx * 4 + 3]);
+                            ayt::math::FQuaternion scaled = q.pow(_additiveWeight);
+                            ayt::math::FQuaternion blended = (base * scaled).normalize();
+                            _localRot[idx * 4 + 0] = blended.x;
+                            _localRot[idx * 4 + 1] = blended.y;
+                            _localRot[idx * 4 + 2] = blended.z;
+                            _localRot[idx * 4 + 3] = blended.w;
+                        }
+                    }
                 }
                 break;
             }
             case ayt::resource::AnimTrackType::Float: {
+                // Phase 1.2: Float tracks are unaffected by blendMode —
+                // additive is a local-TRS concept. Float curves go through
+                // the sink the same way regardless of mode.
                 float v = 0.0f;
                 sampleTrackFloat(tr.scalarValues.data(), tr.timesSec.size(),
                                  tr.timesSec, _time, v);

@@ -29,6 +29,23 @@
 //   Both paths fire for every crossed marker; callers may consume either
 //   or both (the callback runs in tick() — synchronous; the queue is
 //   drained after memcpy of skin matrices, on the same main-thread tick).
+//
+// Additive Layer 1 (Phase 1.2 — P1.2 MVP):
+//   setAdditiveWeight(w) controls the global additive blend intensity for
+//   any AnimTrack flagged AnimBlendMode::Additive in the bound clip.
+//   Per-track Override behavior is byte-identical to pre-P1.2. Per-track
+//   Additive behavior applies the sampled TRS value AS A DELTA on top of
+//   the bone's base local TRS, weighted by _additiveWeight (saturated to
+//   [0, 1] on write to keep quaternion math safe). Math:
+//     position: _localPos[k] += sample[k] * weight
+//     rotation: (base * sample.pow(weight)).normalize();  weight==0 → identity
+//               early-return so the result equals base, defeating a
+//               quaternion.pow(0) degenerate case in MathTypes.
+//     scale:    _localScl[k] *= (1.0f + sample[k] * weight)    (UE convention)
+//     Float:    additive concept is local-TRS only — Float tracks always
+//               go through setFloatCurveSink unaffected.
+//   See design.md §4.6 for the full Layer 1 contract, ref-pose-at-frame-0
+//   assumption, and the explicit out-of-scope list (cross-fade, mask, etc.).
 
 #include <aymath/MathTypes.h>
 #include <assetsDefs/IAYAnimation.h>
@@ -85,6 +102,17 @@ public:
     void  setPlayRate(float r)        { _playRate = r; }
     void  setLoop(bool enabled)       { _loop = enabled; }
 
+    // === Additive Layer 1 (Phase 1.2 — P1.2 MVP) ===
+    //
+    // Global scalar blend weight applied to any AnimTrack carrying the
+    // Additive blendMode flag in the bound IAnimation. Override tracks are
+    // not affected. Default 1.0f (no scaling). Negative input is saturated
+    // to 0; values > 1 are saturated to 1 — keeps quaternion pow safe from
+    // a caller typo (e.g. -0.5 meant 0.5) without leaking NaNs into the
+    // skin matrices.
+    void  setAdditiveWeight(float w);
+    float getAdditiveWeight() const   { return _additiveWeight; }
+
     float getTime() const             { return _time; }
     float getPlayRate() const         { return _playRate; }
     float getDuration() const         { return _anim ? _anim->getDuration() : 0.0f; }
@@ -130,6 +158,12 @@ private:
     float _playRate = 1.0f;
     bool  _paused   = false;
     bool  _loop     = true;
+    // Phase 1.2 — Additive Layer 1 global weight. Saturated to [0, 1] in the
+    // setter. Default = 1.0f so additive tracks are fully on; a caller wanting
+    // "no additive" sets every track's blendMode to Override (the default)
+    // OR sets this to 0 to dim an entire additive layer without rebuilding
+    // the clip.
+    float _additiveWeight = 1.0f;
 
     // Per-bone local TRS working buffers (float-array form to avoid
     // per-frame allocate / align to P0 hot-path goal).
@@ -155,6 +189,10 @@ private:
         std::string                         nodeName;
         std::string                         property;
         ayt::resource::AnimTrackType        type     = ayt::resource::AnimTrackType::Vector3;
+        // Phase 1.2 — per-track blend mode. Cached at play() so evaluate()
+        // never calls back into the IAnimation interface (hot-path).
+        // Default Override → byte-identical to pre-P1.2 behavior.
+        ayt::resource::AnimBlendMode        blendMode = ayt::resource::AnimBlendMode::Override;
         std::vector<float>                  timesSec;
     };
     std::vector<TrackSlice> _tracks;

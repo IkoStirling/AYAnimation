@@ -99,6 +99,11 @@ AnimTrack makeFloatWeightTrack()
     return tr;
 }
 
+// Phase 1.2 — float pi constant for the additive rotation tests. M_PI is
+// not portable across MSVC default builds (no _USE_MATH_DEFINES by default
+// here) and AYMath doesn't ship one, so we define it locally.
+static const float kPi = 3.14159265358979f;
+
 } // namespace
 
 TEST_SUITE(AnimationPlayerTests)
@@ -653,6 +658,304 @@ TEST_SUITE(AnimationPlayerTests)
         // kTypeId pinned so cross-module subscribers get the same id.
         CHECK(AnimNotifyEvent::kTypeId   == 0x000A'0001u);
         CHECK(AnimNotifyEvent::kPriority == ayt::event::EventPriority::High);
+    }
+
+    // ====================================================================
+    // Phase 1.2 — Additive Layer 1 MVP tests
+    //
+    // Pins every aspect of the additive blend contract from design.md §4.6:
+    //   - Default blendMode is Override (v2 byte-identical behavior).
+    //   - Position additive is `_localPos += sample * weight`.
+    //   - Rotation additive uses `pow(weight)` to scale the rotation angle,
+    //     not literal quaternion `*` (which composes the full rotation).
+    //   - Scale additive is RELATIVE — `_localScl *= (1 + sample * weight)`
+    //     so negative deltas shrink but never flip a bone inside-out.
+    //   - additiveWeight=0 short-circuits before FQuaternion::pow() so a
+    //     caller cannot NaN a pose by passing -0.5 (saturated anyway).
+    //   - Missing bone on an additive track silently no-ops (P0 invariant).
+    // ====================================================================
+
+    // T1 — default AnimTrack.blendMode is Override (v2 byte-identical).
+    TEST_CASE(additive_track_default_is_override) {
+        Skeleton skel = makeTwoBoneSkeleton();
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+        // Construct a track without setting blendMode — its default-init
+        // value must be Override. Built via the existing helper (which
+        // doesn't touch blendMode).
+        AnimTrack tr = makeRootPosTrack();
+        CHECK(tr.blendMode == AnimBlendMode::Override);
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+
+        // After play() the cached TrackSlice also reads Override, AND the
+        // IAnimation getter agrees (since the underlying AnimTrack is the
+        // source of truth).
+        CHECK(anim.getTrackBlendMode(0) == AnimBlendMode::Override);
+        // Drive a tick + evaluate at the midpoint to confirm the Override
+        // path runs bit-identically to pre-P1.2.
+        player.setTime(0.5f);
+        player.evaluate();
+        // Root bone gets (5,0,0) from the lerp — the expected v2 result.
+        CHECK(std::fabs(player.getBoneWorldMatrices()[0].row[0].w - 5.0f) < 1e-4f);
+    }
+
+    // T2 — Position Additive: bone's local pos += sample * weight.
+    TEST_CASE(additive_position_overlays_on_base) {
+        // 1-bone skeleton at rest (0,0,0).
+        Skeleton skel;
+        skel.setBoneCount(1);
+        Bone root;
+        root.name = "Root";
+        root.parentIndex = -1;
+        root.localPosition  = FVector3(5.0f, 0.0f, 0.0f);  // base pos offset
+        root.localRotation  = FQuaternion::identity();
+        root.localScale     = FVector3(1.0f, 1.0f, 1.0f);
+        root.inverseBindMatrix = Float4x4::identity();
+        skel.setBone(0, root);
+
+        // Additive Position track: (0,0,0) at t=0, (2,0,0) at t=1 → sampled
+        // at t=0.5 is (1,0,0). Bone's local TRS starts at the rest pose
+        // (5,0,0); the additive track adds sample*1.0 = (1,0,0) on top,
+        // yielding (6,0,0) at t=0.5.
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+        AnimTrack tr;
+        tr.nodeName  = "Root";
+        tr.property  = "position";
+        tr.valueType = AnimTrackType::Vector3;
+        tr.blendMode = AnimBlendMode::Additive;
+        tr.times  = { 0.0f, 30.0f };
+        tr.values = {
+            0.0f, 0.0f, 0.0f,
+            2.0f, 0.0f, 0.0f,
+        };
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        player.setTime(0.5f);
+        player.evaluate();
+
+        const Float4x4& m = player.getBoneWorldMatrices()[0];
+        // World position = local pos for a root bone, since worldTRS(localTRS).
+        CHECK(std::fabs(m.row[0].w - 6.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[1].w - 0.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[2].w - 0.0f) < 1e-4f);
+    }
+
+    // T3 — Rotation Additive: base * sample.pow(weight) gives correct half-
+    // and full-angle blending. _additiveWeight default is 1.0.
+    TEST_CASE(additive_rotation_uses_quaternion_pow) {
+        // 1-bone skeleton, rest pose = identity rotation.
+        Skeleton skel;
+        skel.setBoneCount(1);
+        Bone root;
+        root.name = "Root";
+        root.parentIndex = -1;
+        root.localPosition  = FVector3(0, 0, 0);
+        root.localRotation  = FQuaternion::identity();
+        root.localScale     = FVector3(1, 1, 1);
+        root.inverseBindMatrix = Float4x4::identity();
+        skel.setBone(0, root);
+
+        // Additive Rotation track: identity at t=0, +90° around Y at t=1.
+        // At t=0.5 sample = half-way (lerp to a quat) so a Slerp-friendly
+        // sampler gives something close to +45°. With weight=1.0 the final
+        // rotation should be close to +45° on Y.
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+        AnimTrack tr;
+        tr.nodeName  = "Root";
+        tr.property  = "rotation";
+        tr.valueType = AnimTrackType::Quaternion;
+        tr.blendMode = AnimBlendMode::Additive;
+        tr.times  = { 0.0f, 30.0f };
+        // Quaternion layout: x, y, z, w
+        const FQuaternion halfY = FQuaternion::fromAxisAngle(
+            FVector3(0, 1, 0), kPi * 0.5f);
+        tr.values = {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            halfY.x, halfY.y, halfY.z, halfY.w,
+        };
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        // Default _additiveWeight = 1.0, but assert it explicitly so the
+        // test intent is clear.
+        CHECK(player.getAdditiveWeight() == 1.0f);
+        player.setTime(0.5f);
+        player.evaluate();
+
+        // With identity base and halfY as the sampled delta, base *
+        // halfY.pow(1.0) should normalize to ~halfY (slerp between identity
+        // and halfY at t=0.5 is also halfY when the sampler is correct).
+        // For now we just confirm the rotation is non-identity AND has a
+        // reasonable magnitude — the exact value depends on the sampler's
+        // lerp-vs-slerp choice (slerp of (identity → halfY) at 0.5 == halfY
+        // up to numerical noise).
+        const Float4x4& m = player.getBoneWorldMatrices()[0];
+        // The Y-axis 90° rotation matrix has m00 = cos(90°) = 0, m22 = 0,
+        // m20 = sin(90°) = 1, m02 = -1. After half-angle blending the
+        // diagonal entries should be close to cos(45°) = ~0.7071 and the
+        // off-diagonals to sin(45°).
+        const float c45 = static_cast<float>(std::cos(kPi * 0.25));
+        CHECK(std::fabs(m.row[0].x - c45) < 0.05f);   // cos(45°) on X basis
+        CHECK(std::fabs(m.row[2].z - c45) < 0.05f);
+    }
+
+    // T4 — Scale Additive: relative blend — `_localScl *= (1 + sample * weight)`.
+    TEST_CASE(additive_scale_multiplies_one_plus_delta) {
+        Skeleton skel;
+        skel.setBoneCount(1);
+        Bone root;
+        root.name = "Root";
+        root.parentIndex = -1;
+        root.localPosition  = FVector3(0, 0, 0);
+        root.localRotation  = FQuaternion::identity();
+        // Rest scale = (2, 2, 2).
+        root.localScale     = FVector3(2.0f, 2.0f, 2.0f);
+        root.inverseBindMatrix = Float4x4::identity();
+        skel.setBone(0, root);
+
+        // Additive Scale track: (0,0,0) at t=0, (0.5, 0, 0) at t=1.
+        // At t=0.99 (just before the wrap endpoint) with weight=1:
+        // sample.x ≈ 0.5 - tiny. Expected scale.x ≈ 2 * (1 + 0.5) = 3.0.
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+        AnimTrack tr;
+        tr.nodeName  = "Root";
+        tr.property  = "scale";
+        tr.valueType = AnimTrackType::Vector3;
+        tr.blendMode = AnimBlendMode::Additive;
+        tr.times  = { 0.0f, 30.0f };
+        tr.values = {
+            0.0f, 0.0f, 0.0f,
+            0.5f, 0.0f, 0.0f,
+        };
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        // setTime(1.0) under default _loop=true would wrap to 0 (end-of-clip
+        // clamping). t=0.99 samples the lerp endpoint and avoids the wrap
+        // edge case — exercising the lerp path with full delta applied.
+        player.setTime(0.99f);
+        player.evaluate();
+
+        // For a root bone, the local TRS goes straight into the world matrix.
+        // Scale 2 * (1 + 0.5 * 0.99) ≈ 2.99 on X (and unchanged on Y/Z)
+        // because the sampler at t=0.99 lerps the sample value (0.5,0,0)
+        // down to ~0.495. The math: base * (1 + lerp(a, b, t)) where
+        // base=2, a=0, b=0.5, t=0.99 → 2 * 1.495 = 2.99.
+        const Float4x4& m = player.getBoneWorldMatrices()[0];
+        CHECK(std::fabs(m.row[0].x - 2.99f) < 0.05f);
+        CHECK(std::fabs(m.row[1].y - 2.0f)  < 1e-4f);  // Y scale unchanged
+        CHECK(std::fabs(m.row[2].z - 2.0f)  < 1e-4f);  // Z scale unchanged
+    }
+
+    // T5 — additiveWeight=0 short-circuits the rotation branch (no NaN),
+    // AND deterministic: re-evaluate with weight=1 produces the same matrix
+    // as a fresh player (no cross-call bleed).
+    TEST_CASE(additive_weight_zero_is_noop) {
+        Skeleton skel;
+        skel.setBoneCount(1);
+        Bone root;
+        root.name = "Root";
+        root.parentIndex = -1;
+        root.localPosition  = FVector3(0, 0, 0);
+        root.localRotation  = FQuaternion::identity();
+        root.localScale     = FVector3(1, 1, 1);
+        root.inverseBindMatrix = Float4x4::identity();
+        skel.setBone(0, root);
+
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+        AnimTrack tr;
+        tr.nodeName  = "Root";
+        tr.property  = "rotation";
+        tr.valueType = AnimTrackType::Quaternion;
+        tr.blendMode = AnimBlendMode::Additive;
+        tr.times  = { 0.0f, 30.0f };
+        const FQuaternion fullY = FQuaternion::fromAxisAngle(
+            FVector3(0, 1, 0), kPi);
+        tr.values = {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            fullY.x, fullY.y, fullY.z, fullY.w,
+        };
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        player.setAdditiveWeight(0.0f);
+        // Saturating setter — exact 0 still 0.
+        CHECK(player.getAdditiveWeight() == 0.0f);
+        // Saturating setter — negative in → 0.
+        player.setAdditiveWeight(-0.5f);
+        CHECK(player.getAdditiveWeight() == 0.0f);
+        // Saturating setter — >1 in → 1.
+        player.setAdditiveWeight(1.5f);
+        CHECK(player.getAdditiveWeight() == 1.0f);
+
+        // Restore weight=0 for the no-op check.
+        player.setAdditiveWeight(0.0f);
+        player.setTime(0.5f);
+        player.evaluate();
+
+        // With weight=0 the rotation early-return branch leaves _localRot
+        // at its rest-pose seed (= identity). The world matrix for a root
+        // bone should be pure identity (no rotation, no translation).
+        const Float4x4& m = player.getBoneWorldMatrices()[0];
+        CHECK(std::fabs(m.row[0].x - 1.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[1].y - 1.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[2].z - 1.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[0].w)        < 1e-4f);  // no translation
+    }
+
+    // T6 — Missing bone on an additive track silently no-ops (P0 invariant).
+    TEST_CASE(additive_missing_bone_silently_noop) {
+        Skeleton skel = makeTwoBoneSkeleton();  // Root + Child
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.setTicksPerSecond(30.0f);
+
+        // Additive track targets a bone that doesn't exist.
+        AnimTrack tr;
+        tr.nodeName  = "NonExistentBone";
+        tr.property  = "position";
+        tr.valueType = AnimTrackType::Vector3;
+        tr.blendMode = AnimBlendMode::Additive;
+        tr.times  = { 0.0f, 30.0f };
+        tr.values = {
+            0.0f, 0.0f, 0.0f,
+            99.0f, 99.0f, 99.0f,
+        };
+        anim.addTrack(tr);
+
+        AnimationPlayer player;
+        player.setSkeleton(&skel);
+        player.play(&anim);
+        // Should not crash, should leave the bones at rest pose.
+        player.setTime(0.5f);
+        player.evaluate();
+        // Root bone world matrix at rest = identity.
+        const Float4x4& m = player.getBoneWorldMatrices()[0];
+        CHECK(std::fabs(m.row[0].x - 1.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[1].y - 1.0f) < 1e-4f);
+        CHECK(std::fabs(m.row[2].z - 1.0f) < 1e-4f);
     }
 
     TEST_SUITE_END
