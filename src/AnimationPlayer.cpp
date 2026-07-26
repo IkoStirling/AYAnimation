@@ -2,6 +2,7 @@
 #include <ayanimation/KeySampler.h>
 
 #include <aymath/MathTypes.h>
+#include <aymath/MathUtils.h>
 
 #include <algorithm>
 #include <cassert>
@@ -90,6 +91,23 @@ void AnimationPlayer::setSkeleton(const ayt::resource::ISkeleton* skel)
     // skeleton might be transiently null between calls; the first
     // evaluate() resolves each slice lazily via resolveBoneIdxOnce.
     invalidateBoneIndexCache();
+
+    // P1.4 — ref-pose capture buffer resize + invalidation. The capture
+    // path (setAdditiveRefPoseCapture(true)) snapshots the per-bone local
+    // TRS after Phase 1a into _capturedLocal*. When the skeleton swaps,
+    // the buffers must be re-sized and the CaptureState flipped to Stale
+    // so the next evaluate() recaptures against the new bone layout.
+    // Note: we preserve _refPoseCapture — turning the option off and
+    // back on for a fresh skeleton should NOT lose the user's intent.
+    const size_t captN = n;
+    _capturedLocalPos.assign(captN * 3, 0.0f);
+    _capturedLocalRot.assign(captN * 4, 0.0f);
+    _capturedLocalScl.assign(captN * 3, 1.0f);
+    if (_refPoseCapture) {
+        _captureState = CaptureState::Stale;
+    } else {
+        _captureState = CaptureState::Fresh;
+    }
 }
 
 // P1.4 — bone-index cache helpers. See TrackSlice header for the
@@ -345,6 +363,18 @@ void AnimationPlayer::setAdditiveSource(const ayt::resource::IAnimation* src,
         }
         _additiveTracks.push_back(std::move(slice));
     }
+
+    // P1.4 — rebind resets the cross-fade config. A fresh additive
+    // source means: no sync (independent axis is the default), no
+    // ref-pose capture (rest-pose base is the default), no curve
+    // (static _blendWeight wins), no additive-only pause. The host
+    // can re-enable each option AFTER binding if desired — calling
+    // setAdditiveSyncToBase(true) inside the same frame is fine.
+    _syncToBase     = false;
+    _refPoseCapture = false;
+    _captureState   = CaptureState::Fresh;
+    _additivePaused = false;
+    _curve.active   = false;
 }
 
 void AnimationPlayer::clearAdditiveSource()
@@ -359,6 +389,14 @@ void AnimationPlayer::clearAdditiveSource()
     // rebind to a new source inherits the most recent setter values.
     // _blendWeight is intentionally preserved so the host can swap the
     // source without resetting the layer intensity.
+
+    // P1.4 — cross-fade config also resets on unbound so a subsequent
+    // re-bind via setAdditiveSource() starts in P1.3-vanilla state.
+    _syncToBase     = false;
+    _refPoseCapture = false;
+    _captureState   = CaptureState::Fresh;
+    _additivePaused = false;
+    _curve.active   = false;
 }
 
 void AnimationPlayer::pause()  { _paused = true; }
@@ -398,6 +436,35 @@ void AnimationPlayer::setTime(float t)
         }
         _additivePrevTickTime = _additiveTime;
         _additivePendingNotifies.clear();
+    }
+
+    // P1.4 — sync-to-base lock-step. After the seek we force the
+    // additive playhead to mirror _time so hosts can land both axes
+    // on the same frame. Without sync-to-base the jump uses the
+    // additive clip's own loop (P1.3 behavior).
+    if (_syncToBase && _additiveClip != nullptr) {
+        _additiveTime = _time;
+        _additivePrevTickTime = _additiveTime;
+    }
+
+    // P1.4 — re-anchor the curve to the new playhead ONLY when the
+    // seek jumped past the curve's active window. If _time now lies
+    // INSIDE the window ([startTime, startTime+duration]) we leave
+    // startTime alone so the sample-time value at the new _time
+    // produces the right curve value; if it's OUTSIDE the curve
+    // re-anchors so the host's next tick resumes a fresh curve run.
+    //
+    // Without this guard, a test that does blendWeightOverTime() at
+    // t=0 then setTime(0.5) — i.e. "jump to the curve's midpoint" —
+    // would re-anchor to 0.5 and the sample weight at 0.5 would be
+    // `from`, not the eased midpoint. Curve would visibly "reset to
+    // start" instead of "tracking the curve mid-sample".
+    if (_curve.active) {
+        const float curveStart = _curve.startTime;
+        const float curveEnd   = curveStart + _curve.duration;
+        if (_time < curveStart || _time > curveEnd) {
+            _curve.startTime = _time;
+        }
     }
 }
 
@@ -459,32 +526,72 @@ void AnimationPlayer::tick(float dt)
     dispatchPendingNotifies(prev, _time, wrapped);
     _prevTickTime = _time;
 
-    // P1.3 — INDEPENDENT additive axis. The additive source's playhead
-    // advances and wraps on its own duration/loop settings; its notify
-    // markers are dispatched on its own prev-tick cursor and queue.
-    // This mirrors UE UAnimMontage's "additive layer ticks on its own
-    // clock" semantics — a host can drive hit-react on a separate time
-    // scale from locomotion.
+    // P1.3 + P1.4 — additive axis tick branches. Three mutually-exclusive
+    // modes (priority top-to-bottom):
     //
-    // UPGRADE-HOOK(P1.4): syncToBase option — bind _additiveTime to
-    // _time after the base advance so layered animations stay in lock
-    // step. MVP keeps them independent.
+    //   (a) _additivePaused (or _paused via INV-8): the additive time
+    //       does NOT advance. Just sync the prev cursor to the current
+    //       time so a later un-paused tick won't fire stale notifies.
+    //
+    //   (b) _syncToBase: the additive time is FORCED to equal _time
+    //       after the base advance. The additive clip's own playRate
+    //       and loop are overridden by the base clip. INV-6.
+    //
+    //   (c) P1.3 default: independent axis advance at _additivePlayRate,
+    //       loop wrap per _additiveLoop, independent notify dispatch.
+    //
+    // Note: _paused path (top of tick, P1.3) already short-circuits ALL
+    // of these with the early `return`. The branches below only matter
+    // for additive-only pause and sync-to-base.
     if (_additiveClip != nullptr) {
-        const float prevAdd = _additiveTime;
-        _additiveTime += dt * _additivePlayRate;
-        const float dAdd = _additiveClip->getDuration();
-        bool wrappedAdd = false;
-        if (dAdd > 0.0f) {
-            if (_additiveLoop) {
-                const float rawAdd = _additiveTime;
-                _additiveTime = _additiveTime - std::floor(_additiveTime / dAdd) * dAdd;
-                wrappedAdd = (rawAdd >= dAdd) || (rawAdd < 0.0f);
-            } else if (_additiveTime > dAdd) {
-                _additiveTime = dAdd;
+        if (_additivePaused) {
+            // INV-8 partial — additive axis halted but base keeps
+            // ticking. Reset the prev cursor so a resume won't fire
+            // a backlog of accumulated notifies.
+            _additivePrevTickTime = _additiveTime;
+        } else if (_syncToBase) {
+            // INV-6 — lock-step. additive time mirrors _time; the base
+            // clip's wrap semantics carry over (a looping base wraps
+            // both axes in lock-step). We dispatch additive notifies
+            // across the same window the base just traversed so the
+            // two notify queues stay aligned frame-by-frame.
+            const float prevAdd = _additivePrevTickTime;
+            _additiveTime = _time;
+            // Use the base's wrapped flag — both axes cross endpoints
+            // at the same moment because they share _time.
+            dispatchAdditiveNotifies(prevAdd, _additiveTime, wrapped);
+            _additivePrevTickTime = _additiveTime;
+        } else {
+            // P1.3 — independent axis (unchanged).
+            const float prevAdd = _additiveTime;
+            _additiveTime += dt * _additivePlayRate;
+            const float dAdd = _additiveClip->getDuration();
+            bool wrappedAdd = false;
+            if (dAdd > 0.0f) {
+                if (_additiveLoop) {
+                    const float rawAdd = _additiveTime;
+                    _additiveTime = _additiveTime - std::floor(_additiveTime / dAdd) * dAdd;
+                    wrappedAdd = (rawAdd >= dAdd) || (rawAdd < 0.0f);
+                } else if (_additiveTime > dAdd) {
+                    _additiveTime = dAdd;
+                }
             }
+            dispatchAdditiveNotifies(prevAdd, _additiveTime, wrappedAdd);
+            _additivePrevTickTime = _additiveTime;
         }
-        dispatchAdditiveNotifies(prevAdd, _additiveTime, wrappedAdd);
-        _additivePrevTickTime = _additiveTime;
+    }
+
+    // P1.4 — curve auto-disarm. After the tick finishes we re-evaluate
+    // the curve's elapsed time and flip active → false if the window
+    // is past. Disarming here (rather than inside evaluate) means the
+    // curve doesn't visibly drag the layer for one extra frame past
+    // its end. A host that wants a fresh curve simply calls
+    // blendWeightOverTime() again — no need for cancelBlendCurve().
+    if (_curve.active) {
+        const float elapsed = _time - _curve.startTime;
+        if (elapsed >= _curve.duration) {
+            _curve.active = false;
+        }
     }
 }
 
@@ -658,20 +765,43 @@ void AnimationPlayer::evaluate()
     const size_t n = _skeleton->getBoneCount();
     if (n == 0) return;
 
-    // P1.3 — INV-2 / INV-3 / INV-4 invariants. Debug-only — Release
-    // builds skip the checks. These pin the contract that downstream
-    // code (Phase 1b, Phase 2, Phase 3) relies on:
+    // P1.3 + P1.4 — INV-2 / INV-3 / INV-4 / INV-6 / INV-7 / INV-8 invariants.
+    // Debug-only — Release builds skip the checks. These pin the contract
+    // that downstream code (Phase 1a / 1b / capture / ref-pose) relies on:
     //   INV-2: _local{Pos,Rot,Scl}.size() matches skeleton bone count.
     //   INV-3: _blendWeight ∈ [0, 1].
     //   INV-4: degenerate base-null + additive-non-null early-noops
     //          AFTER the rest-pose seed (so callers see a stable pose
     //          even mid-rebind).
+    //   INV-6: syncToBase → _additiveTime == _time (post-tick guard).
+    //          Note: this assertion reflects the post-tick invariant;
+    //          mid-evaluate the two may legitimately differ.
+    //   INV-7: refPoseCapture + captureState must be coherent
+    //          (captureState == Valid implies the buffers are sized).
+    //   INV-8: _additivePaused ⇒ _additivePrevTickTime == _additiveTime
+    //          (no backlog during pause).
 #ifndef NDEBUG
     assert(_localPos.size() == n * 3 && "INV-2: _localPos size must match n*3");
     assert(_localRot.size() == n * 4 && "INV-2: _localRot size must match n*4");
     assert(_localScl.size() == n * 3 && "INV-2: _localScl size must match n*3");
     assert(_blendWeight >= 0.0f && _blendWeight <= 1.0f
            && "INV-3: _blendWeight must be in [0, 1] post-setter saturate");
+    assert((_additivePaused == false) || (_additivePrevTickTime == _additiveTime)
+           && "INV-8: additive pause must reset prev cursor");
+    if (_refPoseCapture) {
+        assert((_captureState == CaptureState::Fresh
+                || _captureState == CaptureState::Valid
+                || _captureState == CaptureState::Stale)
+               && "INV-7: captureState must be a known value when ref-pose is on");
+        if (_captureState == CaptureState::Valid) {
+            assert(_capturedLocalPos.size() == n * 3
+                   && "INV-7: Valid captureState must have buffers sized to n*3");
+            assert(_capturedLocalRot.size() == n * 4
+                   && "INV-7: Valid captureState must have buffers sized to n*4");
+            assert(_capturedLocalScl.size() == n * 3
+                   && "INV-7: Valid captureState must have buffers sized to n*3");
+        }
+    }
     if (_baseClip == nullptr && _additiveClip != nullptr) {
         // INV-4 — degenerate state. Still seed rest pose so the world/skin
         // matrices are well-defined, then return without running either
@@ -756,6 +886,34 @@ void AnimationPlayer::evaluate()
             _localScl[i * 3 + 0] = restScl[i].x;
             _localScl[i * 3 + 1] = restScl[i].y;
             _localScl[i * 3 + 2] = restScl[i].z;
+        }
+    }
+
+    // P1.4 — ref-pose capture Phase 0 dispatch. The block above just
+    // seeded _local* from the skeleton's rest pose; that seeded buffer
+    // is exactly the "ref" the Phase 1a additive layer would want if
+    // setAdditiveRefPoseCapture(false). When the host has enabled
+    // ref-pose capture (state = Fresh or Stale), we snapshot the
+    // just-seeded _local* into _capturedLocal* and mark Valid so
+    // subsequent evaluates Phase 1a runs first (writing fresh _local*
+    // from base tracks) and re-snapshots below.
+    //
+    // When captureState == Valid (the steady state during a session),
+    // we re-seed _local* from the captured buffer instead of from
+    // rest pose — so Phase 1b's additive reads from a buffer that
+    // represents the base pose the host has been playing, not the
+    // initial bind pose.
+    //
+    // INV-7 contract enforcement point.
+    if (_refPoseCapture) {
+        if (_captureState == CaptureState::Fresh
+            || _captureState == CaptureState::Stale) {
+            captureRefPoseFromLocal();
+            _captureState = CaptureState::Valid;
+        } else {
+            // Valid: re-seed _local* from captured for Phase 1b's
+            // additive to layer against.
+            applyCapturedRefPoseToLocal();
         }
     }
 
@@ -907,9 +1065,28 @@ void AnimationPlayer::evaluate()
         }
     }
 
-    // Phase 1b — P1.3 ADDITIVE LAYER 2 (Cross-Fade).
+    // P1.4 — ref-pose capture AFTER Phase 1a has written all base
+    // tracks. The buffer is now holding whatever the base pose chose
+    // to express at the current _time (Override tracks either
+    // overwritten or seeded from rest pose in the no-track case).
+    // Phase 1b will read from this captured base, so the additive
+    // deltas layer on top of the actual base pose, not the rest pose.
+    // Without this call, the next evaluate() would see the captured
+    // buffer as one-frame stale relative to the live Phase 1a writes.
+    if (_refPoseCapture && _captureState == CaptureState::Valid) {
+        captureRefPoseFromLocal();
+    }
+
+    // P1.4 — effective weight for the gate and the per-track math comes
+    // from sampleBlendCurve() (which returns _blendWeight when the
+    // curve is inactive). Computing it once per evaluate() avoids the
+    // curve walk firing on every track and lets isAdditiveLayerActive()
+    // see the same value the Phase 1b body uses.
+    const float effectiveWeight = sampleBlendCurve();
+
+    // Phase 1b — P1.3 + P1.4 ADDITIVE LAYER 2 (Cross-Fade + curve).
     //
-    // Gated by INV-1: `_additiveClip != nullptr && _blendWeight > 0.f`.
+    // Gated by INV-1: `_additiveClip != nullptr && effectiveWeight > 0.f`.
     // null and zero-weight are equivalent "off" states; the layer-off
     // contract is bit-identical to P1.2 (Phase 1a output is the final
     // pose). UPGRADE-HOOK(P1.5): when a stack of layers ships, this
@@ -920,10 +1097,12 @@ void AnimationPlayer::evaluate()
     // header for the rationale).
     //
     // Math contract (P1.2 three formulas reused, `_additiveWeight`
-    // renamed to `_blendWeight`):
-    //   position: _localPos[idx*3+k] += sample[k] * _blendWeight
+    // renamed to `_blendWeight`; P1.4 swaps static _blendWeight for
+    // effectiveWeight = sampleBlendCurve() so a keyframed blend curve
+    // drives the layer-mix amplitude through the same math):
+    //   position: _localPos[idx*3+k] += sample[k] * effectiveWeight
     //   rotation: weight==0 early-return; else base * q.pow(w).normalize()
-    //   scale:    _localScl[idx*3+k] *= (1 + sample[k] * _blendWeight)
+    //   scale:    _localScl[idx*3+k] *= (1 + sample[k] * effectiveWeight)
     //   Float:    additive source Float tracks sink via _floatSink
     //             (P1.2 invariant: additive concept is local-TRS only)
     //
@@ -932,7 +1111,7 @@ void AnimationPlayer::evaluate()
     // will simply write to _local* like a base Override track (rare
     // case; the typical pattern is "additive clip authored with all
     // Additive tracks").
-    if (_additiveClip != nullptr && _blendWeight > 0.0f) {
+    if (_additiveClip != nullptr && effectiveWeight > 0.0f) {
         for (TrackSlice& tr : _additiveTracks) {
             // P1.4 — same boneIdx cache as Phase 1a. Lazy-resolved on
             // first evaluate(); invalidated by setSkeleton(). Same
@@ -973,7 +1152,7 @@ void AnimationPlayer::evaluate()
                             _localPos[idx * 3 + 1] = v.y;
                             _localPos[idx * 3 + 2] = v.z;
                         } else {
-                            const float w = _blendWeight;
+                            const float w = effectiveWeight;
                             _localPos[idx * 3 + 0] += v.x * w;
                             _localPos[idx * 3 + 1] += v.y * w;
                             _localPos[idx * 3 + 2] += v.z * w;
@@ -984,7 +1163,7 @@ void AnimationPlayer::evaluate()
                             _localScl[idx * 3 + 1] = v.y;
                             _localScl[idx * 3 + 2] = v.z;
                         } else {
-                            const float w = _blendWeight;
+                            const float w = effectiveWeight;
                             _localScl[idx * 3 + 0] *= (1.0f + v.x * w);
                             _localScl[idx * 3 + 1] *= (1.0f + v.y * w);
                             _localScl[idx * 3 + 2] *= (1.0f + v.z * w);
@@ -1008,7 +1187,7 @@ void AnimationPlayer::evaluate()
                             // (instead of identity) in MathTypes' degenerate
                             // sinHalfAngle<1e-6f branch. Result is that
                             // _localRot is unchanged from Phase 1a's seed.
-                            if (_blendWeight <= 0.0f) {
+                            if (effectiveWeight <= 0.0f) {
                                 // skip — rest pose or prior Override wins
                             } else {
                                 ayt::math::FQuaternion base(
@@ -1016,7 +1195,7 @@ void AnimationPlayer::evaluate()
                                     _localRot[idx * 4 + 1],
                                     _localRot[idx * 4 + 2],
                                     _localRot[idx * 4 + 3]);
-                                ayt::math::FQuaternion scaled = q.pow(_blendWeight);
+                                ayt::math::FQuaternion scaled = q.pow(effectiveWeight);
                                 ayt::math::FQuaternion blended = (base * scaled).normalize();
                                 _localRot[idx * 4 + 0] = blended.x;
                                 _localRot[idx * 4 + 1] = blended.y;
@@ -1082,6 +1261,222 @@ void AnimationPlayer::evaluate()
             _skin[i] = _world[i];
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — Cross-fade (curve / syncToBase / ref-pose / additive pause)
+// ---------------------------------------------------------------------------
+//
+// Four runtime-config entry points layered on top of the P1.3 dual-source
+// state machine. Defaults preserve P1.3 behavior bit-for-bit:
+//
+//   _syncToBase     = false   → additive axis independent (P1.3 default)
+//   _refPoseCapture = false   → Phase 1b uses rest pose (P1.4 forced-on
+//                                replaces this with capture-and-reuse)
+//   _curve.active   = false   → sampleBlendCurve() returns _blendWeight
+//   _additivePaused = false   → additive axis ticks onward
+//
+// The four entry points + cancelBlendCurve() are below, followed by the
+// three private helpers (sampleBlendCurve + capture/applied ref-pose +
+// the easing dispatch).
+
+// P1.4 entry 6 — setAdditiveSyncToBase.
+//
+// Locks the additive playhead to _time after every tick. The Additive
+// clip's own playRate / loop are overridden while this is on — a host
+// that wants partial fade without lock-step should leave this at false
+// and use a keyframed curve instead. We snap the additive time to _time
+// here (rather than waiting for the next tick) so a host that toggles
+// the flag mid-frame sees consistent state immediately.
+//
+// UPGRADE-HOOK(P1.5): once the vector<AdditiveSlot> stack lands, this
+// becomes a per-slot bool.
+void AnimationPlayer::setAdditiveSyncToBase(bool enabled)
+{
+    _syncToBase = enabled;
+    if (enabled && _additiveClip != nullptr) {
+        // INV-6 — snap immediately. Without this a host that toggled
+        // the flag mid-frame could see _additiveTime stale-relative-
+        // to _time until the next tick; that manifests as a visual
+        // hitch on the additive layer's first frame after enable.
+        _additiveTime = _time;
+        _additivePrevTickTime = _additiveTime;
+    }
+}
+
+// P1.4 entry 7 — setAdditiveRefPoseCapture.
+//
+// Toggles the ref-pose capture path. When transitioning from OFF → ON,
+// the next evaluate() runs the Phase 0 capture-once path
+// (captureRefPoseFromLocal + state → Valid). When transitioning ON → OFF
+// the state goes back to Fresh so a future re-enable doesn't see a
+// stale buffer from a prior skeleton.
+//
+// Note: turning this ON does NOT recapture immediately — the
+// deterministic "snapshot now" call would require evaluating the base
+// pose right here, which Phase 0 of evaluate() does better (it has the
+// rest-pose-seeded _local* in hand). The lazy path is intentional.
+void AnimationPlayer::setAdditiveRefPoseCapture(bool enabled)
+{
+    _refPoseCapture = enabled;
+    if (!enabled) {
+        // Reset for a clean re-enable later. _capturedLocal* stays
+        // sized so phase 0 doesn't need to re-allocate, but the
+        // state-machine flags them as "not currently in use".
+        _captureState = CaptureState::Fresh;
+    } else if (_captureState == CaptureState::Fresh && _skeleton != nullptr) {
+        // First-time-on path: capture now against the seeded _local*.
+        // Safe because setSkeleton() already rest-pose-seeded _local*
+        // and INV-2 guards against size mismatches.
+        captureRefPoseFromLocal();
+        _captureState = CaptureState::Valid;
+    }
+}
+
+// P1.4 entry 8 — blendWeightOverTime.
+//
+// Keyframed weight driver. Saturates from/to to [0, 1] (mirrors
+// setBlendWeight's defensive clamp). duration ≤ 0 is rejected —
+// callers want a static weight should use setBlendWeight instead, or
+// explicitly call cancelBlendCurve() afterwards.
+//
+// startTime is anchored to the CURRENT _time at the call site so the
+// curve starts "now". A later setTime() seek will re-anchor if the
+// curve is still active (see setTime body).
+//
+// Past the duration window the curve auto-disarms inside tick(); the
+// host does NOT have to call cancelBlendCurve() between successive
+// blend-ins.
+void AnimationPlayer::blendWeightOverTime(float from,
+                                          float to,
+                                          float duration,
+                                          BlendEasing easing)
+{
+    if (duration <= 0.0f) {
+        // Defensive no-op; caller should have used setBlendWeight or
+        // set the duration in advance. We DON'T cancel an existing
+        // curve here because the caller might have intended a single
+        // static rest, not "kill the in-flight fade".
+        return;
+    }
+    if (from < 0.0f) from = 0.0f;
+    if (from > 1.0f) from = 1.0f;
+    if (to   < 0.0f) to   = 0.0f;
+    if (to   > 1.0f) to   = 1.0f;
+
+    _curve.from      = from;
+    _curve.to        = to;
+    _curve.duration  = duration;
+    _curve.easing    = easing;
+    _curve.startTime = _time;
+    _curve.active    = true;
+}
+
+// P1.4 Aux D — cancelBlendCurve. Disarm any in-flight curve WITHOUT
+// touching _blendWeight. After this call the static _blendWeight takes
+// over immediately (the curve no longer drives sampleBlendCurve()).
+void AnimationPlayer::cancelBlendCurve()
+{
+    _curve.active = false;
+}
+
+// P1.4 Aux E — setAdditivePaused. Halts ONLY the additive axis. Base
+// keeps ticking regardless. Resetting the prev-tick cursor on resume
+// is critical — without it, every marker the playhead "would have
+// crossed" during the pause fires in a backlog when ticks resume.
+void AnimationPlayer::setAdditivePaused(bool paused)
+{
+    _additivePaused = paused;
+    if (!paused && _additiveClip != nullptr) {
+        // INV-8 partial — re-sync the cursor so we don't fire the
+        // accumulated notify backlog. Mirrors what setTime does.
+        _additivePrevTickTime = _additiveTime;
+        _additivePendingNotifies.clear();
+    }
+}
+
+// P1.4 helper — sampleBlendCurve. Returns the currently-effective
+// layer-mix weight. Called from Phase 1b's gate and body, and from
+// isAdditiveLayerActive(). Because the same value is used in two
+// places per evaluate, we DO cache it in a local at the call site
+// inside evaluate() — see the const float effectiveWeight above.
+float AnimationPlayer::sampleBlendCurve() const
+{
+    if (!_curve.active) {
+        return _blendWeight;
+    }
+    const float elapsed = _time - _curve.startTime;
+    if (_curve.duration <= 0.0f) {
+        // Defensive — shouldn't happen because blendWeightOverTime
+        // rejects duration ≤ 0, but be safe.
+        return _curve.to;
+    }
+    const float t01 = std::min(1.0f, std::max(0.0f, elapsed / _curve.duration));
+    const float eased = applyEasing(t01, _curve.easing);
+    // Manual lerp; we deliberately don't reuse sampleTrackFloat here
+    // because we'd need to allocate a 2-key buffer per call and the
+    // math is trivial.
+    return _curve.from + (_curve.to - _curve.from) * eased;
+}
+
+// P1.4 helper — captureRefPoseFromLocal. Snapshots the per-bone local
+// TRS into _capturedLocal*. Sized lazily; the first call after a
+// setSkeleton() resize goes through the .assign path which both
+// sizes AND copies (we pass _local* as the source).
+//
+// INV-7 — only callable when _capturedLocal* matches _local* in
+// size; setSkeleton() always re-sizes the captured buffers in lockstep
+// with the local ones.
+void AnimationPlayer::captureRefPoseFromLocal()
+{
+    _capturedLocalPos.assign(_localPos.begin(), _localPos.end());
+    _capturedLocalRot.assign(_localRot.begin(), _localRot.end());
+    _capturedLocalScl.assign(_localScl.begin(), _localScl.end());
+}
+
+// P1.4 helper — applyCapturedRefPoseToLocal. Reverses the capture:
+// _local* ← _capturedLocal*. Used in Phase 0 of evaluate() when
+// ref-pose is on AND _captureState is Valid, so Phase 1a writes go
+// from the captured base rather than the rest pose.
+void AnimationPlayer::applyCapturedRefPoseToLocal()
+{
+    if (_capturedLocalPos.size() != _localPos.size()
+        || _capturedLocalRot.size() != _localRot.size()
+        || _capturedLocalScl.size() != _localScl.size()) {
+        // Defensive — should never trip if INV-2 holds (setSkeleton
+        // keeps the two buffer families synchronized). If it does trip,
+        // we silently skip the apply rather than risk a buffer-overrun;
+        // the rest-pose seed Phase 0 just ran is still in place.
+        return;
+    }
+    std::copy(_capturedLocalPos.begin(), _capturedLocalPos.end(), _localPos.begin());
+    std::copy(_capturedLocalRot.begin(), _capturedLocalRot.end(), _localRot.begin());
+    std::copy(_capturedLocalScl.begin(), _capturedLocalScl.end(), _localScl.begin());
+}
+
+// P1.4 helper — applyEasing dispatch. Five cases: Linear is the
+// identity (we let the lerp do its work), the four AYMath ones map
+// 1:1 onto BlendEasing. Adding more easings (cubic-bezier, etc.)
+// is a future PR.
+float AnimationPlayer::applyEasing(float t01, BlendEasing e)
+{
+    switch (e) {
+        case BlendEasing::Linear:
+            return t01;
+        case BlendEasing::EaseIn:
+            // aymath::easeIn(Float32 t, Float32 power=2.0f) — MathUtils.h:1036
+            return ayt::math::easeIn(t01, 2.0f);
+        case BlendEasing::EaseOut:
+            // aymath::easeOut(Float32 t, Float32 power=2.0f) — MathUtils.h:1098
+            return ayt::math::easeOut(t01, 2.0f);
+        case BlendEasing::EaseInOut:
+            // aymath::easeInOut(Float32 t, Float32 power=2.0f) — MathUtils.h:1116
+            return ayt::math::easeInOut(t01, 2.0f);
+        case BlendEasing::Smoothstep:
+            // aymath::smoothstep(Float32 t) — MathUtils.h:930
+            return ayt::math::smoothstep(t01);
+    }
+    return t01;   // unreachable; satisfies -Wreturn-type on strict compilers
 }
 
 } // namespace ayt::anim

@@ -77,14 +77,20 @@
 //     INV-5: _additiveClip == nullptr ⇒ Phase 1a output identical to
 //            P1.2 (zero-regression for the 197-test baseline).
 //
-//   UPGRADE-HOOK(P1.4): discrete _blendWeight setter → keyframed curve
-//   UPGRADE-HOOK(P1.4): uniform _blendWeight → per-track weights (mask)
-//   UPGRADE-HOOK(P1.4): independent axis → syncToBase option
+//   UPGRADE-HOOK(P1.4 → resolved): discrete _blendWeight setter →
+//     keyframed FloatCurve sampler via blendWeightOverTime(from, to, dur, easing).
+//   UPGRADE-HOOK(P1.4 → resolved): independent axis → syncToBase option,
+//     tick() branches (additivePaused / syncToBase / default-independent).
+//   UPGRADE-HOOK(P1.4 → resolved): ref-pose capture from current base pose
+//     via setAdditiveRefPoseCapture(true) (CaptureState 3-state machine).
+//   UPGRADE-HOOK(P1.4 → resolved): additive layer obeys pause() —
+//     INV-8 enforced in tick(); separate setAdditivePaused for additive-only.
 //   UPGRADE-HOOK(P1.5): dual notify queue → merged + source-tagged
 //   UPGRADE-HOOK(P1.5): single additive layer → vector<AdditiveSlot> stack
+//   UPGRADE-HOOK(P1.5): uniform _blendWeight → per-track weights (mask)
 //   REMOVE-MARKER(P1.6): deprecated setAdditiveWeight wrapper drop
 //
-//   See design.md §4.7 for full contract and deferred items.
+//   See design.md §4.7 + §4.10 for full contract and resolved items.
 
 #include <aymath/MathTypes.h>
 #include <assetsDefs/IAYAnimation.h>
@@ -130,6 +136,61 @@ struct TrackSlice {
 // never collides with a valid bone index (>= 0); distinct from -1 so
 // "not yet resolved" is distinguishable from "name not found".
 constexpr int32_t kBoneUnresolved = INT32_MIN;
+
+// ---------------------------------------------------------------------------
+// P1.4 cross-fade — runtime-only config (NOT serialized into .ayanm).
+//
+// All three types below live on AnimationPlayer and configure runtime
+// cross-fade behavior. They are NOT in IAnimation (no on-disk change —
+// P1.3 v4 stays as-is) and NOT persisted across serialization. Their
+// half-life is a single playback session: the host wires them via
+// setAdditiveSyncToBase / setAdditiveRefPoseCapture /
+// blendWeightOverTime / setAdditivePaused and reads them back via the
+// is*() getters.
+// ---------------------------------------------------------------------------
+
+// P1.4 — easing function selector for blendWeightOverTime. Five entries
+// cover the common Unreal / Unity / Godot cross-fade shapes; advanced
+// hosts can extend by wrapping the player or shipping their own easing
+// table (out of scope here — see deferred list at the end of design.md
+// §4.10).
+enum class BlendEasing : ayt::math::UInt8 {
+    Linear     = 0,   // default — manual lerp(from, to, t)
+    EaseIn     = 1,   // aymath::easeIn(t, 2)    — slow start
+    EaseOut    = 2,   // aymath::easeOut(t, 2)   — slow end
+    EaseInOut  = 3,   // aymath::easeInOut(t, 2) — S-curve
+    Smoothstep = 4,   // aymath::smoothstep(t)   — Hermite 3t² − 2t³
+};
+
+// P1.4 — keyframed weight driver for cross-fade. curve.active = true
+// makes sampleBlendCurve() return lerp(from, to, easing(t)) where
+// t ∈ [0, 1] over the duration window; on the first frame past the
+// end the curve auto-disarms (active → false) and Phase 1b reverts to
+// the static _blendWeight value. duration == 0 with active == false
+// (set by cancelBlendCurve) is the explicit "use static weight" path.
+struct BlendCurve {
+    float        from        = 0.0f;   // start weight (saturated to [0,1] on input)
+    float        to          = 1.0f;   // end   weight (saturated to [0,1] on input)
+    float        duration    = 0.0f;   // seconds; must be > 0 for the curve to run
+    BlendEasing  easing      = BlendEasing::Linear;
+    float        startTime   = 0.0f;   // evaluate-clock anchor = _time at the
+                                       // moment blendWeightOverTime() was called
+                                       // (or setTime t if the host seeks over the
+                                       // active range)
+    bool         active      = false;  // false → sampleBlendCurve() returns
+                                       // the static _blendWeight unchanged
+};
+
+// P1.4 — 3-state machine for the ref-pose capture path. Mirrors the
+// kBoneUnresolved sentinel pattern: explicit "I don't know yet" state
+// (Fresh), "good" state (Valid), and "stale since skeleton changed"
+// state (Stale). INV-7 in evaluate() reads _captureState at the top
+// of Phase 0 to decide whether to (re)capture or apply-captured.
+enum class CaptureState : ayt::math::UInt8 {
+    Fresh = 0,   // not yet captured against the current skeleton
+    Valid = 1,   // captured; _capturedLocal* is in sync with last Phase 1a write
+    Stale = 2,   // skeleton has been swapped since last capture; needs re-fill
+};
 
 class AnimationPlayer {
 public:
@@ -199,10 +260,12 @@ public:
     // that tick independently of the base. Per-track blendMode on the
     // additive source is honored from its own AnimBlendMode byte (P1.2).
     //
-    // UPGRADE-HOOK(P1.4): syncToBase option — bind the additive axis
-    //   to _time so it stays in lock-step.
-    // UPGRADE-HOOK(P1.4): ref-pose capture — bind against the captured
-    //   base pose rather than the skeleton's rest pose.
+    // UPGRADE-HOOK(P1.4 → resolved): syncToBase option — bind the
+    //   additive axis to _time so it stays in lock-step. Resolved
+    //   in 2026-07-26 via setAdditiveSyncToBase(bool).
+    // UPGRADE-HOOK(P1.4 → resolved): ref-pose capture — bind against
+    //   the captured base pose rather than the skeleton's rest pose.
+    //   Resolved in 2026-07-26 via setAdditiveRefPoseCapture(bool).
     // UPGRADE-HOOK(P1.5): stack — vector<AdditiveSlot> for layered mixing.
     void setAdditiveSource(const ayt::resource::IAnimation* src,
                            float playRate = 1.0f,
@@ -222,9 +285,104 @@ public:
     float getBlendWeight() const        { return _blendWeight; }
 
     // INV-1 mirror: true iff layer would actually contribute to evaluate().
+    // Uses sampleBlendCurve() so the curve path AND the static weight path
+    // both flow through this single check — a curve that just finished
+    // (active → false after the duration window) reverts to the static
+    // weight. Hence isAdditiveLayerActive remains a stable read for hosts.
     bool isAdditiveLayerActive() const {
-        return _additiveClip != nullptr && _blendWeight > 0.0f;
+        const float w = sampleBlendCurve();
+        return _additiveClip != nullptr && w > 0.0f;
     }
+
+    // === P1.4 cross-fade — syncToBase (entry 6) ===
+    //
+    // When false (default, P1.3 behavior) the additive layer's playhead
+    // advances independently of the base per `_additivePlayRate` /
+    // `_additiveLoop`. When true, the additive playhead is FORCED to
+    // equal `_time` after every tick — a lock-step mode that mirrors
+    // UE `UAnimMontage::bForceRootLock`. The additive clip's own
+    // playRate and loop are overridden by the base clip's settings
+    // while this is on. The additive duration is still readable via
+    // getDuration() (which now returns base) so callers can introspect
+    // clip length regardless.
+    //
+    // INV-6 contract: post-tick, `_additiveTime == _time` if and only if
+    // _syncToBase == true. Enforced inside tick().
+    //
+    // UPGRADE-HOOK(P1.5): once the multi-source vector<AdditiveSlot>
+    // stack lands, syncToBase becomes per-slot; this single bool
+    // generalises 1:1.
+    void setAdditiveSyncToBase(bool enabled);
+
+    bool isAdditiveSyncToBase() const { return _syncToBase; }
+
+    // === P1.4 cross-fade — ref-pose capture (entry 7) ===
+    //
+    // When false (default, P1.3 behavior), Phase 1b treats the
+    // skeleton's bind-pose TRS as the additive base. This forced authors
+    // to export additive clips with a "rest-pose sample at t=0" (a
+    // long-standing authoring footgun).
+    //
+    // When true, evaluate() captures the post-Phase-1a base pose into
+    // _capturedLocal* and reuses it as the additive base. Net effect:
+    // additive tracks now layer their deltas on top of whatever base
+    // was actually playing, so an additive clip with a non-rest delta
+    // at t=0 still produces correct relative motion (the captured base
+    // already encodes whatever the base pose chose to write).
+    //
+    // INV-7: while _refPoseCapture is true, Phase 1b reads from
+    // _capturedLocal* (not the rest pose). The CaptureState 3-state
+    // (Fresh / Valid / Stale) governs WHEN the (re)capture happens.
+    // setSkeleton() flips to Stale so the next evaluate() recaptures.
+    void setAdditiveRefPoseCapture(bool enabled);
+
+    bool isAdditiveRefPoseCapture() const { return _refPoseCapture; }
+
+    // === P1.4 cross-fade — keyframed weight driver (entry 8) ===
+    //
+    // Switches the layer-mix weight from the static _blendWeight to a
+    // time-driven curve. After this call, sampleBlendCurve() returns
+    // lerp(from, to, easing((_time - startTime) / duration)) instead
+    // of _blendWeight for as long as the curve is active. Past the end
+    // of the curve window the implementation auto-disarms (active →
+    // false) and the static _blendWeight takes over — a host that
+    // wants a one-shot fade-out simply chooses from > to.
+    //
+    // from and to are saturated to [0, 1] on input (mirrors the
+    // setBlendWeight semantics, defensive against caller typos).
+    // duration ≤ 0 is rejected: the call becomes a no-op and the
+    // static _blendWeight keeps its current value. Past-dur curve
+    // anchor is latched to the current _time (so the curve ALWAYS
+    // starts "now" rather than resuming from a previous window).
+    //
+    // UPGRADE-HOOK(P1.5): envelope-follower / impulse curve variants
+    // (a curve whose start is decided dynamically based on gameplay,
+    // e.g. damage impulse) — same data model, different fill path.
+    void blendWeightOverTime(float from,
+                            float to,
+                            float duration,
+                            BlendEasing easing = BlendEasing::Linear);
+
+    // Aux D — explicitly disarm the curve without touching _blendWeight.
+    // Useful for "cancel current blend in" before a new one starts.
+    void cancelBlendCurve();
+
+    bool isBlendCurveActive() const { return _curve.active; }
+
+    // === P1.4 cross-fade — additive-only pause (Aux E) ===
+    //
+    // Distinct from the base pause() — this stops ONLY the additive
+    // axis while leaving the base ticking. Useful for hit-react that
+    // should freeze without halting locomotion, or vice versa.
+    // Default false so the additive axis ticks onward by default
+    // (matches P1.3 behavior; the high-level pause() now ALSO pauses
+    // the additive axis per INV-8, see the implementation for the
+    // precedence rule).
+    //
+    // Resuming does NOT re-fire notifications that crossed during the
+    // pause (cursor is reset to current time before the next tick).
+    void  setAdditivePaused(bool paused);
+    bool  isAdditivePaused() const { return _additivePaused; }
 
     float getTime() const             { return _time; }
     float getPlayRate() const         { return _playRate; }
@@ -299,6 +457,23 @@ private:
     void invalidateBoneIndexCache();
     void resolveBoneIdxOnce(TrackSlice& slice);
 
+    // P1.4 cross-fade — implementation helpers. See setBlendWeight,
+    // setAdditiveSyncToBase, setAdditiveRefPoseCapture, blendWeightOverTime,
+    // cancelBlendCurve, setAdditivePaused, evaluate Phase 0/1a for use sites.
+    //
+    // sampleBlendCurve() returns the currently-effective layer weight.
+    //   - if _curve.active == false → static _blendWeight
+    //   - if _curve.active == true  → lerp(from, to, eased(t01))
+    //     where t01 = clamp01((_time - _curve.startTime) / _curve.duration).
+    // On the first frame past the curve's end, the implementation
+    // disarms _curve.active back to false so subsequent ticks revert
+    // to the static _blendWeight — the host can chain a fresh curve
+    // without first calling cancelBlendCurve().
+    float sampleBlendCurve() const;
+    void  captureRefPoseFromLocal();
+    void  applyCapturedRefPoseToLocal();
+    static float applyEasing(float t01, BlendEasing e);
+
     float _time     = 0.0f;
     float _playRate = 1.0f;
     bool  _paused   = false;
@@ -346,6 +521,33 @@ private:
     AnimNotifySink                  _animNotifySink;
     std::vector<AnimNotifyRecord>  _pendingNotifies;
     float                           _prevTickTime = 0.0f;
+
+    // P1.4 cross-fade — runtime-only config. Defaults chosen so P1.3
+    // behavior is bit-identical when these are all at their untouched
+    // values: sync off, ref-pose off (rest pose base), no curve (static
+    // _blendWeight wins), additive axis not separately paused.
+    bool        _syncToBase     = false;
+    bool        _refPoseCapture = false;
+    BlendCurve  _curve;
+    // CaptureState — 3-state machine mirrors kBoneUnresolved sentinel:
+    //   Fresh  = no capture yet against this skeleton
+    //   Valid  = _capturedLocal* is in sync with last Phase 1a write
+    //   Stale  = skeleton was swapped; next evaluate must recapture
+    // setSkeleton() flips Valid → Stale; setAdditiveRefPoseCapture(false)
+    // flips back to Fresh (semantically "stale" but kept distinct because
+    // captureStale + captureState=Fresh differ in whether we apply the
+    // captured buffer vs ignore it).
+    CaptureState _captureState  = CaptureState::Fresh;
+    bool         _additivePaused = false;
+
+    // P1.4 — ref-pose capture buffers. Sized by setSkeleton() (or by
+    // captureRefPoseFromLocal() on first capture). Filled lazily: the
+    // first evaluate() after enable copies the post-Phase-1a _local*
+    // into these, then on subsequent evaluates Phase 0 re-seeds from
+    // these instead of the skeleton's bind-pose arrays.
+    std::vector<float> _capturedLocalPos;   // n*3
+    std::vector<float> _capturedLocalRot;   // n*4
+    std::vector<float> _capturedLocalScl;   // n*3
 };
 
 } // namespace ayt::anim
