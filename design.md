@@ -527,9 +527,9 @@ distinguish which source fired a marker use clipName or external context.
 - `// UPGRADE-HOOK(P1.4)` at `_blendWeight` field: uniform weight → per-track weights (mask expression)
 - `// UPGRADE-HOOK(P1.4)` at `setAdditiveSource` / `tick`: `syncToBase` option
 - `// UPGRADE-HOOK(P1.4)` at `evaluate` Phase 0: ref-pose capture from current base pose (replace rest-pose assumption)
-- `// UPGRADE-HOOK(P1.5)` at `consumePendingNotifiesAdditive` → **已落地** merged + sourceTag（ECS 仍可用旧双队列）
+- `// UPGRADE-HOOK(P1.5)` at `consumePendingNotifiesAdditive` → **已落地 merged + sourceTag**（ECS 已切到 merged，旧 wrapper 已 P1.6 删）
 - `// UPGRADE-HOOK(P1.5)` at single `_additiveClip` → **已落地** `vector<AdditiveSlot>`
-- `// REMOVE-MARKER(P1.6)` at `setAdditiveWeight` / `getAdditiveWeight` deprecated wrappers
+- `// REMOVE-MARKER(P1.6)` at `setAdditiveWeight` / `getAdditiveWeight` deprecated wrappers → **已删除**（P1.6 cleanup）
 ### 4.8 ✅ P1.5 Multi-Slot Additive Stack — Player SHIP（2026-07-27 文档对齐）
 
 > **代码**：`AnimationPlayer` 已落地 `vector<AdditiveSlot>`（`kMaxAdditiveSlots = 8`）、per-slot sync/ref-pose/pause/curve、`trackWeights`、`consumePendingNotifiesMerged()` + `AnimNotifySourceTag`。  
@@ -780,7 +780,7 @@ tick(dt):
 | Notify merge + source-tag | P1.5 | ✅ Player `consumePendingNotifiesMerged`；Event ⚠ |
 | Curve serialization (`.ayanm`) | 不定 | 仍不定 |
 | Layer 1 per-track curve | 不定 | 仍不定 |
-| 移除 `setAdditiveWeight` wrapper | P1.6 | 仍待 |
+| 移除 `setAdditiveWeight` wrapper | P1.6 | ✅ SHIP 2026-07-27 |
 #### 4.10.10 关键工程教训(给后续 P1.5 的 reviewer)
 
 1. **`setTime` 的 anchor-in-window 分支** —— 不要无条件重 anchor `startTime`。只有当 new `_time` 落在 `[startTime, startTime+duration]` 之外才 anchor。这让 setTime-as-sample (jump-to-mid) 工作正常, 否则 A1/A3 测试都看到 value=from。
@@ -1179,10 +1179,35 @@ if (!anim->additiveLayers.empty()) {
 
 #### 4.11.10 Out-of-scope for P1.5(留 P1.6 / Phase 2)
 
-- **共享 skeleton tick cache** ── N 个 player 同一 skeleton 时,findBone / boneIdx resolve 一次 vs N 次。零 API 影响,纯 hot-path 优化。
+- **共享 skeleton tick cache** ── P1.6 scope 探索后确认 `ISkeleton::findBone` 已是 O(1) hash lookup (`Skeleton::_boneNameMap`) 且当前 `SkeletonComponent::skeleton` by-value（每个 entity rebuild `_boneNameMap`），真共享需要把 `SkeletonComponent::skeleton` 改为 `shared_ptr<const ISkeleton>`（跨 ECS 边界 refactor）。**P1.6 不做** — 留 P1.7（需 ECS refactor）。
 - **`MontageSlot` 语义对齐** ── UE Montage 上半身 slot 不是 additive stack,需要独立 §14 P2.3 子项目;P1.5 AdditiveSlot 不能冒充 MontageSlot。
-- **`setAdditiveWeight` / `getAdditiveWeight` 真实 deprecate** ── 留 P1.6 全删(当前 DEPRECATE-P1.5 marker)。
-- **`consumePendingNotifiesAdditive` 真实 deprecate** ── 同上;当前仅 drain slot[0] 的 backward-compat wrapper。
+- ✅ **`setAdditiveWeight` / `getAdditiveWeight` 真实 deprecate** ── P1.6 已 ship 2026-07-27（inline-forward wrapper 全删）。
+- ✅ **`consumePendingNotifiesAdditive` 真实 deprecate** ── P1.6 已 ship（slot[0]-only wrapper + dead `dispatchAdditiveNotifies` helper 全删;`consumePendingNotifiesMerged()` 是 canonical）。
+
+#### 4.11.12 P1.6 ship 内容（2026-07-27）
+
+P1.6 = 纯 deprecate wrapper cleanup（**无新功能**）：
+
+| 改动 | 位置 |
+|------|------|
+| 删 `setAdditiveWeight` / `getAdditiveWeight` | AnimationPlayer.h:339-340 (P1.2 inline-forward) |
+| 删 `consumePendingNotifiesAdditive` decl + def | AnimationPlayer.h:602 + cpp:732-734 (P1.3 DEPRECATE-P1.5) |
+| 删 `getPendingNotifyCountAdditive` inline | AnimationPlayer.h:603-609 (P1.3 DEPRECATE-P1.5) |
+| 删 `dispatchAdditiveNotifies` decl + def | AnimationPlayer.h:600 + cpp:722-729（0 caller，P1.6 顺手清 dead code） |
+| 删 `// REMOVE-MARKER(P1.6)` marker | AnimationPlayer.h:91 |
+| Bridge 改 canonical | AYAnimationSystem.cpp:203 `setAdditiveWeight` → `setBlendWeight` |
+| Test 改 canonical | AYTest_AnimationPlayer.cpp 11 处 + SkinnedAnimationTest.cpp 8 处 |
+| Test semantic 改 | `P1_3_NotifyIndependence_BaseAndAdditive` 改测 merged queue + sourceTag discriminator |
+| Docs 同步 | §11 P1.6 ship row + §13 row 17f + §14 P1.6 row + §4.11.12 + §4.7 + §4.10.9 cleanup |
+
+**3-run stable**: AYAnimation 398/398 + AYEntity 216/216 + AYResource 701/701 × 3。
+**Zero regression**: P0..P1.5 全部 baseline 通过;test 总数不变（仅内部 rename + 1 个测试改语义）。
+
+**关键工程教训**（P1.6 reviewer 必读）：
+1. **`consumePendingNotifiesMerged()` 是 source-of-truth drain** — 它在 swap merged 之后还会清空 `_pendingNotifies` + 每个 slot 的 `pendingNotifies`（cpp:808-811）。P1.3 dual-drain 测试要改成：测 merged 单独（不再独立测 base drain，因为 base 已被 merged 清空）。Pre-P1.5 设计的 `consumePendingNotifiesAdditive` 之所以能独立 drain slot[0]，是因为它走的路径不同。
+2. **字段名 vs setter 名可以不一致** — `AnimationComponent::additiveWeight` 字段保留（serializer compat）但 bridge 推到 player 走 canonical `setBlendWeight`。这是 P1.5 design.md §4.11.11 lesson #1 slot[0] redirect 的延续：P1.6 bridge 1 行改动 = `setAdditiveWeight(x)` → `setBlendWeight(x)`，无 schema 变化。
+3. **`isAdditiveLayerActive()` 仍保留** — P1.5 决定不改名（§4.11.11 lesson #8），P1.6 也未动。Host 真需要 multi-slot 活跃检测用 `getAdditiveLayerCount() == 0` 自遍历。
+4. **`dispatchAdditiveNotifies` 是纯 dead code** — P1.5 设计时本来被 `consumePendingNotifiesAdditive` 间接调用，P1.6 后两者一起删。无调用方、无测试引用、无 side-effect。
 
 #### 4.11.11 关键工程教训(给后续 reviewer / P2 Montage)
 
@@ -1321,6 +1346,7 @@ AYAnimation/
 - [x] **P1.4 Cross-Fade Full Ship**（2026-07-26）─ keyframed weight curve (`blendWeightOverTime`) + syncToBase + ref-pose capture + additive pause 全 ship;3 new invariants INV-6/7/8 + 8 AnimationPlayer tests + 3 AYEntity integration tests; 0 regression across 3 modules (701+312+187);详见 §4.10
 - [x] **P1.5 Multi-Slot Additive Stack**（2026-07-27）─ `vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + merged notify queue + `AnimNotifySourceTag` enum + per-track `trackWeights` opt-in mask + 18 旧 single-slot API 全 redirect 到 slot[0] backward-compat wrappers + AYEntity `AdditiveLayerSpec` 结构 + nested (entity → slot) rebind-detection maps + per-slot push loop + EventBus `AnimNotifyEvent.sourceTag` pipe; INV-9/10/11 (per-slot 化 INV-6/7/8 + 新增 capture-buffer size + dedup 守则) + 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398 + AYEntity 216 + AYResource 701 unchanged); 详见 §4.11
 - [x] **P1.5 Multi-Slot stack（Player）**（文档对齐 2026-07-27）─ `AdditiveSlot`×8 + merged notify/`sourceTag` + per-slot trackWeights；**ECS/测试桥接未齐**；详见 §4.8
+- [x] **P1.6 Deprecate Wrapper Cleanup**（2026-07-27）─ 真实 deprecate `setAdditiveWeight`/`getAdditiveWeight`（P1.2 inline-forward wrapper）和 `consumePendingNotifiesAdditive`/`getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5 wrapper）全删；连带 dead `dispatchAdditiveNotifies` helper 删除；`AYAnimationSystem::onUpdate` bridge 调 canonical `setBlendWeight`；tests 11 处 + 8 处 caller 改 canonical；2 个 P1.3 测试因 dual-drain 消失改测 merged queue + sourceTag discriminator。3-run stable: AYAnimation 398/398 + AYEntity 216/216 × 3，零回归。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor：`SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`），P1.6 不动 ECS 边界。详见 §11 row + §13 row + §14 P1.6 row
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -1394,6 +1420,7 @@ AYAnimation/
 | 17c | BoneIdx cache | UE | ✅ | P1.4 |
 | 17d | syncToBase / ref-pose / pause | UE/Unity | ✅ | P1.4 |
 | 17e | Multi AdditiveSlot + merged notify | UE Slot | ✅ | P1.5 |
+| 17f | 旧 P1.2/P1.3 wrapper API 真实 deprecate（setAdditiveWeight / consumePendingNotifiesAdditive 全删） | UE clean API | ✅ | P1.6 |
 | 18 | 骨骼遮罩 Mask（资源级） | UE | ⚠️ trackWeights only | Phase 2 |
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
 | 20–22 | AnimGraph / 状态机 | UE/Unity | ❌ | Phase 3 |
@@ -1434,6 +1461,7 @@ AYAnimation/
 | P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) ── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 4 (no on-disk change) + 5 invariants + AnimationPlayer dual-source state machine + Phase 1b additive branch (reuses P1.2 three formulas) + 2 notify queues + AYEntity AnimationComponent.{additiveClipPath,additivePlayRate,blendWeight} + 14 new tests (1 AYResource forward-compat + 10 AnimationPlayer + 3 AYEntity integration) |
 | P1.4 | Hot-path 优化 + Cross-Fade full ship：track → boneIndex 预解析 (已 ship) + keyframed weight curve (`blendWeightOverTime` with 4 ease flavors reusing AYMath) + syncToBase option (additive playhead lock-step to base) + ref-pose capture path (CaptureState 3-state machine replacing rest-pose-at-0 assumption) + additive pause/resume (INV-8 unified with base pause)── ✅ **FULL SHIP 2026-07-26**; 8 AnimationPlayer tests + 3 AYEntity tests; 0 regression across 3 modules (701+312+187) |
 | P1.5 | Multi-slot stack：`vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + notify merge/`sourceTag` + `trackWeights` opt-in + AYEntity `AdditiveLayerSpec` 桥接 + EventBus `AnimNotifyEvent.sourceTag` pipe ── ✅ **FULL SHIP 2026-07-27**; 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398/398 + AYEntity 216/216 × 3); 详见 §4.11; 共享 skeleton tick cache 仍留 P1.6 |
+| P1.6 | Deprecate Wrapper Cleanup：真实删除 `setAdditiveWeight` / `getAdditiveWeight`（P1.2 inline-forward）+ `consumePendingNotifiesAdditive` / `getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5）+ dead `dispatchAdditiveNotifies` helper；bridge 改 canonical `setBlendWeight`；tests 11 + 8 caller 改 canonical；`P1_3_NotifyIndependence_BaseAndAdditive` 改测 merged queue + sourceTag ── ✅ **SHIP 2026-07-27**; 3-run stable 398/398 + 216/216 + 701/701 × 3, zero regression。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor `SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`） |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
 
