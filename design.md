@@ -1,6 +1,6 @@
 # AYAnimation Design
 
-> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.5 Player 侧已 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag`）。ECS/EventBus 对 P1.5 merged API **未完全桥接**；单测以 P1.4 为主、P1.5 覆盖不足。  
+> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.5 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe）。3-run stable：AYAnimation 398/398 + AYEntity 216/216 × 3；零回归 P0..P1.4 baseline。详见 §4.11 / §11 / §13 row 17e / §14 P1.5 row。  
 > **不负责**：完整角色管线（ASM / BlendSpace / Root Motion / Retarget / LOD）仍属后续 Phase。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-07-27 设计审计**：同步 §4.8 与代码；钉 §4.3 Hold 语义；修正 §11/§13 过时勾选与统计。
