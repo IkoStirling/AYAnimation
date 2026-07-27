@@ -816,9 +816,9 @@ TEST_SUITE(AnimationPlayerTests)
         AnimationPlayer player;
         player.setSkeleton(&skel);
         player.play(&anim);
-        // Default _additiveWeight = 1.0, but assert it explicitly so the
+        // Default _blendWeight = 1.0, but assert it explicitly so the
         // test intent is clear.
-        CHECK(player.getAdditiveWeight() == 1.0f);
+        CHECK(player.getBlendWeight() == 1.0f);
         player.setTime(0.5f);
         player.evaluate();
 
@@ -926,18 +926,18 @@ TEST_SUITE(AnimationPlayerTests)
         AnimationPlayer player;
         player.setSkeleton(&skel);
         player.play(&anim);
-        player.setAdditiveWeight(0.0f);
+        player.setBlendWeight(0.0f);
         // Saturating setter — exact 0 still 0.
-        CHECK(player.getAdditiveWeight() == 0.0f);
+        CHECK(player.getBlendWeight() == 0.0f);
         // Saturating setter — negative in → 0.
-        player.setAdditiveWeight(-0.5f);
-        CHECK(player.getAdditiveWeight() == 0.0f);
+        player.setBlendWeight(-0.5f);
+        CHECK(player.getBlendWeight() == 0.0f);
         // Saturating setter — >1 in → 1.
-        player.setAdditiveWeight(1.5f);
-        CHECK(player.getAdditiveWeight() == 1.0f);
+        player.setBlendWeight(1.5f);
+        CHECK(player.getBlendWeight() == 1.0f);
 
         // Restore weight=0 for the no-op check.
-        player.setAdditiveWeight(0.0f);
+        player.setBlendWeight(0.0f);
         player.setTime(0.5f);
         player.evaluate();
 
@@ -1062,9 +1062,11 @@ TEST_SUITE(AnimationPlayerTests)
         CHECK_FLOAT_EQ(player.getBlendWeight(), 0.42f, 1e-6f);
         player.setBlendWeight(1.5f);
         CHECK_FLOAT_EQ(player.getBlendWeight(), 1.0f, 1e-6f);
-        // And the deprecated P1.2 name still forwards correctly.
-        player.setAdditiveWeight(0.7f);
-        CHECK_FLOAT_EQ(player.getAdditiveWeight(), 0.7f, 1e-6f);
+        // P1.6 cleanup: the deprecated setAdditiveWeight/getAdditiveWeight
+        // wrappers were removed; only the canonical setBlendWeight/getBlendWeight
+        // remains. The third write verifies idempotence (setBlendWeight
+        // 0.7 a second time keeps the same value).
+        player.setBlendWeight(0.7f);
         CHECK_FLOAT_EQ(player.getBlendWeight(),   0.7f, 1e-6f);
     }
 
@@ -1092,9 +1094,9 @@ TEST_SUITE(AnimationPlayerTests)
         // Tick dt=1.5 — independent advance on each axis.
         player.tick(1.5f);
         CHECK_FLOAT_EQ(player.getTime(), 1.5f, 1e-5f);     // base, no wrap
-        // Read additive time via consumePendingNotifiesAdditive side-effect
-        // is impossible; we don't expose _additiveTime publicly. Instead,
-        // verify additive-notify crossing proves wrap happened (test A10
+        // _additiveTime is not exposed publicly (slot[0].time lives in
+        // _additiveSlots[0]). Instead, verify additive-notify crossing
+        // proves wrap happened (test A10
         // covers that path explicitly). For this test we accept that
         // "independent advance" is structurally guaranteed by the dual
         // advance code in tick().
@@ -1126,9 +1128,9 @@ TEST_SUITE(AnimationPlayerTests)
         // And the additive-side notify queue is empty / add time reset
         // is NOT performed by play() — only _additiveTime stays at its
         // last tick value (host responsibility).
-        // Verify via the public API: getPendingNotifyCountAdditive
-        // starts at 0 after play() because addTime didn't move.
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        // P1.6: the merged queue count also starts at 0 after play()
+        // because nothing has been ticked yet.
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
     }
 
     // A6 — stop() contract. Clears both layers + both queues.
@@ -1151,8 +1153,11 @@ TEST_SUITE(AnimationPlayerTests)
         player.setAdditiveSource(&addAnim);
         // Tick once so both queues would hold a marker.
         player.tick(0.6f);
+        // P1.6: base fires 1, slot[0] fires 1 → merged = 2 (Base + Additive_0,
+        // sorted by time). The two records have different notifyName so
+        // dedup-by-(time,name) does not collapse them.
         CHECK(player.getPendingNotifyCount()          == 1u);
-        CHECK(player.getPendingNotifyCountAdditive() == 1u);
+        CHECK(player.getPendingNotifyCountMerged()   == 2u);
 
         player.stop();
         // isValid depends on _baseClip which stop() clears via _anim=null
@@ -1163,7 +1168,9 @@ TEST_SUITE(AnimationPlayerTests)
         // isAdditiveLayerActive MUST be false after stop() because
         // clearAdditiveSource() was called.
         CHECK_FALSE(player.isAdditiveLayerActive());
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        // P1.6: stop() clears _pendingNotifies + every slot's pendingNotifies
+        // + _pendingNotifiesMerged, so all three counts go to 0 together.
+        CHECK(player.getPendingNotifyCountMerged()   == 0u);
         CHECK(player.getPendingNotifyCount()          == 0u);
     }
 
@@ -1192,16 +1199,16 @@ TEST_SUITE(AnimationPlayerTests)
         player.setAdditiveSource(&addAnim);
 
         // setTime(4.0): base → 4.0 (no wrap), additive → 1.0 (wrap from 4.0 to 1.0).
-        // Both queues cleared (seek semantics). Both prev cursors reset.
+        // All queues cleared (seek semantics). Both prev cursors reset.
         player.setTime(4.0f);
-        CHECK(player.getPendingNotifyCount()          == 0u);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCount()        == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // tick(0.5): interval [4.0, 4.5) on base, [1.0, 1.5) on additive.
-        // Neither contains a marker → both queues stay empty.
+        // Neither contains a marker → all queues stay empty.
         player.tick(0.5f);
-        CHECK(player.getPendingNotifyCount()          == 0u);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCount()        == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
     }
 
     // A8 — Math guard: rotation pow with weight=0 → no NaN.
@@ -1343,18 +1350,26 @@ TEST_SUITE(AnimationPlayerTests)
         player.setTime(0.0f);
         player.tick(1.2f);    // crosses Add@0.5 and Base@1.0
 
-        const auto& baseRecs = player.consumePendingNotifies();
-        const auto& addRecs  = player.consumePendingNotifiesAdditive();
+        // P1.6: the dual-queue contract (base + slot[0] each have their own
+        // drain) collapses into the merged queue. The semantic test is
+        // that BOTH markers crossed in the same tick are observable in
+        // one drain, distinguished by sourceTag.
+        //
+        // Note: consumePendingNotifiesMerged() also drains the per-source
+        // queues it was built from (base + every slot) — see
+        // AnimationPlayer.cpp:808-811. After this drain there is no
+        // separate per-source queue left to inspect.
+        const auto& mergedRecs = player.consumePendingNotifiesMerged();
 
-        CHECK(baseRecs.size() == 1u);
-        if (baseRecs.size() >= 1u) {
-            CHECK(std::string(baseRecs[0].name ? baseRecs[0].name : "") == "BaseFootstep");
-            CHECK_FLOAT_EQ(baseRecs[0].time, 1.0f, 1e-5f);
-        }
-        CHECK(addRecs.size() == 1u);
-        if (addRecs.size() >= 1u) {
-            CHECK(std::string(addRecs[0].name ? addRecs[0].name : "") == "HitReact");
-            CHECK_FLOAT_EQ(addRecs[0].time, 0.5f, 1e-5f);
+        CHECK(mergedRecs.size() == 2u);
+        if (mergedRecs.size() == 2u) {
+            // Time-ASC sort: slot 0.5 first, then base 1.0.
+            CHECK(std::string(mergedRecs[0].name ? mergedRecs[0].name : "") == "HitReact");
+            CHECK(mergedRecs[0].sourceTag == AnimNotifySourceTag::Additive_0);
+            CHECK_FLOAT_EQ(mergedRecs[0].time, 0.5f, 1e-5f);
+            CHECK(std::string(mergedRecs[1].name ? mergedRecs[1].name : "") == "BaseFootstep");
+            CHECK(mergedRecs[1].sourceTag == AnimNotifySourceTag::Base);
+            CHECK_FLOAT_EQ(mergedRecs[1].time, 1.0f, 1e-5f);
         }
     }
 
@@ -1724,16 +1739,20 @@ TEST_SUITE(AnimationPlayerTests)
         // === 0.6 (sync) which is past additive's AddTick at 1.5? No —
         // additive t=0.6 < 1.5 → additive marker NOT fired yet.
         player.tick(0.6f);
-        CHECK(player.getPendingNotifyCount()          == 1u);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCount()        == 1u);
+        CHECK(player.getPendingNotifyCountMerged() == 1u);
 
         // Tick to 2.0. Base crosses endpoints multiple times (looping);
         // additive (lock-step at base t=2.0) crosses additive marker at
         // t=1.5 in the SAME event.
         player.tick(1.4f);
         // The base clip (duration=2) is in the [0.6, 2.0) tick window;
-        // only the additive marker at 1.5 falls in there.
-        CHECK(player.getPendingNotifyCountAdditive() == 1u);
+        // only the additive marker at 1.5 falls in there. Merged queue
+        // now holds the previously-fired BaseTick + the newly-fired
+        // AddTick — but since neither consumePendingNotifies() nor
+        // consumePendingNotifiesMerged() was called between ticks, the
+        // merged count grows monotonically until consumed.
+        CHECK(player.getPendingNotifyCountMerged() == 2u);
     }
 
     // A5 — syncToBase + setTime. A seek MUST jump both axes to _time
@@ -1769,8 +1788,9 @@ TEST_SUITE(AnimationPlayerTests)
         player.setTime(0.4f);
         // Tick 0.3s → both axes 0.4 → 0.7. Additive marker at 0.5 fires.
         player.tick(0.3f);
-        CHECK(player.getPendingNotifyCountAdditive() == 1u);
-        player.consumePendingNotifiesAdditive();   // drain
+        // Base has no markers in this scenario, so merged == slot[0] alone.
+        CHECK(player.getPendingNotifyCountMerged() == 1u);
+        player.consumePendingNotifiesMerged();   // drain
 
         // Second seek: jump over the marker region. The prev cursor
         // is now at 0.7; seek to 0.99 — now the additive window
@@ -1779,7 +1799,7 @@ TEST_SUITE(AnimationPlayerTests)
         player.tick(0.02f);   // base 0.99 → 1.01 (wrap base if looping,
                               // but additive marker at 0.5 already fired
                               // and no other markers — queue stays 0).
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // The KEY discriminator: under sync, if we seek BACK to 0.4 the
         // additive prev-cursor also resets to 0.4 so a re-tick through
@@ -1787,7 +1807,7 @@ TEST_SUITE(AnimationPlayerTests)
         // prev-cursor would be in a different state.
         player.setTime(0.4f);
         player.tick(0.3f);    // additive 0.4 → 0.7; marker at 0.5 fires
-        CHECK(player.getPendingNotifyCountAdditive() == 1u);
+        CHECK(player.getPendingNotifyCountMerged() == 1u);
     }
 
     // A6 — refPoseCapture OFF yields the P1.3 default (Phase 1b additive
@@ -1967,14 +1987,14 @@ TEST_SUITE(AnimationPlayerTests)
 
         // Tick to 0.4. Both axes still ticking (base to 0.4, additive to 0.4).
         player.tick(0.4f);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // Pause base. INV-8 — additive also halts.
         player.pause();
         // Tick dt=1.0. pause() short-circuits tick() (P1.3 base path). Additive
         // also halted, so the additive marker at t=0.5 MUST NOT fire.
         player.tick(1.0f);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // Resume and tick to 1.0. Now both axes advance together; the
         // additive marker that "would have fired" while paused is
@@ -1986,7 +2006,8 @@ TEST_SUITE(AnimationPlayerTests)
         // IS in range — but the cursor was reset to 0.4 on resume()
         // (because the prior pause inserted a no-op), so 0.5 → 1.0 is
         // the new window and 0.5 IS in it. So we expect exactly 1 fire.
-        CHECK(player.getPendingNotifyCountAdditive() == 1u);
+        // Base has no markers so merged == slot[0] count.
+        CHECK(player.getPendingNotifyCountMerged() == 1u);
     }
 
     // A8 — setAdditivePaused (Aux E) freezes ONLY the additive axis while
@@ -2009,7 +2030,7 @@ TEST_SUITE(AnimationPlayerTests)
 
         // Independent axis (default). Tick to 0.4.
         player.tick(0.4f);
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // Pause ONLY additive. Tick base to 1.0. Additive stays at 0.4.
         player.setAdditivePaused(true);
@@ -2017,15 +2038,16 @@ TEST_SUITE(AnimationPlayerTests)
 
         player.tick(0.6f);
         // base t=1.0; additive t=0.4 (unchanged). Neither AddHalf nor
-        // AddOne fires (additive didn't move past them).
-        CHECK(player.getPendingNotifyCountAdditive() == 0u);
+        // AddOne fires (additive didn't move past them). Base has no
+        // markers, so merged == slot[0] count == 0.
+        CHECK(player.getPendingNotifyCountMerged() == 0u);
 
         // Resume and tick 0.6s (additive 0.4 → 1.0). AddHalf AND AddOne
         // both fall in [0.4, 1.0) on additive — both fire.
         player.setAdditivePaused(false);
         CHECK_FALSE(player.isAdditivePaused());
         player.tick(0.6f);
-        CHECK(player.getPendingNotifyCountAdditive() == 2u);
+        CHECK(player.getPendingNotifyCountMerged() == 2u);
 
         // Note: setAdditivePaused(false) re-syncs the prev cursor AND
         // clears the pending notify queue (mirrors setTime semantics)
@@ -2044,8 +2066,8 @@ TEST_SUITE(AnimationPlayerTests)
     //
     // 22 tests pin the contracts in design.md §4.11. The vector<AdditiveSlot>
     // data model generalizes the P1.3 single-slot design; the merged notify
-    // queue replaces the dual consumePendingNotifies / consumePendingNotifiesAdditive
-    // pattern; the per-track mask is an opt-in extension. All P1.3 + P1.4
+    // queue replaces the P1.3 dual consumePendingNotifies pattern; the
+    // per-track mask is an opt-in extension. All P1.3 + P1.4
     // tests above must continue passing — every old API entry redirects to
     // slot[0] bit-for-bit.
     // ========================================================================

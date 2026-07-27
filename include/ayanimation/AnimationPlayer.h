@@ -30,12 +30,12 @@
 //   or both (the callback runs in tick() — synchronous; the queue is
 //   drained after memcpy of skin matrices, on the same main-thread tick).
 //
-// Additive Layer 1 (Phase 1.2 — P1.2 MVP):
-//   setAdditiveWeight(w) controls the global additive blend intensity for
+// Additive Layer 1 (Phase 1.2 — P1.2 MVP, deprecated P1.6):
+//   setBlendWeight(w) below controls the global additive blend intensity for
 //   any AnimTrack flagged AnimBlendMode::Additive in the bound clip.
 //   Per-track Override behavior is byte-identical to pre-P1.2. Per-track
 //   Additive behavior applies the sampled TRS value AS A DELTA on top of
-//   the bone's base local TRS, weighted by _additiveWeight (saturated to
+//   the bone's base local TRS, weighted by _blendWeight (saturated to
 //   [0, 1] on write to keep quaternion math safe). Math:
 //     position: _localPos[k] += sample[k] * weight
 //     rotation: (base * sample.pow(weight)).normalize();  weight==0 → identity
@@ -88,9 +88,14 @@
 //   UPGRADE-HOOK(P1.5): dual notify queue → merged + source-tagged
 //   UPGRADE-HOOK(P1.5): single additive layer → vector<AdditiveSlot> stack
 //   UPGRADE-HOOK(P1.5): uniform _blendWeight → per-track weights (mask)
-//   REMOVE-MARKER(P1.6): deprecated setAdditiveWeight wrapper drop
 //
-//   See design.md §4.7 + §4.10 for full contract and resolved items.
+//   See design.md §4.7 + §4.10 + §4.11 for full contract and resolved items.
+//   P1.6 cleanup (2026-07-27): REMOVE-MARKER for setAdditiveWeight wrapper
+//   has been resolved — the inline-forward setAdditiveWeight/getAdditiveWeight
+//   wrappers were deleted; callers (AYAnimationSystem + tests) now use the
+//   canonical setBlendWeight/getBlendWeight. Same for the P1.3 dual-queue
+//   consumePendingNotifiesAdditive/getPendingNotifyCountAdditive — replaced
+//   by the P1.5 merged consumePendingNotifiesMerged/getPendingNotifyCountMerged.
 
 #include <aymath/MathTypes.h>
 #include <assetsDefs/IAYAnimation.h>
@@ -323,22 +328,6 @@ public:
     void  setPlayRate(float r)        { _playRate = r; }
     void  setLoop(bool enabled)       { _loop = enabled; }
 
-    // === Additive Layer 1 (Phase 1.2 — P1.2 MVP) ===
-    //
-    // Global scalar blend weight applied to any AnimTrack carrying the
-    // Additive blendMode flag in the bound IAnimation. Override tracks are
-    // not affected. Default 1.0f (no scaling). Negative input is saturated
-    // to 0; values > 1 are saturated to 1 — keeps quaternion pow safe from
-    // a caller typo (e.g. -0.5 meant 0.5) without leaking NaNs into the
-    // skin matrices.
-    //
-    // P1.3 deprecation: kept as inline-forward to setBlendWeight so the
-    // 197-test P1.2 baseline (and AYAnimationSystem's existing caller at
-    // AYAnimationSystem.cpp:124) keeps compiling. The canonical P1.3 API
-    // is setBlendWeight / getBlendWeight below. Remove in P1.6.
-    void  setAdditiveWeight(float w)   { setBlendWeight(w); }
-    float getAdditiveWeight() const    { return _blendWeight; }
-
     // === Additive Layer 2 (Phase 1.3 — P1.3 MVP — Cross-Fade) ===
     //
     // Bind / rebind the additive layer source. Pass nullptr (or call
@@ -546,17 +535,13 @@ public:
                                      const std::vector<float>& weights);
     const std::vector<float>& getAdditiveLayerTrackWeights(uint32_t slotId) const;
 
-    // Merged notify queue (P1.5 NEW). Replaces the dual
-    // consumePendingNotifies() + consumePendingNotifiesAdditive() pattern
-    // with a single sorted-by-time vector carrying source tags. Dedup
-    // rule: a (time, name) collision between base and slot K keeps the
-    // BASE record and drops the slot K record (base wins — gameplay
-    // subscribers want base reasoning, additive is enrichment).
+    // Merged notify queue (P1.5 NEW). Replaces the P1.3 dual-queue
+    // consumePendingNotifies() pattern with a single sorted-by-time vector
+    // carrying source tags. Dedup rule: a (time, name) collision between
+    // base and slot K keeps the BASE record and drops the slot K record
+    // (base wins — gameplay subscribers want base reasoning, additive is
+    // enrichment).
     //
-    // The old consumePendingNotifiesAdditive() is kept as a
-    // slot[0]-only wrapper for backward compat with P1.3/P1.4 hosts;
-    // it is DEPRECATE-P1.5 and may be removed in P1.6 alongside the
-    // deprecated `setAdditiveWeight` wrapper.
     const std::vector<AnimNotifyRecord>& consumePendingNotifiesMerged();
     size_t getPendingNotifyCountMerged() const { return _pendingNotifiesMerged.size(); }
 
@@ -592,21 +577,10 @@ public:
     // Read-only peek (does not clear). Useful for tests / diagnostics.
     size_t getPendingNotifyCount() const { return _pendingNotifies.size(); }
 
-    // P1.3 — second notify queue. Additive source markers fired by the
-    // most recent tick() (and any since the last consume). Independent
-    // of the base queue. Same dual-exit / thread_local swap semantics as
-    // consumePendingNotifies() so a host that drains both per frame sees
-    // them in their own chronological order.
-    //
-    // UPGRADE-HOOK(P1.5): merged + source-tagged + dedup-by-(time,name).
-    const std::vector<AnimNotifyRecord>& consumePendingNotifiesAdditive();
-    size_t getPendingNotifyCountAdditive() const {
-        // P1.5 — DEPRECATE-P1.5 wrapper. Returns slot[0]'s queue size.
-        // The canonical path is getPendingNotifyCountMerged() which
-        // counts records across every slot.
-        const AdditiveSlot* s = getSlot(0);
-        return (s != nullptr) ? s->pendingNotifies.size() : 0u;
-    }
+    // P1.6 cleanup: P1.3 dual-queue (consumePendingNotifies + consumePendingNotifiesAdditive)
+    // has been removed. Hosts that need a per-frame drain of all notify markers
+    // (base + every slot) should call consumePendingNotifiesMerged() above — it
+    // returns one chronologically-sorted vector with sourceTag on every record.
 
 private:
     const ayt::resource::ISkeleton* _skeleton = nullptr;
@@ -619,11 +593,6 @@ private:
     // here, defined in AnimationPlayer.cpp. Public callers use the sink
     // setter + consumePendingNotifies() instead.
     void dispatchPendingNotifies(float prev, float next, bool wrapped);
-    // P1.3 — mirror dispatch for the additive source's notify markers.
-    // P1.5: still kept for backward compat (consumePendingNotifiesAdditive
-    // uses it indirectly via the slot[0] path); the per-slot version is
-    // dispatchSlotNotifies(slotRef, ...).
-    void dispatchAdditiveNotifies(float prev, float next, bool wrapped);
 
     // P1.4 — bone index cache management. See TrackSlice header for the
     // sentinel semantics (kBoneUnresolved = INT32_MIN, -1 = cached miss).
@@ -660,16 +629,16 @@ private:
     void  captureRefPoseFromSlot(AdditiveSlot& slot);
     void  applyCapturedRefPoseFromSlot(AdditiveSlot& slot);
 
-    // Per-slot dispatch (P1.5). Mirrors dispatchAdditiveNotifies but
-    // operates on a slot reference.
+    // Per-slot dispatch (P1.5). Called from the Phase 1b per-slot loop
+    // inside tick() / evaluate().
     void dispatchSlotNotifies(AdditiveSlot& slot, float prev, float next, bool wrapped);
 
     // Merged notify rebuild + consume.
     void rebuildMergedNotifies();
     // consumePendingNotifies() is declared in the public API above; the
     // implementation in the .cpp swaps the thread-local return slot and
-    // is the single canonical consume path (consumePendingNotifiesAdditive
-    // and consumePendingNotifiesMerged layer on top of it).
+    // is the canonical consume path. consumePendingNotifiesMerged()
+    // rebuilds + swaps _pendingNotifiesMerged.
 
     // P1.4 cross-fade — single-slot helpers. These three are kept as
     // thin wrappers around `_additiveSlots[0]` so old P1.4 callers (the

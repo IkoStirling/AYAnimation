@@ -654,7 +654,7 @@ AnimationPlayer::consumePendingNotifies()
 }
 
 // ---------------------------------------------------------------------------
-//  P1.5 — per-slot notify dispatch (replaces dispatchAdditiveNotifies).
+//  P1.5 — per-slot notify dispatch.
 //
 // Mirrors dispatchPendingNotifies but reads from a slot's per-slot
 // pendingNotifies queue. The AnimNotifyRecord produced here carries
@@ -708,41 +708,6 @@ void AnimationPlayer::dispatchSlotNotifies(AdditiveSlot& slot,
             if (inA || inB) fireOne(i);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-//  P1.3 — backward-compat additive dispatch wrapper. P1.5 keeps this as
-//  a slot[0] indirection so any old caller that bypasses per-slot and
-//  manipulates _additive* fields directly (none exist in our codebase,
-//  but third-party callers may) still fires via dispatchSlotNotifies.
-//
-//  DEPRECATE-P1.5 — new code should call dispatchSlotNotifies or
-//  rely on the per-slot Phase 1b loop in tick().
-// ---------------------------------------------------------------------------
-void AnimationPlayer::dispatchAdditiveNotifies(float prev,
-                                               float next,
-                                               bool  wrapped)
-{
-    AdditiveSlot* s = getSlot(0);
-    if (s == nullptr || s->clip == nullptr) return;
-    dispatchSlotNotifies(*s, prev, next, wrapped);
-}
-
-const std::vector<AnimationPlayer::AnimNotifyRecord>&
-AnimationPlayer::consumePendingNotifiesAdditive()
-{
-    // P1.5 — DEPRECATE-P1.5 wrapper. Returns slot[0]'s queue; the
-    // canonical path is consumePendingNotifiesMerged() which carries
-    // every slot's records with their sourceTag. Kept as a thin
-    // slot[0] indirection so AYAnimationSystem callers that haven't
-    // migrated yet keep working bit-for-bit.
-    static thread_local std::vector<AnimNotifyRecord> s_returnSlotAdd;
-    s_returnSlotAdd.clear();
-    AdditiveSlot* s = getSlot(0);
-    if (s != nullptr) {
-        s_returnSlotAdd.swap(s->pendingNotifies);
-    }
-    return s_returnSlotAdd;
 }
 
 // ---------------------------------------------------------------------------
