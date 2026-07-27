@@ -8,7 +8,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <memory>
 
 namespace ayt::anim
 {
@@ -28,6 +31,10 @@ bool isTopologicallySorted(const ayt::resource::ISkeleton* skel)
     const ayt::resource::Bone* bones = skel->getBones();
     for (size_t i = 0; i < n; ++i) {
         const int p = bones[i].parentIndex;
+        // parentIndex must be a prior bone; OOB / forward refs fail.
+        if (p < -1 || (p >= 0 && static_cast<size_t>(p) >= n)) {
+            return false;
+        }
         if (p >= 0 && static_cast<size_t>(p) >= i) {
             return false;
         }
@@ -168,12 +175,38 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
 }
 
 // ===========================================================================
+//  Factory / lifetime
+// ===========================================================================
+
+void AnimationPlayerDeleter::operator()(AnimationPlayer* p) const noexcept
+{
+    delete p;
+}
+
+std::unique_ptr<AnimationPlayer, AnimationPlayerDeleter> AnimationPlayer::create()
+{
+    return std::unique_ptr<AnimationPlayer, AnimationPlayerDeleter>(
+        new AnimationPlayer());
+}
+
+// ===========================================================================
 //  Resource binding
 // ===========================================================================
 
 void AnimationPlayer::setSkeleton(
     std::shared_ptr<const ayt::resource::ISkeleton> skel)
 {
+    // Near-null `this` means the caller held a garbage AnimationPlayer*
+    // (typically SkeletonComponent ABI mismatch: unique_ptr field read
+    // from an object still laid out with an embedded-by-value player).
+    if (reinterpret_cast<std::uintptr_t>(this) < 0x10000u) {
+        std::fprintf(stderr,
+                     "[AnimationPlayer] setSkeleton refused: this=%p (near-null)\n",
+                     (void*)this);
+        std::fflush(stderr);
+        return;
+    }
+
     // P1.7 — retain a strong reference so the player's lifetime is
     // bounded by the source of truth (SkeletonComponent in ECS, test
     // fixture in unit tests). Empty shared_ptr unbinds the skeleton.
@@ -181,11 +214,47 @@ void AnimationPlayer::setSkeleton(
     const ayt::resource::ISkeleton* skelRaw = _skeleton.get();
 
     const size_t n = (skelRaw != nullptr) ? skelRaw->getBoneCount() : 0;
-    _localPos.assign(n * 3, 0.0f);
-    _localRot.assign(n * 4, 0.0f);
-    _localScl.assign(n * 3, 1.0f);
-    _world.assign(n, ayt::math::Float4x4::identity());
-    _skin.assign(n,  ayt::math::Float4x4::identity());
+    // Soft cap: a single AnimationPlayer palette / rest-pose buffer.
+    // Sour Miku FBX can report ~500 bones (body + dummy/shadow/physics);
+    // above this we still bind but refuse to allocate (avoids OOM / AV).
+    constexpr size_t kMaxBonesPerPlayer = 4096;
+    if (n > kMaxBonesPerPlayer) {
+        std::fprintf(stderr,
+                     "[AnimationPlayer] setSkeleton refused: boneCount=%zu > %zu\n",
+                     n, kMaxBonesPerPlayer);
+        _skeleton.reset();
+        _localPos.clear();
+        _localRot.clear();
+        _localScl.clear();
+        _world.clear();
+        _skin.clear();
+        return;
+    }
+    std::fprintf(stderr,
+                 "[AnimationPlayer] setSkeleton this=%p sizeof=%zu bones=%zu "
+                 "localPos=%p\n",
+                 (void*)this, sizeof(AnimationPlayer), n, (void*)&_localPos);
+    std::fflush(stderr);
+
+    // Build into temporaries then swap so fill/memset never runs against
+    // a stomped member `_Myfirst` (observed as write @ 0x20).
+    {
+        std::vector<float> pos(n * 3, 0.0f);
+        std::vector<float> rot(n * 4, 0.0f);
+        std::vector<float> scl(n * 3, 1.0f);
+        std::vector<ayt::math::Float4x4> world(n);
+        std::vector<ayt::math::Float4x4> skin(n);
+        const ayt::math::Float4x4 id = ayt::math::Float4x4::identity();
+        for (size_t i = 0; i < n; ++i) {
+            std::memcpy(&world[i], &id, sizeof(id));
+            std::memcpy(&skin[i], &id, sizeof(id));
+        }
+        _localPos.swap(pos);
+        _localRot.swap(rot);
+        _localScl.swap(scl);
+        _world.swap(world);
+        _skin.swap(skin);
+    }
 
     // Seed local TRS buffers from the skeleton's rest pose so missing
     // tracks leave a bone at bind pose.
@@ -916,7 +985,7 @@ void AnimationPlayer::evaluate()
                                             _localScl[i * 3 + 1],
                                             _localScl[i * 3 + 2]);
             const ayt::math::Float4x4 local = ayt::math::Float4x4::fromTRS(lp, lr, ls);
-            if (p < 0) {
+            if (p < 0 || static_cast<size_t>(p) >= n) {
                 _world[i] = local;
             } else {
                 _world[i] = _world[static_cast<size_t>(p)] * local;
@@ -1209,7 +1278,7 @@ void AnimationPlayer::evaluate()
                                         _localScl[i * 3 + 1],
                                         _localScl[i * 3 + 2]);
         const ayt::math::Float4x4 local = ayt::math::Float4x4::fromTRS(lp, lr, ls);
-        if (p < 0) {
+        if (p < 0 || static_cast<size_t>(p) >= n) {
             _world[i] = local;
         } else {
             _world[i] = _world[static_cast<size_t>(p)] * local;

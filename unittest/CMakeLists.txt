@@ -4,6 +4,9 @@ set(SRC_FILES
     main.cpp
     AYTest_KeySampler.cpp
     AYTest_AnimationPlayer.cpp
+    # P2.1 (2026-07-27) — BlendSpace1D / BlendSpace2D unit tests
+    # (own-engine math + library-mode helper, no World/Entity).
+    AYTest_BlendSpace.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

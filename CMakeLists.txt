@@ -12,6 +12,9 @@ set(SRC_FILES
     # P1.7 (2026-07-27) — asset-level shared (ISkeleton*, name) → boneIdx
     # cache consumed by AnimationPlayer::resolveBoneIdxOnce.
     src/AssetBoneCache.cpp
+    # P2.1 (2026-07-27) — Blend 1D / 2D linear-simplex BlendSpace
+    # independent of AnimationPlayer; owns N sample AnimationPlayers.
+    src/BlendSpace.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

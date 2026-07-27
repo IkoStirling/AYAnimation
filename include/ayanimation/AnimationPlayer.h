@@ -286,6 +286,15 @@ struct AdditiveSlot {
 // so the record can default-init its `sourceTag` field at compile time.
 // Tag values are stable; do not reorder.
 
+class AnimationPlayer;
+
+// Out-of-line delete so ~AnimationPlayer is only emitted from AYAnimation.cpp
+// (see AnimationPlayer::create). Prevents MSVC LNK2005 when many TUs
+// include SkeletonComponent's unique_ptr<AnimationPlayer>.
+struct AnimationPlayerDeleter {
+    void operator()(AnimationPlayer* p) const noexcept;
+};
+
 class AnimationPlayer {
 public:
     // Sink signature: (boneName, property, value-at-_time).
@@ -315,6 +324,18 @@ public:
     using AnimNotifyRecord = ::ayt::anim::AnimNotifyRecord;
 
     AnimationPlayer() = default;
+    ~AnimationPlayer() = default;
+
+    AnimationPlayer(const AnimationPlayer&) = delete;
+    AnimationPlayer& operator=(const AnimationPlayer&) = delete;
+    AnimationPlayer(AnimationPlayer&&) noexcept = default;
+    AnimationPlayer& operator=(AnimationPlayer&&) noexcept = default;
+
+    // Factory + custom deleter: construction/deletion of the heap object
+    // stay in AYAnimation.cpp. Other TUs only call Deleter::operator()
+    // (avoids MSVC LNK2005 when default_delete instantiates ~AnimationPlayer
+    // in every TU that destroys unique_ptr<AnimationPlayer>).
+    static std::unique_ptr<AnimationPlayer, AnimationPlayerDeleter> create();
 
     // === Resource binding ===
     // P1.7 — setSkeleton now takes a shared_ptr<const ISkeleton>. The

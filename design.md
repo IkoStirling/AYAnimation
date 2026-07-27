@@ -1364,6 +1364,8 @@ AnimationStateMachine
 
 **注**：当前 AYResource 的 `ISkeleton::getRootBoneIndices()` 已为重定向做预留。
 
+**与 MMD 导入的关系（2026-07-27）**：PMX/VMD → 引擎资产属 **AYResource 离线前端**（见 `AYResource/design.md` **§5.7**，拟用 saba 填 `IntermediateAsset` 后复用现有 Converter）。Runtime `AnimationPlayer` **不**依赖 MMD。跨模型骨长/比例问题仍由本 Phase 的 Retarget / 烘到目标骨架解决；与「能否解析 PMX」正交。近期待看效果：Blender → FBX → 现有 `FBXConverter` 即可。
+
 ---
 
 ## 8. 自适应压缩（Phase 5 ── 未启动）
