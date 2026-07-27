@@ -1,4 +1,5 @@
 #include <ayanimation/AnimationPlayer.h>
+#include <ayanimation/AssetBoneCache.h>   // P1.7 — asset-level boneIdx cache
 #include <ayanimation/KeySampler.h>
 
 #include <aymath/MathTypes.h>
@@ -170,11 +171,16 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
 //  Resource binding
 // ===========================================================================
 
-void AnimationPlayer::setSkeleton(const ayt::resource::ISkeleton* skel)
+void AnimationPlayer::setSkeleton(
+    std::shared_ptr<const ayt::resource::ISkeleton> skel)
 {
-    _skeleton = skel;
+    // P1.7 — retain a strong reference so the player's lifetime is
+    // bounded by the source of truth (SkeletonComponent in ECS, test
+    // fixture in unit tests). Empty shared_ptr unbinds the skeleton.
+    _skeleton = std::move(skel);
+    const ayt::resource::ISkeleton* skelRaw = _skeleton.get();
 
-    const size_t n = (skel != nullptr) ? skel->getBoneCount() : 0;
+    const size_t n = (skelRaw != nullptr) ? skelRaw->getBoneCount() : 0;
     _localPos.assign(n * 3, 0.0f);
     _localRot.assign(n * 4, 0.0f);
     _localScl.assign(n * 3, 1.0f);
@@ -183,10 +189,10 @@ void AnimationPlayer::setSkeleton(const ayt::resource::ISkeleton* skel)
 
     // Seed local TRS buffers from the skeleton's rest pose so missing
     // tracks leave a bone at bind pose.
-    if (skel != nullptr && n > 0) {
-        const ayt::math::FVector3*    pos = skel->getLocalPositions();
-        const ayt::math::FQuaternion* rot = skel->getLocalRotations();
-        const ayt::math::FVector3*    scl = skel->getLocalScales();
+    if (skelRaw != nullptr && n > 0) {
+        const ayt::math::FVector3*    pos = skelRaw->getLocalPositions();
+        const ayt::math::FQuaternion* rot = skelRaw->getLocalRotations();
+        const ayt::math::FVector3*    scl = skelRaw->getLocalScales();
         if (pos != nullptr) {
             for (size_t i = 0; i < n; ++i) {
                 _localPos[i * 3 + 0] = pos[i].x;
@@ -215,7 +221,7 @@ void AnimationPlayer::setSkeleton(const ayt::resource::ISkeleton* skel)
     // a hand-rolled skeleton with bad parentIndex would NaN-out the world
     // matrices silently otherwise.
 #ifndef NDEBUG
-    assert(isTopologicallySorted(_skeleton) &&
+    assert(isTopologicallySorted(_skeleton.get()) &&
            "AnimationPlayer: skeleton bone order must satisfy parentIndex < childIndex");
 #endif
 
@@ -269,19 +275,23 @@ void AnimationPlayer::invalidateBoneIndexCache()
 
 void AnimationPlayer::resolveBoneIdxOnce(TrackSlice& slice)
 {
-    // Sentinel means "not yet resolved" — caller (evaluate()) checks
-    // before invoking us so we can assume it. If a slice has no
-    // skeleton bound we leave the sentinel in place; the evaluate()
-    // gate `if (boneIdx < 0)` handles the three cases:
+    // P1.4 sentinel semantics (unchanged):
     //   -1    = name not found in skeleton (cached negative)
-    //   other = negative sentinel / null skeleton (skip the track)
+    //   INT32_MIN = not yet resolved (kBoneUnresolved)
     //   >=0   = valid bone index
+    //
+    // P1.7 — route the (skeleton, name) lookup through AssetBoneCache
+    // so two players bound to the same ISkeleton* share the result.
+    // Per-player TrackSlice.boneIdx remains the P1.4 hot-path cache;
+    // the asset cache is the cross-player cold-miss path.
     if (slice.boneIdx != kBoneUnresolved) return;
     if (_skeleton == nullptr) {
         return;
     }
-    const int found = _skeleton->findBone(slice.nodeName.c_str());
-    slice.boneIdx = (found >= 0) ? static_cast<int32_t>(found) : -1;
+    AssetBoneCache& cache = AssetBoneCache::instance();
+    const int32_t cached =
+        cache.resolveAndCache(_skeleton.get(), slice.nodeName.c_str());
+    slice.boneIdx = (cached >= 0) ? cached : -1;
 }
 
 void AnimationPlayer::play(const ayt::resource::IAnimation* anim)

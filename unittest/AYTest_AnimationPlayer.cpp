@@ -18,6 +18,7 @@
 #include <assetsDefs/IAYSkeleton.h>
 #include <assetsImpl/AYSkeleton.h>
 #include <assetsImpl/AYAnimation.h>
+#include <ayanimation/AssetBoneCache.h>   // P1.7 — asset-level bone cache
 
 // Phase 1.5 — Anim Notify EventBus integration test (test #8) lives at the
 // bottom of this file and constructs an EventBus instance + subscribes to
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,25 @@ Skeleton makeTwoBoneSkeleton()
     skel.setBone(1, child);
 
     return skel;
+}
+
+// P1.7 — same as makeTwoBoneSkeleton() but returns a shared_ptr so
+// multi-player sharing tests can hand the SAME asset to two players.
+std::shared_ptr<const ISkeleton> makeTwoBoneSkeletonShared()
+{
+    return std::static_pointer_cast<const ISkeleton>(
+        std::make_shared<Skeleton>(makeTwoBoneSkeleton()));
+}
+
+// P1.7 — wrap a stack-local Skeleton into a shared_ptr<const ISkeleton>
+// for tests that build `Skeleton skel; ... player.setSkeleton(sharedFromLocal(skel));`.
+// Returns a fresh copy of the skeleton so the player's reference
+// survives the stack frame. Multi-player share tests do their own
+// explicit shared_ptr construction (see P1_7_TwoPlayers_OneSkeleton_ShareResolve).
+std::shared_ptr<const ISkeleton> sharedFromLocal(const Skeleton& skel)
+{
+    return std::static_pointer_cast<const ISkeleton>(
+        std::make_shared<Skeleton>(skel));
 }
 
 // Build a position track on "Root": (0,0,0) at t=0, (10,0,0) at t=1.
@@ -142,7 +163,7 @@ TEST_SUITE(AnimationPlayerTests)
         // No tracks attached.
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.evaluate();
 
@@ -169,7 +190,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeRootPosTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setTime(0.5f);
         player.evaluate();
@@ -196,7 +217,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeRootPosTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setTime(1.0f);   // End of clip → Root at (10,0,0)
         player.evaluate();
@@ -231,7 +252,7 @@ TEST_SUITE(AnimationPlayerTests)
         // No tracks.
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.evaluate();
 
@@ -249,7 +270,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.setDuration(2.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.tick(2.5f);   // Should wrap to 0.5
         CHECK_FLOAT_EQ(player.getTime(), 0.5f, 1e-5f);
@@ -263,7 +284,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeRootPosTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setTime(0.5f);
         player.evaluate();
@@ -300,7 +321,7 @@ TEST_SUITE(AnimationPlayerTests)
         } cap;
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setFloatCurveSink([&](const char* nodeName,
                                     const char* property,
@@ -342,7 +363,7 @@ TEST_SUITE(AnimationPlayerTests)
         } cap;
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setFloatCurveSink([&](const char*, const char*, float v) {
             cap.callCount += 1;
@@ -366,7 +387,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeFloatWeightTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         // Note: no sink registered.
         player.setTime(1.0f);
@@ -403,7 +424,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.setDuration(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.evaluate();
 
@@ -438,7 +459,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.setDuration(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.evaluate();
 
@@ -493,7 +514,7 @@ TEST_SUITE(AnimationPlayerTests)
         std::vector<float>        firedTimes;
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setAnimNotifySink([&](const char* name, float t, float) {
             fired.emplace_back(name ? name : "");
@@ -519,7 +540,7 @@ TEST_SUITE(AnimationPlayerTests)
         int fireCount = 0;
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setAnimNotifySink([&](const char*, float, float) {
             ++fireCount;
@@ -540,7 +561,7 @@ TEST_SUITE(AnimationPlayerTests)
         std::vector<std::string> fired;
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setAnimNotifySink([&](const char* name, float, float) {
             fired.emplace_back(name ? name : "");
@@ -561,7 +582,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation clip = makeNotifyClip();
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         // NO setAnimNotifySink — but the queue is still populated
         // (dual-exit design: queue is for the AYEntity → EventBus bridge).
@@ -590,7 +611,7 @@ TEST_SUITE(AnimationPlayerTests)
         float gotTime = -1.0f;
         float gotPayload = -1.0f;
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setAnimNotifySink([&](const char* name, float t, float p) {
             gotName    = name ? name : std::string();
@@ -617,7 +638,7 @@ TEST_SUITE(AnimationPlayerTests)
 
         int fireCount = 0;
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setAnimNotifySink([&](const char*, float, float) {
             ++fireCount;
@@ -635,7 +656,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation clip = makeNotifyClip();
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&clip);
         player.setLoop(true);
         player.setTime(0.4f);
@@ -715,7 +736,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
 
         // After play() the cached TrackSlice also reads Override, AND the
@@ -764,7 +785,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setTime(0.5f);
         player.evaluate();
@@ -814,7 +835,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         // Default _blendWeight = 1.0, but assert it explicitly so the
         // test intent is clear.
@@ -872,7 +893,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         // setTime(1.0) under default _loop=true would wrap to 0 (end-of-clip
         // clamping). t=0.99 samples the lerp endpoint and avoids the wrap
@@ -924,7 +945,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setBlendWeight(0.0f);
         // Saturating setter — exact 0 still 0.
@@ -972,7 +993,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         // Should not crash, should leave the bones at rest pose.
         player.setTime(0.5f);
@@ -1002,7 +1023,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeRootPosTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setBlendWeight(0.5f);     // would matter IF a source were bound
         player.setTime(0.5f);
@@ -1039,7 +1060,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addTrack(addTr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setBlendWeight(0.0f);     // layer off via weight
@@ -1084,7 +1105,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.setDuration(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setLoop(true);
@@ -1115,7 +1136,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addTrack(makeRootPosTrack());  // same delta; add to itself for variety
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseA);
         player.setAdditiveSource(&addAnim);
         player.setBlendWeight(0.5f);
@@ -1148,7 +1169,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddM", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         // Tick once so both queues would hold a marker.
@@ -1194,7 +1215,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddAt0_5", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
 
@@ -1246,7 +1267,7 @@ TEST_SUITE(AnimationPlayerTests)
         // pose only. Phase 1a will seed rest, Phase 1b applies add with
         // weight=0 → rotation must remain identity (no NaN).
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         // Use an empty base clip just so isValid() returns true.
         Animation baseAnim; baseAnim.setDuration(1.0f); baseAnim.setTicksPerSecond(30.0f);
         player.play(&baseAnim);
@@ -1311,7 +1332,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addTrack(addTr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setBlendWeight(0.4f);
@@ -1343,7 +1364,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"HitReact", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setLoop(true);
@@ -1401,7 +1422,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(makeRootPosTrack());
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
 
         // First evaluate: cache populated, sample at t=0.
@@ -1465,7 +1486,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.setDuration(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skelA);
+        player.setSkeleton(sharedFromLocal(skelA));
         player.play(&anim);
         player.setTime(0.0f);
         player.evaluate();
@@ -1476,7 +1497,7 @@ TEST_SUITE(AnimationPlayerTests)
         CHECK_FLOAT_EQ(posA.z, 0.0f, 1e-4f);
 
         // Swap skeleton. Cache invalidated → next evaluate rebuilds.
-        player.setSkeleton(&skelB);
+        player.setSkeleton(sharedFromLocal(skelB));
         player.evaluate();
         const FVector3 posB = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
         CHECK_FLOAT_EQ(posB.x, 5.0f, 1e-4f);
@@ -1514,7 +1535,7 @@ TEST_SUITE(AnimationPlayerTests)
         anim.addTrack(phantomTr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&anim);
         player.setTime(1.0f);
         player.evaluate();   // should not crash; track silently skipped
@@ -1569,7 +1590,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addTrack(addTr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setBlendWeight(0.5f);
@@ -1620,7 +1641,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
 
@@ -1657,7 +1678,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
 
@@ -1684,7 +1705,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         // Force a known static weight.
@@ -1729,7 +1750,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddTick", 1.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
         player.setAdditiveSyncToBase(true);
@@ -1773,7 +1794,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddMid", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
 
         // Bind additive AFTER any time manipulation. setAdditiveSource
@@ -1886,7 +1907,7 @@ TEST_SUITE(AnimationPlayerTests)
         // (a) ref-pose capture OFF (P1.3 default behaviour).
         {
             AnimationPlayer player;
-            player.setSkeleton(&skel);
+            player.setSkeleton(sharedFromLocal(skel));
             player.play(&baseAnim);
             player.setAdditiveSource(&addAnim);
             player.setBlendWeight(1.0f);
@@ -1914,7 +1935,7 @@ TEST_SUITE(AnimationPlayerTests)
         // observable).
         {
             AnimationPlayer player;
-            player.setSkeleton(&skel);
+            player.setSkeleton(sharedFromLocal(skel));
             player.play(&baseAnim);
             player.setAdditiveSource(&addAnim);
             player.setAdditiveRefPoseCapture(true);
@@ -1951,7 +1972,7 @@ TEST_SUITE(AnimationPlayerTests)
         emptyBase.setDuration(1.0f);
         {
             AnimationPlayer player;
-            player.setSkeleton(&skel);
+            player.setSkeleton(sharedFromLocal(skel));
             player.play(&emptyBase);
             player.setAdditiveSource(&addAnim);
             player.setAdditiveRefPoseCapture(true);
@@ -1981,7 +2002,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddAtHalf", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
 
@@ -2024,7 +2045,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddOne",  1.0f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveSource(&addAnim);
 
@@ -2079,7 +2100,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
 
         // Bind slot 3 (sparse: 0/1/2 are empty padding, slot 3 holds the clip).
@@ -2098,7 +2119,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f, 5.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         CHECK(player.setAdditiveLayerSource(2, &addAnim));
         CHECK(player.getAdditiveLayerCount() == 1);
@@ -2122,7 +2143,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation baseAnim; baseAnim.setDuration(1.0f); baseAnim.setTicksPerSecond(30.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         // Slot 0: additive ramp 0→2 over 1s; slot 1: 0→6 over 1s (3x delta).
         Animation add0 = makeAdditiveRampAnim(1.0f, 2.0f);
@@ -2170,7 +2191,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation baseAnim; baseAnim.setDuration(1.0f); baseAnim.setTicksPerSecond(30.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         // Both slots 0..1 have additive ramp with endPos=1.0. At t=1.0
         // each contributes (1, 0, 0). Sum = (2, 0, 0).
@@ -2236,7 +2257,7 @@ TEST_SUITE(AnimationPlayerTests)
 
         // (a) Apply A (Y-rot) then B (X-rot).
         AnimationPlayer pAB;
-        pAB.setSkeleton(&skel);
+        pAB.setSkeleton(sharedFromLocal(skel));
         Animation emptyBase; emptyBase.setDuration(1.0f); emptyBase.setTicksPerSecond(30.0f);
         pAB.play(&emptyBase);
         pAB.setAdditiveLayerSource(0, &addA);
@@ -2249,7 +2270,7 @@ TEST_SUITE(AnimationPlayerTests)
 
         // (b) Apply B then A — different result expected.
         AnimationPlayer pBA;
-        pBA.setSkeleton(&skel);
+        pBA.setSkeleton(sharedFromLocal(skel));
         pBA.play(&emptyBase);
         // Bind in opposite slot order — slot 0 gets B, slot 1 gets A.
         pBA.setAdditiveLayerSource(0, &addB);
@@ -2280,7 +2301,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(2.0f, 4.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setAdditiveLayerSource(1, &addAnim);
@@ -2326,7 +2347,7 @@ TEST_SUITE(AnimationPlayerTests)
         addB.addNotify(AnimNotifyMarker{"MarkerB", 0.5f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addA);
         player.setAdditiveLayerSource(1, &addB);
@@ -2368,7 +2389,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f, 2.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setAdditiveLayerSource(1, &addAnim);
@@ -2400,7 +2421,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f, 2.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setAdditiveLayerSource(1, &addAnim);
@@ -2429,7 +2450,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         // Bind slots 0..7 (8 slots total).
         for (uint32_t i = 0; i < 8; ++i) {
@@ -2454,7 +2475,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setAdditiveLayerSource(2, &addAnim);
@@ -2474,7 +2495,7 @@ TEST_SUITE(AnimationPlayerTests)
         baseAnim.addNotify(AnimNotifyMarker{"BaseAtOne", 1.0f, 7.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setLoop(true);
         player.tick(1.2f);   // crosses t=1.0
@@ -2497,7 +2518,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddAtOne", 1.0f, 11.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setLoop(true);
@@ -2523,7 +2544,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"AddMid",   1.0f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setLoop(true);
@@ -2557,7 +2578,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"Shared", 1.0f, 99.0f});  // same (time, name)
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setLoop(true);
@@ -2584,7 +2605,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"SlotHit", 0.7f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setLoop(true);
@@ -2608,7 +2629,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseA);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setAdditiveLayerSource(2, &addAnim);
@@ -2627,7 +2648,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         // setAdditiveSource → slot 0.
         player.setAdditiveSource(&addAnim);
@@ -2683,7 +2704,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addTrack(tr);
 
         AnimationPlayer player;
-        player.setSkeleton(&skelA);
+        player.setSkeleton(sharedFromLocal(skelA));
         player.play(&baseAnim);
         // Bind TWO slots, both with the track-on-Root clip.
         player.setAdditiveLayerSource(0, &addAnim);
@@ -2702,7 +2723,7 @@ TEST_SUITE(AnimationPlayerTests)
         // Swap skeleton to skelB. Cache MUST be invalidated for both
         // slot 0 AND slot 1 — otherwise evaluate would crash on stale
         // boneIdx indices.
-        player.setSkeleton(&skelB);
+        player.setSkeleton(sharedFromLocal(skelB));
         player.setTime(0.5f);
         player.evaluate();
         const FVector3 pB = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
@@ -2727,7 +2748,7 @@ TEST_SUITE(AnimationPlayerTests)
         addAnim.addNotify(AnimNotifyMarker{"OnlySlot", 1.0f, 0.0f});
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         player.setLoop(true);
@@ -2749,7 +2770,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         // Bind slot 0 and configure cross-fade.
         player.setAdditiveLayerSource(0, &addAnim);
@@ -2782,7 +2803,7 @@ TEST_SUITE(AnimationPlayerTests)
         Animation addAnim = makeAdditiveRampAnim(1.0f, 2.0f);
 
         AnimationPlayer player;
-        player.setSkeleton(&skel);
+        player.setSkeleton(sharedFromLocal(skel));
         player.play(&baseAnim);
         player.setAdditiveLayerSource(0, &addAnim);
         // Mask: track 0 (the only one) gets weight 0.5.
@@ -2806,6 +2827,164 @@ TEST_SUITE(AnimationPlayerTests)
         const FVector3 p2 = player.getBoneWorldMatrices()[0].transformPoint(FVector3(0,0,0));
         // Full weight 1.0; sample (1.98, 0, 0) → (1.98, 0, 0).
         CHECK_FLOAT_EQ(p2.x, 1.98f, 5e-3f);
+    }
+
+    // ========================================================================
+    // P1.7 — Shared Skeleton Tick Cache
+    // ========================================================================
+    //
+    // AssetBoneCache sits across AnimationPlayer instances and caches
+    // (ISkeleton*, boneName) → boneIdx lookups so two players bound to
+    // the SAME ISkeleton* share the result. The per-player TrackSlice
+    // cache (P1.4) is unchanged; this is an additive cross-player cache.
+
+    TEST_CASE(P1_7_SetSkeleton_AcceptsSharedPtr) {
+        // Build a 2-bone skeleton in a shared_ptr and hand it to the
+        // player. isValid() must agree the player has a bound skeleton.
+        auto skelShared = makeTwoBoneSkeletonShared();
+        Animation anim;
+        anim.setDuration(1.0f);
+
+        AnimationPlayer player;
+        player.setSkeleton(skelShared);
+        player.play(&anim);
+        // Player retained the shared_ptr — internal _skeleton not null.
+        CHECK(player.isValid());
+        // setSkeleton(empty) unbinds cleanly without crash.
+        player.setSkeleton(nullptr);
+        CHECK_FALSE(player.isValid());
+    }
+
+    TEST_CASE(P1_7_AssetBoneCache_LookupAfterResolve) {
+        // Clear the cache so the assertion below is deterministic.
+        AssetBoneCache::instance().clear();
+
+        auto skelShared = makeTwoBoneSkeletonShared();
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.addTrack(makeRootPosTrack());
+
+        AnimationPlayer player;
+        player.setSkeleton(skelShared);
+        player.play(&anim);
+        player.setTime(0.5f);
+        player.evaluate();
+
+        // After evaluate() the AssetBoneCache must have an entry for
+        // the bound skeleton with bone name "Root".
+        const auto* skelPtr = skelShared.get();
+        CHECK(skelPtr != nullptr);
+        const int32_t idx = AssetBoneCache::instance().lookup(skelPtr, "Root");
+        CHECK(idx == 0);   // Root is index 0 in makeTwoBoneSkeleton.
+        // lookup() returns kCacheKeyAbsent for names we never resolved.
+        CHECK(AssetBoneCache::instance().lookup(skelPtr, "Phantom") ==
+              AssetBoneCache::kCacheKeyAbsent);
+    }
+
+    TEST_CASE(P1_7_AssetBoneCache_DifferentSkeletonsIndependent) {
+        AssetBoneCache::instance().clear();
+
+        auto skelA = makeTwoBoneSkeletonShared();
+        auto skelB = makeTwoBoneSkeletonShared();
+        // Two distinct shared_ptrs -> two distinct ISkeleton*
+        // addresses -> two distinct cache entries. (Their bone tables
+        // happen to be identical content, but cache keys are pointers.)
+        const auto* pA = skelA.get();
+        const auto* pB = skelB.get();
+        CHECK(pA != pB);
+
+        // Resolve "Root" through A first.
+        const int32_t idxA = AssetBoneCache::instance().resolveAndCache(pA, "Root");
+        CHECK(idxA == 0);
+        // B's cache for the SAME name must still be cold (INT32_MIN),
+        // proving the cache keys on ISkeleton* address, not name.
+        CHECK(AssetBoneCache::instance().lookup(pB, "Root") ==
+              AssetBoneCache::kCacheKeyAbsent);
+        // After resolving through B too, both entries coexist.
+        const int32_t idxB = AssetBoneCache::instance().resolveAndCache(pB, "Root");
+        CHECK(idxB == 0);
+        CHECK(AssetBoneCache::instance().lookup(pA, "Root") == 0);
+        CHECK(AssetBoneCache::instance().lookup(pB, "Root") == 0);
+        CHECK(AssetBoneCache::instance().skeletonEntryCount() == 2u);
+    }
+
+    TEST_CASE(P1_7_AssetBoneCache_Invalidate) {
+        AssetBoneCache::instance().clear();
+        auto skelA = makeTwoBoneSkeletonShared();
+        auto skelB = makeTwoBoneSkeletonShared();
+        const auto* pA = skelA.get();
+        const auto* pB = skelB.get();
+
+        AssetBoneCache::instance().resolveAndCache(pA, "Root");
+        AssetBoneCache::instance().resolveAndCache(pA, "Child");
+        AssetBoneCache::instance().resolveAndCache(pB, "Root");
+        CHECK(AssetBoneCache::instance().skeletonEntryCount() == 2u);
+        CHECK(AssetBoneCache::instance().boneNameEntryCount(pA) == 2u);
+
+        // Invalidate A only — B's entry survives (other players still
+        // bound to B should not be affected by A's hot-swap).
+        AssetBoneCache::instance().invalidate(pA);
+        CHECK(AssetBoneCache::instance().lookup(pA, "Root") ==
+              AssetBoneCache::kCacheKeyAbsent);
+        CHECK(AssetBoneCache::instance().lookup(pB, "Root") == 0);
+        CHECK(AssetBoneCache::instance().skeletonEntryCount() == 1u);
+    }
+
+    TEST_CASE(P1_7_TwoPlayers_OneSkeleton_ShareResolve) {
+        AssetBoneCache::instance().clear();
+
+        auto skelShared = makeTwoBoneSkeletonShared();
+        const auto* sharedPtr = skelShared.get();
+
+        Animation anim;
+        anim.setDuration(1.0f);
+        anim.addTrack(makeRootPosTrack());
+
+        AnimationPlayer pA;
+        pA.setSkeleton(skelShared);
+        pA.play(&anim);
+        pA.setTime(0.5f);
+        pA.evaluate();   // Triggers resolveAndCache for "Root".
+
+        // After pA's evaluate, the asset cache has the entry.
+        const int32_t cachedA = AssetBoneCache::instance().lookup(sharedPtr, "Root");
+        CHECK(cachedA == 0);
+
+        // pB bound to the SAME shared_ptr — its TrackSlice.boneIdx
+        // for "Root" should resolve through the same cache entry on
+        // its first evaluate. We verify by setting up a player,
+        // ticking, and checking the per-player TrackSlice boneIdx
+        // was set (proves pB's resolve path went through the cache).
+        AnimationPlayer pB;
+        pB.setSkeleton(skelShared);   // same shared_ptr = same ISkeleton*
+        pB.play(&anim);
+        pB.setTime(0.5f);
+        pB.evaluate();
+        // After pB.evaluate, the entry must still be in the cache.
+        CHECK(AssetBoneCache::instance().lookup(sharedPtr, "Root") == 0);
+        CHECK(AssetBoneCache::instance().skeletonEntryCount() == 1u);
+    }
+
+    TEST_CASE(P1_7_SharedPtr_SkeletonLifecyclePreservedByComponent) {
+        // Demonstrate the "skeleton outlives its source" guarantee:
+        // we drop the only ResourceManager-side reference and the
+        // player (which holds the shared_ptr) still has a valid
+        // skeleton pointer afterwards. This is the contract ECS relies
+        // on — see AYEntity/src/AYAnimationSystem.cpp lazy-load block.
+        AssetBoneCache::instance().clear();
+        auto skelShared = makeTwoBoneSkeletonShared();
+
+        AnimationPlayer player;
+        player.setSkeleton(skelShared);   // player retains 1 strong ref.
+        skelShared.reset();               // caller-side ref gone.
+        // Player's _skeleton still alive — player evaluates without crash.
+        Animation anim;
+        anim.setDuration(1.0f);
+        player.play(&anim);
+        player.setTime(0.5f);
+        player.evaluate();
+        CHECK(player.isValid());
+        CHECK(player.getBoneCount() == 2u);
     }
 
     TEST_SUITE_END

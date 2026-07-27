@@ -105,6 +105,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -316,7 +317,12 @@ public:
     AnimationPlayer() = default;
 
     // === Resource binding ===
-    void setSkeleton(const ayt::resource::ISkeleton* skel);
+    // P1.7 — setSkeleton now takes a shared_ptr<const ISkeleton>. The
+    // player retains a copy so its lifetime is bounded by the holder
+    // (SkeletonComponent in ECS, test fixture in unit tests). Calling
+    // with an empty shared_ptr unbinds (same semantics as a null raw
+    // pointer in P1.4/P1.5/P1.6).
+    void setSkeleton(std::shared_ptr<const ayt::resource::ISkeleton> skel);
     void play(const ayt::resource::IAnimation* anim);
 
     void stop();
@@ -583,7 +589,11 @@ public:
     // returns one chronologically-sorted vector with sourceTag on every record.
 
 private:
-    const ayt::resource::ISkeleton* _skeleton = nullptr;
+    // P1.7 — shared_ptr<const ISkeleton>. The player retains one
+    // strong reference so lifetime is bounded by the source of truth
+    // (SkeletonComponent in ECS, test fixture in unit tests). Lookup
+    // via `->` keeps the call sites unchanged.
+    std::shared_ptr<const ayt::resource::ISkeleton> _skeleton = nullptr;
     // P1.3 rename: _anim → _baseClip (internal-only, no API impact). The
     // public play(IAnimation*) API is unchanged; the field now signals
     // its role as the "base source" of a (potentially) two-source player.

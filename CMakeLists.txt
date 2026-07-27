@@ -9,6 +9,9 @@ set(MODULE_NAME AYAnimation)
 set(SRC_FILES
     src/AnimationPlayer.cpp
     src/KeySampler.cpp
+    # P1.7 (2026-07-27) — asset-level shared (ISkeleton*, name) → boneIdx
+    # cache consumed by AnimationPlayer::resolveBoneIdxOnce.
+    src/AssetBoneCache.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

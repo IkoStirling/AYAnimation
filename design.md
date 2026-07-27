@@ -1,9 +1,9 @@
 # AYAnimation Design
 
-> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.5 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe）。3-run stable：AYAnimation 398/398 + AYEntity 216/216 × 3；零回归 P0..P1.4 baseline。详见 §4.11 / §11 / §13 row 17e / §14 P1.5 row。  
+> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.7 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache = ECS refactor + asset-level boneIdx cache**）。3-run stable：AYAnimation 420/420 + AYResource 701/701 × 3；AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §4.11 / §4.12 / §11 / §13 row 17e–17g / §14 P1.5–P1.7 rows。  
 > **不负责**：完整角色管线（ASM / BlendSpace / Root Motion / Retarget / LOD）仍属后续 Phase。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
-> **2026-07-27 设计审计**：同步 §4.8 与代码；钉 §4.3 Hold 语义；修正 §11/§13 过时勾选与统计。
+> **2026-07-27 设计审计**：同步 §4.8 与代码；钉 §4.3 Hold 语义；修正 §11/§13 过时勾选与统计；新增 §4.12 P1.7 section + §11 P1.7 ship row + §13 row 17g + §14 P1.7 row。
 
 ---
 
@@ -1220,6 +1220,105 @@ P1.6 = 纯 deprecate wrapper cleanup（**无新功能**）：
 7. **Per-slot rebind-detection 必须 nested map** ── P1.3 的 `_lastAppliedAdditivePath` 是 `entity → string`;P1.5 必须升级为 `entity → unordered_map<slotIdx, string>`,否则两 slot path 互相覆盖。**4 个 P1.4 rebind map 都同理**。
 8. **`isAdditiveLayerActive()` 保留 slot[0] 语义** ── 多 slot 后 P1.5 决定**不** 改它语义,只读 slot[0];需要真 multi-slot 活跃度检测的 host 用 `getAdditiveLayerCount()` 自遍历。**降低破坏性 + P1.3/P1.4 测试零修改**。
 
+### 4.12 ✅ P1.7 Shared Skeleton Tick Cache — ECS refactor + asset-level boneIdx cache ── FULL SHIP (2026-07-27)
+
+P1.7 = **A (ECS refactor) + B (player-side asset cache)**：
+- **A**：`SkeletonComponent::skeleton` 由 by-value `ayt::resource::Skeleton` 改为 `std::shared_ptr<ayt::resource::Skeleton>`（保留 Skeleton 字段类型 — 测试需要 setBoneCount / setBone 程序化构建；隐式转换 `shared_ptr<Skeleton>` → `shared_ptr<const ISkeleton>` 给 AnimationPlayer）。N entity 同 skeletonPath 共享同一 ISkeleton asset — 砍 N 倍内存 + N 次首帧拷贝。
+- **B**：`AnimationPlayer::setSkeleton` 改 `std::shared_ptr<const ISkeleton>`；player 内 `_skeleton` 字段改 `shared_ptr`；新增 `ayt::anim::AssetBoneCache`（单例 + mutex）跨 player 共享 `(ISkeleton* addr, boneName) → boneIdx` 解析。`resolveBoneIdxOnce` 走 AssetBoneCache：hit 直接写 `slice.boneIdx`，miss 调 `resolveAndCache` 填充。
+
+**与 P1.6 关系**：P1.6 显式 defer 共享 cache 到 P1.7（§11 + §4.11.10）。P1.7 是 P1.6 收口动作的延续（用户决策：A+B 都要做）。
+
+**Engine 跨模块改动**：
+- AYAnimation 1 文件新增（AssetBoneCache.h/cpp）+ 2 文件改（AnimationPlayer.h 字段签名 + AnimationPlayer.cpp resolveBoneIdxOnce）
+- AYEntity 1 文件改 header（SkeletonComponent field 类型） + 1 文件改 cpp（AnimationSystem lazy-load 改 shared_ptr 路径，不再有 `setBoneCount(n) + n × setBone()` 拷贝循环）
+- 60+ AYAnimation test callsite + 14 AYEntity test callsite + 0 SuzanneSkinnedDemo 改（demo 只设 skeletonPath）
+- 6 + 2 新 test case（详见 §11 / §13）
+
+**On-disk format 不变**：`.ayanm` v4 / `.ayskel` v1 维持，ISkeleton VERSION 不动。零格式迁移。
+
+**新文件**（P1.7 完整 list）：
+- `AYAnimation/include/ayanimation/AssetBoneCache.h`
+- `AYAnimation/src/AssetBoneCache.cpp`（单例 + mutex + 3 public method）
+
+**改文件**（关键 6）：
+- `AYAnimation/include/ayanimation/AnimationPlayer.h`（字段 + 签名）
+- `AYAnimation/src/AnimationPlayer.cpp`（setSkeleton + resolveBoneIdxOnce）
+- `AYAnimation/CMakeLists.txt`（+ AssetBoneCache.cpp）
+- `AYEntity/include/components/AYSkeletonComponent.h`（字段类型）
+- `AYEntity/src/AYAnimationSystem.cpp`（懒加载 + debug log deref）
+- `AYEntity/unittest/SkinnedAnimationTest.cpp`（14 callsite 改 shared_ptr 路径）
+
+#### 4.12.1 AssetBoneCache contract
+
+单例 + mutex，key = `const ISkeleton*`（裸地址 — 不持 ownership，生命周期由 SkeletonComponent / test fixture 管）。三个 public method：
+
+```cpp
+class AssetBoneCache {
+public:
+    static constexpr int32_t kCacheKeyAbsent = INT32_MIN;  // = kBoneUnresolved
+    static constexpr int32_t kCachedMiss     = -1;
+    static AssetBoneCache& instance();
+
+    int32_t lookup(const ISkeleton* skel, const char* name) const;   // 不 mutate
+    int32_t resolveAndCache(const ISkeleton* skel, const char* name); // 写 + 返回
+    void    invalidate(const ISkeleton* skel);                         // 清一个
+    void    clear();
+    size_t  skeletonEntryCount() const;                                // test 诊断
+    size_t  boneNameEntryCount(const ISkeleton* skel) const;
+};
+```
+
+线程安全：main-thread-only tick path（ECS 单线程约定）；mutex 保险 + thread-sanitizer 友好。
+
+#### 4.12.2 resolveBoneIdxOnce 新路径
+
+P1.4 时代：
+```cpp
+const int found = _skeleton->findBone(slice.nodeName.c_str());
+slice.boneIdx = (found >= 0) ? static_cast<int32_t>(found) : -1;
+```
+
+P1.7：
+```cpp
+const int32_t cached =
+    AssetBoneCache::instance().resolveAndCache(_skeleton.get(), slice.nodeName.c_str());
+slice.boneIdx = (cached >= 0) ? cached : -1;
+```
+
+Per-player `TrackSlice.boneIdx` cache（P1.4 hot-path）**不变** — AssetBoneCache 是 cross-player 附加层。
+
+#### 4.12.3 ECS bridge 改写（无逐 bone 拷贝）
+
+P1.6：
+```cpp
+const size_t n = skelRes->getBoneCount();
+skel->skeleton.setBoneCount(n);
+for (size_t i = 0; i < n; ++i) {
+    skel->skeleton.setBone(i, skelRes->getBones()[i]);
+}
+skel->player.setSkeleton(&skel->skeleton);
+```
+
+P1.7：
+```cpp
+skel->skeleton = std::static_pointer_cast<ayt::resource::Skeleton>(skelRes);
+skel->jointCount = static_cast<uint32_t>(skel->skeleton->getBoneCount());
+// ... jointCount == 0 / skinMatrices 分配不变 ...
+skel->player.setSkeleton(skel->skeleton);
+```
+
+**热路径收益**：每 entity 砍掉 `setBoneCount(n) + n × setBone()` + `n × _boneNameMap[bone.name] = i` 的 O(N × boneCount) 拷贝。N 个 entity 同 skeleton → N 倍内存节省 + N 倍启动时间节省。
+
+#### 4.12.4 关键工程教训（P1.7 reviewer 必读）
+
+1. **`SkeletonComponent::skeleton` 类型选择** ── 用 `shared_ptr<Skeleton>`（mutable，concrete）而非 `shared_ptr<const ISkeleton>`（immutable，interface）。理由：测试需要 `setBoneCount / setBone` 程序化构建 skeleton → 调用方需要 mutable API。`shared_ptr<Skeleton>` 隐式转 `shared_ptr<const ISkeleton>` 给 AnimationPlayer（player 持有 const 即可）。
+2. **SkeletonComponent ctor 必须显式 `skeleton.reset()`** ── 字段是 in-class default-init shared_ptr，default ctor 不写 reset 不会出问题，但显式 `reset()` 是 P1.7 contract 文档，验证字段语义而非依赖隐式 default。
+3. **`static_pointer_cast<Skeleton>(shared_ptr<ISkeleton>)` 是合法的** ── Skeleton derives public from ISkeleton。ResourceManager::load<ISkeleton>(path) 返回 `shared_ptr<ISkeleton>`，在 ECS bridge 一次 cast 拿 concrete Skeleton。**注意**：不能用 `dynamic_pointer_cast` —— Skeleton 不是 polymorphic-deleted-from-base 类（无 virtual dtor 之外的多态），但 static cast 工作。
+4. **Test 中 `buildFourBoneSkeleton(*skel->skeleton)` 必须先 `skel->skeleton = std::make_shared<Skeleton>()`** ── SkeletonComponent P1.7 ctor 把 skeleton 设为 nullptr。deref 空 shared_ptr → setBoneCount → vector::resize → AV（0xC8 ≈ 空 this 上的成员偏移）。**这是 P1.7 引入的 footgun，所有 inline-build skeleton 测试必须先 make_shared**。新增 `makeFourBoneSkeletonShared` / `makeOneBoneSkeletonShared` helper 集中处理。
+5. **`setSkeleton(nullptr)` 等价于 unbind** ── `shared_ptr` default ctor 是 null；setSkeleton 接 null 走 `skelRaw == nullptr` 分支，跟 P1.4 时代传 NULL 裸指针语义一致。
+6. **AssetBoneCache 是单例 + magic-static** ── C++11 线程安全 init；与 std library 同段销毁，singleton destruction order 无风险。
+7. **`isAdditiveLayerActive()` 不动** ── P1.5 决定 + P1.6 验证 + P1.7 仍然保留 slot[0] 语义不变。
+
 ---
 
 ## 5. AnimationStateMachine（Phase 3 ── 未启动）
@@ -1347,6 +1446,7 @@ AYAnimation/
 - [x] **P1.5 Multi-Slot Additive Stack**（2026-07-27）─ `vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + merged notify queue + `AnimNotifySourceTag` enum + per-track `trackWeights` opt-in mask + 18 旧 single-slot API 全 redirect 到 slot[0] backward-compat wrappers + AYEntity `AdditiveLayerSpec` 结构 + nested (entity → slot) rebind-detection maps + per-slot push loop + EventBus `AnimNotifyEvent.sourceTag` pipe; INV-9/10/11 (per-slot 化 INV-6/7/8 + 新增 capture-buffer size + dedup 守则) + 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398 + AYEntity 216 + AYResource 701 unchanged); 详见 §4.11
 - [x] **P1.5 Multi-Slot stack（Player）**（文档对齐 2026-07-27）─ `AdditiveSlot`×8 + merged notify/`sourceTag` + per-slot trackWeights；**ECS/测试桥接未齐**；详见 §4.8
 - [x] **P1.6 Deprecate Wrapper Cleanup**（2026-07-27）─ 真实 deprecate `setAdditiveWeight`/`getAdditiveWeight`（P1.2 inline-forward wrapper）和 `consumePendingNotifiesAdditive`/`getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5 wrapper）全删；连带 dead `dispatchAdditiveNotifies` helper 删除；`AYAnimationSystem::onUpdate` bridge 调 canonical `setBlendWeight`；tests 11 处 + 8 处 caller 改 canonical；2 个 P1.3 测试因 dual-drain 消失改测 merged queue + sourceTag discriminator。3-run stable: AYAnimation 398/398 + AYEntity 216/216 × 3，零回归。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor：`SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`），P1.6 不动 ECS 边界。详见 §11 row + §13 row + §14 P1.6 row
+- [x] **P1.7 Shared Skeleton Tick Cache**（2026-07-27）─ ECS refactor：`SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert to `shared_ptr<const ISkeleton>` 给 AnimationPlayer）；N entity 同 skeletonPath 共享同一 ISkeleton asset，砍 N 倍内存 + N 次首帧拷贝；AYAnimationSystem 懒加载改持 shared_ptr 路径（无 `setBoneCount + n×setBone()` 循环）。Asset-level boneIdx cache：`AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx`；`AnimationPlayer::setSkeleton` 改接受 `shared_ptr<const ISkeleton>`；`_skeleton` 字段改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AssetBoneCache.h/cpp`；改 6 文件（AYAnimation 3 + AYEntity 3）；60+ AYAnimation + 14 AYEntity test callsite 改；6 + 2 新 test case（`P1_7_SetSkeleton_AcceptsSharedPtr` / `P1_7_AssetBoneCache_LookupAfterResolve` / `P1_7_AssetBoneCache_DifferentSkeletonsIndependent` / `P1_7_AssetBoneCache_Invalidate` / `P1_7_TwoPlayers_OneSkeleton_ShareResolve` / `P1_7_SharedPtr_SkeletonLifecyclePreservedByComponent` + AYEntity `skeleton_component_shared_ptr_does_not_duplicate_skeleton` / `skeleton_component_shared_ptr_outlives_resource_manager_eviction_safe`）。**关键 footgun**：所有 inline-build skeleton 测试必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `buildFourBoneSkeleton(*skel->skeleton)` ── 否则 deref nullptr → AV。3-run stable: AYAnimation 420/420 + AYResource 701/701 × 3, AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §11 row + §13 row 17g + §14 P1.7 row + §4.12
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -1421,6 +1521,7 @@ AYAnimation/
 | 17d | syncToBase / ref-pose / pause | UE/Unity | ✅ | P1.4 |
 | 17e | Multi AdditiveSlot + merged notify | UE Slot | ✅ | P1.5 |
 | 17f | 旧 P1.2/P1.3 wrapper API 真实 deprecate（setAdditiveWeight / consumePendingNotifiesAdditive 全删） | UE clean API | ✅ | P1.6 |
+| 17g | Shared skeleton asset cache（ECS refactor + asset-level boneIdx cache） | UE `USkeletalMesh` shared asset + FAnimationRuntime helpers | ✅ | P1.7 |
 | 18 | 骨骼遮罩 Mask（资源级） | UE | ⚠️ trackWeights only | Phase 2 |
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
 | 20–22 | AnimGraph / 状态机 | UE/Unity | ❌ | Phase 3 |
@@ -1462,6 +1563,7 @@ AYAnimation/
 | P1.4 | Hot-path 优化 + Cross-Fade full ship：track → boneIndex 预解析 (已 ship) + keyframed weight curve (`blendWeightOverTime` with 4 ease flavors reusing AYMath) + syncToBase option (additive playhead lock-step to base) + ref-pose capture path (CaptureState 3-state machine replacing rest-pose-at-0 assumption) + additive pause/resume (INV-8 unified with base pause)── ✅ **FULL SHIP 2026-07-26**; 8 AnimationPlayer tests + 3 AYEntity tests; 0 regression across 3 modules (701+312+187) |
 | P1.5 | Multi-slot stack：`vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + notify merge/`sourceTag` + `trackWeights` opt-in + AYEntity `AdditiveLayerSpec` 桥接 + EventBus `AnimNotifyEvent.sourceTag` pipe ── ✅ **FULL SHIP 2026-07-27**; 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398/398 + AYEntity 216/216 × 3); 详见 §4.11; 共享 skeleton tick cache 仍留 P1.6 |
 | P1.6 | Deprecate Wrapper Cleanup：真实删除 `setAdditiveWeight` / `getAdditiveWeight`（P1.2 inline-forward）+ `consumePendingNotifiesAdditive` / `getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5）+ dead `dispatchAdditiveNotifies` helper；bridge 改 canonical `setBlendWeight`；tests 11 + 8 caller 改 canonical；`P1_3_NotifyIndependence_BaseAndAdditive` 改测 merged queue + sourceTag ── ✅ **SHIP 2026-07-27**; 3-run stable 398/398 + 216/216 + 701/701 × 3, zero regression。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor `SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`） |
+| P1.7 | Shared Skeleton Tick Cache = **ECS refactor** + **asset-level boneIdx cache**：(A) `SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert 给 `setSkeleton(shared_ptr<const ISkeleton>)`），N entity 同 skeleton 共享 1 份 asset，砍 N 倍内存 + N 次首帧 `setBoneCount + n×setBone()` 拷贝；(B) `AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx` 跨 player 共享；`AnimationPlayer::_skeleton` 改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AssetBoneCache.h/cpp` + 改 6 文件 + 60+ AYAnim + 14 AYEntity test callsite + 6 + 2 新 test。**关键 footgun**：inline-build skeleton test 必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `*skel->skeleton`。On-disk format 不变（`.ayanm` v4 / `.ayskel` v1） ── ✅ **SHIP 2026-07-27**; 3-run stable 420/420 + 701/701 × 3 (AYAnimation + AYResource); AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §4.12 |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
 
