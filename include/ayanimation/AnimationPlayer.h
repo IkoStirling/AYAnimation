@@ -96,6 +96,8 @@
 #include <assetsDefs/IAYAnimation.h>
 #include <assetsDefs/IAYSkeleton.h>
 
+#include <ayanimation/AnimNotifyEvent.h>   // P1.5 — AnimNotifySourceTag definition
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -212,30 +214,12 @@ enum class CaptureState : ayt::math::UInt8 {
 // host needs more.
 constexpr uint32_t kMaxAdditiveSlots = 8;
 
-// P1.5 — source tag attached to every AnimNotifyRecord in the merged
-// queue. Lets AYEntity's AnimationSystem distinguish base markers
-// (AnimNotifyEvent with kTypeId 0x000A'0001 — same as Phase 1.5) from
-// per-slot additive markers so subscribers can route them differently
-// (e.g. UI sfx vs. gameplay logic).
-//
-// Numeric encoding chosen so the Base tag is 0 (default-constructed
-// record remains Base — backward-compat with all P1.3/P1.4 callers
-// that never read sourceTag). Additive_N = 1..8 maps to slot index 0..7.
-//
-// Forward-declared ahead of AnimNotifyRecord so the record struct can
-// reference the enum type by value (P1.5 default-constructs sourceTag
-// to Base — backward-compat default).
-enum class AnimNotifySourceTag : ayt::math::UInt8 {
-    Base        = 0,
-    Additive_0  = 1,
-    Additive_1  = 2,
-    Additive_2  = 3,
-    Additive_3  = 4,
-    Additive_4  = 5,
-    Additive_5  = 6,
-    Additive_6  = 7,
-    Additive_7  = 8,
-};
+// P1.5 — AnimNotifySourceTag is defined in AnimNotifyEvent.h (the
+// header-light bus-facing POD type). This file includes that header
+// so the AnimNotifyRecord struct below can use the enum. The enum
+// values (Base=0, Additive_0..7=1..8) are duplicated in source — the
+// canonical declaration is AnimNotifyEvent.h; we re-use the type by
+// reference, no duplicate definition.
 
 // P1.5 — Anim Notify record, hoisted from AnimationPlayer class scope
 // so AdditiveSlot (declared above) can hold a std::vector of them.

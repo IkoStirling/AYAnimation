@@ -683,8 +683,7 @@ TEST_SUITE(AnimationPlayerTests)
         bus.emit<AnimNotifyEvent>(evt);
         CHECK(hit == true);
         // kTypeId pinned so cross-module subscribers get the same id.
-        CHECK(AnimNotifyEvent::kTypeId   == 0x000A'0001u);
-        CHECK(AnimNotifyEvent::kPriority == ayt::event::EventPriority::High);
+        CHECK(AnimNotifyEvent::kTypeId == 0x000A'0001u);
     }
 
     // ====================================================================

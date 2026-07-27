@@ -1,7 +1,9 @@
 # AYAnimation Design
 
-> **状态（2026-07-26 更新）**：AN-01 已 ship（最小单 clip 播放器，约 200 行真实代码 + 11 个 test case）。本设计文档自该版起 **重构目标** 明确为"AYAnimation 是 AYResource 的薄消费层"，不再独立维护 skeleton/animation 数据类型。Phase 1.5 P1.1 **Anim Notify** 已 ship（2026-07-26, 175+7=182 tests 3-run stable across AYAnimation + AYEntity）。
-> 工业级对标：Unreal Engine Animation System / Unity Animator / Godot 4 AnimationTree / O3DE Animation Graph。
+> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.5 Player 侧已 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag`）。ECS/EventBus 对 P1.5 merged API **未完全桥接**；单测以 P1.4 为主、P1.5 覆盖不足。  
+> **不负责**：完整角色管线（ASM / BlendSpace / Root Motion / Retarget / LOD）仍属后续 Phase。  
+> 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
+> **2026-07-27 设计审计**：同步 §4.8 与代码；钉 §4.3 Hold 语义；修正 §11/§13 过时勾选与统计。
 
 ---
 
@@ -290,6 +292,16 @@ void tick(float dt) {
 
 **注意**：`tick` 不防 `dt < 0`。若宿主用 catch-up 时钟倒带，需在更上层 clamp。
 
+#### 4.3.1 Hold 语义（锁定 — 非 UE Hold）
+
+| 概念 | AYAnimation 现状 | 说明 |
+|------|------------------|------|
+| 非循环末帧定格 | ✅ `!_loop && _time > d` → clamp + `_paused` | **这不是** HoldTimer |
+| PoseHold / HoldDuration notify | ❌ 未实现 | 勿假设 UE `AnimNotifyState` 式按住时长 |
+| 显式 `holdPose()` API | ❌ 未实现 | 需要时宿主停 `tick` 或 `pause()` |
+
+读者 **不得** 把末帧 clamp 解读为工业级 Hold 通道。若要做，单独立项（建议挂 notify duration 或 PoseHold），勿 silently 改 `tick`。
+
 ### 4.4 ✅ Anim Notify (Phase 1.5) — SHIP
 
 - ✅ Anim Notify marker channel on `IAnimation`（Phase 1.5 `VERSION 2`）—— 排序的 named time-keyed 事件，跟 tracks 并列一等通道
@@ -431,11 +443,12 @@ byte is honored from its own clip):
 
 | Property | Additive source Override | Additive source Additive |
 |----------|---------------------------|---------------------------|
-| `position` | `_localPos[k] = sample[k]` (blendWeight ignored for Override — confusing semantic, callers wanting partial override should mark Additive) | `_localPos[k] += sample[k] * _blendWeight` |
-| `rotation` | `_localRot[q] = sample[q]` | `(base * sample.pow(_blendWeight)).normalize()` — weight==0 short-circuit before pow |
-| `scale` | `_localScl[k] = sample[k]` | `_localScl[k] *= (1 + sample[k] * _blendWeight)` — UE convention, relative blend |
+| `position` | `_localPos[k] = sample[k]` (**忽略 `_blendWeight`** — 已知陷阱：要部分覆盖请用 Additive 模式或 mask) | `_localPos[k] += sample[k] * _blendWeight` |
+| `rotation` | `_localRot[q] = sample[q]`（同样忽略 weight） | `(base * sample.pow(_blendWeight)).normalize()` — weight==0 short-circuit before pow |
+| `scale` | `_localScl[k] = sample[k]`（同样忽略 weight） | `_localScl[k] *= (1 + sample[k] * _blendWeight)` — UE convention, relative blend |
 | Float | push to `setFloatCurveSink` at `_additiveTime` (P1.2 invariant: additive concept is local-TRS only) | (same — Float tracks not affected by blendMode) |
 
+> **陷阱（锁定文档）**：Additive **source** 上标记 `Override` 的 track 会 **整骨替换** 且不受 `setBlendWeight` 影响。需要「半透明覆盖」时应把 track 标成 `Additive`，或等 P1.5 `trackWeights` / 未来 Skeleton Mask。
 **`_additiveWeight` → `_blendWeight` rename**: the P1.2 setter/getter
 remain as **deprecated inline-forward wrappers** (`setAdditiveWeight(w)`
 calls `setBlendWeight(w)`; `getAdditiveWeight()` returns `_blendWeight`)
@@ -514,16 +527,24 @@ distinguish which source fired a marker use clipName or external context.
 - `// UPGRADE-HOOK(P1.4)` at `_blendWeight` field: uniform weight → per-track weights (mask expression)
 - `// UPGRADE-HOOK(P1.4)` at `setAdditiveSource` / `tick`: `syncToBase` option
 - `// UPGRADE-HOOK(P1.4)` at `evaluate` Phase 0: ref-pose capture from current base pose (replace rest-pose assumption)
-- `// UPGRADE-HOOK(P1.5)` at `consumePendingNotifiesAdditive`: merged + source-tagged + dedup-by-(time,name)
-- `// UPGRADE-HOOK(P1.5)` at `_additiveTracks` / `_additiveClip`: single layer → `vector<AdditiveSlot>` stack
+- `// UPGRADE-HOOK(P1.5)` at `consumePendingNotifiesAdditive` → **已落地** merged + sourceTag（ECS 仍可用旧双队列）
+- `// UPGRADE-HOOK(P1.5)` at single `_additiveClip` → **已落地** `vector<AdditiveSlot>`
 - `// REMOVE-MARKER(P1.6)` at `setAdditiveWeight` / `getAdditiveWeight` deprecated wrappers
+### 4.8 ✅ P1.5 Multi-Slot Additive Stack — Player SHIP（2026-07-27 文档对齐）
 
-### 4.8 ❌ Deferred to P1.5 / Phase 2 §14
+> **代码**：`AnimationPlayer` 已落地 `vector<AdditiveSlot>`（`kMaxAdditiveSlots = 8`）、per-slot sync/ref-pose/pause/curve、`trackWeights`、`consumePendingNotifiesMerged()` + `AnimNotifySourceTag`。  
+> **未齐**：AYEntity AnimationSystem 仍偏双队列 / `AnimNotifyEvent` 未必带 `sourceTag`；P1.5 专用单测不足；共享 skeleton 的 tick cache **未做**。
 
-- per-track weight map (mask expression) ── **P1.5 / P2.2**
-- notify merge + source-tag + dedup-by-(time,name) ── **P1.5**
-- multi-source stack (`vector<AdditiveSlot>`) ── **P1.5**
-- drop deprecated `setAdditiveWeight` wrapper ── **P1.6**
+| 项 | 状态 | 说明 |
+|----|------|------|
+| `vector<AdditiveSlot>` 多层 | ✅ Player | slotId ∈ `[0, 8)`；`ensureSlot` / `setAdditiveLayerSource` |
+| notify merge + `sourceTag` | ✅ Player | `consumePendingNotifiesMerged`；Base / Additive_0..7 |
+| per-track `trackWeights` | ✅ Player（opt-in） | empty = 全 1.0（P1.3 行为） |
+| ECS / EventBus 桥接 sourceTag | ⚠ | 待 UPGRADE；旧 `consumePendingNotifies` + Additive 双 drain 仍可用 |
+| 弃用 `setAdditiveWeight` wrapper | ⏳ P1.6 | `REMOVE-MARKER(P1.6)` |
+| 多 player 共享 skeleton tick cache | ❌ | 仍在路线图 |
+
+**与 Phase 2「Montage / Slot」关系**：P1.5 AdditiveSlot 是 **additive 叠加栈**；未来 Montage 上半身 slot 需在设计上 **对齐同一套 slot 模型**，避免两套 layer API（见 §14 P2.3）。
 
 ---
 
@@ -750,17 +771,16 @@ tick(dt):
 
 总验证: 282 + 8*3 ≈ 30 assertions → AYAnimation 282 + 30 = **312 PASS**;AYEntity 177 + 10 = **187 PASS**(注: 187 不是 180, 因为我新加的 3 个测试含多个 assertions/case, 期望值 > 10 checks 加 baseline);AYResource 701 = **701 PASS**。
 
-#### 4.10.9 Out-of-scope for Full P1.4 (留到 P1.5+)
+#### 4.10.9 Out-of-scope for Full P1.4（P1.5 状态 2026-07-27）
 
-| Item | Defer to | Reason |
-|------|----------|--------|
-| Per-track weight map (mask expression) | P1.5 / P2.2 | curve 是 scalar-only; per-track = vector data 类型, 大模型改 |
-| Multi-source stack (`vector<AdditiveSlot>`) | P1.5 | sync / ref-pose / pause 是 single-slot 内增强; 通用 stack 是数据架构大改 |
-| Notify merge + source-tag + dedup-by-(time,name) | P1.5 | 与 P1.3 P1.5 upgrade hook 同 |
-| Curve serialization (`.ayanm`) | 不定 | runtime-only config; motion-graph editor 出现再单独 design |
-| Layer 1 (`additiveWeight` per-track) curve | 不定 | curve 只管 layer-mix, 不重复 per-track scalar;避免 invariant 缠夹 |
-| 移除 `setAdditiveWeight` deprecated wrapper | P1.6 (按 plan) | 不动 P1.6 scope |
-
+| Item | 原计划 | 2026-07-27 状态 |
+|------|--------|-----------------|
+| Per-track weight map | P1.5 / P2.2 | ✅ Player `AdditiveSlot::trackWeights`；资源级 Mask 仍 Phase 2 |
+| Multi-source `vector<AdditiveSlot>` | P1.5 | ✅ Player SHIP（§4.8）；ECS 桥接 ⚠ |
+| Notify merge + source-tag | P1.5 | ✅ Player `consumePendingNotifiesMerged`；Event ⚠ |
+| Curve serialization (`.ayanm`) | 不定 | 仍不定 |
+| Layer 1 per-track curve | 不定 | 仍不定 |
+| 移除 `setAdditiveWeight` wrapper | P1.6 | 仍待 |
 #### 4.10.10 关键工程教训(给后续 P1.5 的 reviewer)
 
 1. **`setTime` 的 anchor-in-window 分支** —— 不要无条件重 anchor `startTime`。只有当 new `_time` 落在 `[startTime, startTime+duration]` 之外才 anchor。这让 setTime-as-sample (jump-to-mid) 工作正常, 否则 A1/A3 测试都看到 value=from。
@@ -772,6 +792,408 @@ tick(dt):
 7. **AYMath 5 个 ease 全 ship** —— 不要自己写 ease 函数。`BlendEasing` dispatcher 1:1 把 5 cases 映射到 `aymath::easeIn/Out/InOut/smoothstep` + 自己 lerp Linear。 1 line 一 case。
 8. **`uint8_t` for component-side `blendCurveEasing`** —— `IComponent` 是 POCO(无 enum 字段), 因此 component 侧是 raw `uint8_t`, bridge 在 `AYAnimationSystem` 内部 cast 到 `BlendEasing` enum (含 `< 5` saturate 到 Linear 的 fallback)。
 9. **`UPD` 旧→新** —— `setAdditiveSyncToBase(true)` should **immediately** snap `_additiveTime = _time`,否则 host 第一次 tick 之前 addixPlayer 都会显示一个 frame 的 stale time,出现视觉 hitch。我在 setter 内 explicit 调(而不是等下一次 tick)。
+
+---
+
+### 4.11 ✅ P1.5 Multi-Slot Stack + Notify Merge + Per-Track Mask — FULL SHIP（2026-07-27）
+
+#### 4.11.1 Context
+
+P1.3 + P1.4 Cross-Fade Full 之后,`AnimationPlayer` 仍是 **single-slot** 数据架构 ── `_additiveClip` 单字段,1 个 additive source 同时存在。UE `LayerObjects[]`(MaxLayerCount=8)、Unity `AnimationLayerMixerPlayable.SetLayerCount(8)` 都允许多层 additive 同时 stack。
+
+**P1.5 = 一次性 ship deferred 3 项 + 8 cap + bus sourceTag**:
+
+1. **Multi-source stack `vector<AdditiveSlot>`** ── `_additiveSlots` 同时承载 N 个 additive layer(8 上限),每层独立 time axis + flag + notify queue
+2. **Merged notify queue** ── `consumePendingNotifiesMerged()` 单接口返回 base + 全部 slot records,按 `(time, name)` dedup 保留 base,加 `sourceTag` 字段 (Base / Additive_0..7) 给 AYEntity bus 转发
+3. **Per-track mask expression** ── 每 slot 一个 `vector<float> trackWeights`,key by track index;空 vector = uniform 1.0f(P1.3 行为),非空 = per-track scalar multiplier
+
+#### 4.11.2 Data model — `AdditiveSlot`
+
+```cpp
+// namespace scope — 跟 TrackSlice / BlendCurve 同 level
+constexpr uint32_t kMaxAdditiveSlots = 8;   // UE/Unity 对标
+
+struct AdditiveSlot {
+    // Source — 镜像 P1.3 single-slot 字段
+    const ayt::resource::IAnimation* clip       = nullptr;
+    float                            time       = 0.0f;
+    float                            playRate   = 1.0f;
+    bool                             loop       = true;
+    float                            prevTickTime = 0.0f;
+    std::vector<TrackSlice>          tracks;
+    std::vector<AnimNotifyRecord>    pendingNotifies;
+
+    // P1.4 fields — per-slot 独立
+    bool          syncToBase     = false;
+    bool          refPoseCapture = false;
+    bool          paused         = false;
+    BlendCurve    curve;
+    CaptureState  captureState   = CaptureState::Fresh;
+    std::vector<float> capturedLocalPos;  // n*3, sized by setSkeleton
+    std::vector<float> capturedLocalRot;  // n*4
+    std::vector<float> capturedLocalScl;  // n*3
+
+    // P1.5 — per-track mask expression (opt-in)
+    std::vector<float> trackWeights;      // size() == tracks.size(); empty = uniform 1.0f
+};
+
+class AnimationPlayer {
+private:
+    std::vector<AdditiveSlot> _additiveSlots;   // size 0..8
+};
+```
+
+**关键设计决策**:
+
+- **`kMaxAdditiveSlots = 8`** ── 跟 UE `LayerObjects[MaxLayerCount=8]` + Unity `AnimationLayerMixerPlayable.SetLayerCount(8)` 对标。8 × 100 bone × 40 byte captured = 32KB worst case,可控。
+- **Per-slot 独立 captured buffers** ── 每 slot 各自有 ref-pose capture 标志,所以各自需要 buffer;**不** shared。32KB worst case 是合理 trade-off。
+- **`trackWeights` 空 = uniform 1.0f** ── P1.5 字段存在但默认空,行为跟 P1.3 一致 → **377 baseline 零修改**。
+- **`vector<AdditiveSlot>` 非 `unordered_map<size_t, AdditiveSlot>`** ── slotId 是 stable index 0..7,vector 比 map cache-friendly;UE `LayerObjects` 也是 array,Unity `int layer`。
+
+#### 4.11.3 11 invariants(P1.3 五条 + P1.4 三条 + P1.5 三条)
+
+| Inv | Statement | Asserted in |
+|-----|-----------|-------------|
+| INV-1 | `_additiveClip == null \|\| _blendWeight <= 0` ⇒ Phase 1b 跳过 (P1.3,扩展为 "_additiveSlots empty OR all slots skip") | (contract) |
+| INV-2 | `_local{Pos,Rot,Scl}.size() == n * stride` 由 setSkeleton ONLY 维护 (P1.3) | assert evaluate top |
+| INV-3 | `_blendWeight ∈ [0,1]` post-setter (P1.3) | assert evaluate top |
+| INV-4 | `_baseClip == null && _additiveClip != null` ⇒ rest-pose seed + early-return (P1.3) | (behavioral) |
+| INV-5 | `_additiveClip == null` ⇒ Phase 1a == P1.2 (P1.3) | (contract) |
+| INV-6 | `_syncToBase == true` ⇒ `_additiveTime == _time` post-tick (P1.4 → per-slot: `slot.syncToBase==true` ⇒ `slot.time == _time`) | (by construction) |
+| INV-7 | `_refPoseCapture == true` ⇒ Phase 1b reads from `_capturedLocal*` (P1.4 → per-slot,见 §4.10.6) | assert evaluate top |
+| INV-8 | `pause()==true` ⇒ base + additive 都停 (P1.4 → per-slot: `slot.paused==true` ⇒ `slot.time` 不动) | assert evaluate top |
+| **INV-9** | per-slot captured buffers sized n\*3/n\*4/n\*3 (when `refPoseCapture && captureState==Valid`) | assert evaluate top |
+| **INV-10** | per-slot sync/pause/refPose 独立 ── slot A flag ≠ slot B flag;结构上由 per-slot 字段强制,no runtime assert,单测 pin | (structural) |
+| **INV-11** | merged notify queue tags ∈ {Base, Additive_0..7};`time+name` dedup 保留 base | assert after tick() |
+
+#### 4.11.4 Public API surface(18 旧 + 11 新 + 2 read-back getters)
+
+**Backward-compat wrappers**(全 redirect 到 slot[0]):
+
+| 旧 P1.3/P1.4 API | 新 P1.5 per-slot API (slotId=0) |
+|---|---|
+| `setAdditiveSource(src, rate, loop)` | `setAdditiveLayerSource(0, src, rate, loop)` |
+| `clearAdditiveSource()` | `clearAdditiveLayerSource(0)` |
+| `setBlendWeight(w)` / `getBlendWeight()` | `setAdditiveLayerWeight(0, w)` / `getAdditiveLayerWeight(0)` |
+| `setAdditiveWeight(w)` *(P1.2 deprec)* | 同上 wrapper |
+| `setAdditiveSyncToBase(bool)` / `isAdditiveSyncToBase()` | `setAdditiveLayerSyncToBase(0, v)` / `isAdditiveLayerSyncToBase(0)` |
+| `setAdditiveRefPoseCapture(bool)` / `isAdditiveRefPoseCapture()` | `setAdditiveLayerRefPoseCapture(0, v)` / `isAdditiveLayerRefPoseCapture(0)` |
+| `blendWeightOverTime(from, to, dur, easing)` | `blendLayerWeightOverTime(0, ...)` |
+| `cancelBlendCurve()` | `cancelLayerBlendCurve(0)` |
+| `isBlendCurveActive()` | `isLayerBlendCurveActive(0)` |
+| `setAdditivePaused(bool)` / `isAdditivePaused()` | `setAdditiveLayerPaused(0, v)` / `isAdditiveLayerPaused(0)` |
+| `consumePendingNotifiesAdditive()` *(DEPRECATE-P1.5)* | 仅 drain slot[0] |
+| `getPendingNotifyCountAdditive()` *(DEPRECATE-P1.5)* | slot[0].pendingNotifies.size() |
+
+**新 per-slot API(11 个)**:
+
+```cpp
+// Source
+bool   setAdditiveLayerSource(uint32_t slotId, const IAnimation* src,
+                              float playRate=1.0f, bool loop=true);
+void   clearAdditiveLayerSource(uint32_t slotId);
+int32_t getAdditiveLayerCount() const;   // slots whose clip != nullptr
+
+// Weight + curve (P1.4 per-slot)
+void   setAdditiveLayerWeight(uint32_t slotId, float w);
+float  getAdditiveLayerWeight(uint32_t slotId) const;
+void   blendLayerWeightOverTime(uint32_t slotId, float from, float to,
+                                float dur, BlendEasing easing=Linear);
+void   cancelLayerBlendCurve(uint32_t slotId);
+bool   isLayerBlendCurveActive(uint32_t slotId) const;
+
+// Sync / pause / refPose (P1.4 per-slot)
+void   setAdditiveLayerSyncToBase(uint32_t slotId, bool v);
+bool   isAdditiveLayerSyncToBase(uint32_t slotId) const;
+void   setAdditiveLayerPaused(uint32_t slotId, bool v);
+bool   isAdditiveLayerPaused(uint32_t slotId) const;
+void   setAdditiveLayerRefPoseCapture(uint32_t slotId, bool v);
+bool   isAdditiveLayerRefPoseCapture(uint32_t slotId) const;
+
+// Per-track mask (P1.5 NEW)
+void   setAdditiveLayerTrackWeights(uint32_t slotId,
+                                    const std::vector<float>& weights);
+const std::vector<float>& getAdditiveLayerTrackWeights(uint32_t slotId) const;
+
+// Merged notify (P1.5 NEW)
+enum class AnimNotifySourceTag : uint8_t {
+    Base=0, Additive_0=1, Additive_1=2, ..., Additive_7=8
+};
+struct AnimNotifyRecord {    // +1 field vs P1.3
+    const char*         name = nullptr;
+    float               time = 0.0f;
+    float               payload = 0.0f;
+    AnimNotifySourceTag sourceTag = AnimNotifySourceTag::Base;
+};
+const std::vector<AnimNotifyRecord>& consumePendingNotifiesMerged();
+size_t getPendingNotifyCountMerged() const;
+```
+
+**`isAdditiveLayerActive()`** 保留语义 = "slot[0] bound + effective weight > 0"(P1.5 后多 slot-aware 化,但 legacy P1.3/P1.4 行为不变)。
+
+#### 4.11.5 Phase 1b 多 slot loop
+
+```cpp
+// evaluate() Phase 1b — P1.5 替换单 slot 为多 slot
+for (uint32_t slotIdx = 0; slotIdx < _additiveSlots.size(); ++slotIdx) {
+    AdditiveSlot& s = _additiveSlots[slotIdx];
+    if (s.clip == nullptr) continue;
+    const float w = sampleLayerBlendCurve(s);
+    if (w <= 0.0f) continue;
+
+    // INV-7 per-slot dispatch (Phase 0 + post-Phase-1a,见 §4.10.6)
+    if (s.refPoseCapture) {
+        if (s.captureState == CaptureState::Valid) {
+            applyCapturedRefPoseFromSlot(s);
+        }
+    }
+
+    for (TrackSlice& tr : s.tracks) {
+        resolveBoneIdxOnce(tr);
+        const int boneIdx = tr.boneIdx;
+        if (boneIdx < 0) { /* orphan Float to sink */ continue; }
+        const size_t idx = static_cast<size_t>(boneIdx);
+
+        // P1.5 per-track mask — empty vector = uniform, 否则按 track index 取
+        const size_t trackIdx = static_cast<size_t>(&tr - &s.tracks[0]);
+        const float trackW = (s.trackWeights.empty()
+                              || trackIdx >= s.trackWeights.size())
+                            ? w
+                            : (w * s.trackWeights[trackIdx]);
+
+        switch (tr.type) {
+            case AnimTrackType::Vector3:    { /* ... trackW ... s.time ... */ break; }
+            case AnimTrackType::Quaternion: { /* ... trackW ... s.time ... */ break; }
+            case AnimTrackType::Float:      { /* ... s.time ... */ break; }
+        }
+    }
+}
+
+// INV-7 per-slot post-capture (Phase 0/1a 之间,见 §4.10.6 顺序)
+for (AdditiveSlot& s : _additiveSlots) {
+    if (s.clip == nullptr || !s.refPoseCapture) continue;
+    captureRefPoseFromSlot(s);
+    s.captureState = CaptureState::Valid;
+}
+```
+
+**Slot 处理顺序**:slot 0 先, slot 1 后, ..., slot 7 最后。**确定性 + UE "stack order = paint order"**。position-additive / scale-multiplicative 满足交换律不影响;rotation 顺序敏感,header comment 明确说明。
+
+#### 4.11.6 tick() / setTime() 多 slot 化
+
+```cpp
+// tick(dt) — additive 4 分支 per-slot
+for (AdditiveSlot& s : _additiveSlots) {
+    if (s.clip == nullptr) continue;
+    if (s.paused) {                            // INV-8: additive-only pause
+        s.prevTickTime = s.time;
+    } else if (s.syncToBase) {                 // INV-6: lock-step
+        s.time = _time;
+        dispatchSlotNotifies(s, prevAdd, s.time, wrapped);
+        s.prevTickTime = s.time;
+    } else {                                  // P1.3 default: independent axis
+        s.time += dt * s.playRate;
+        // wrap by s.loop + s.clip->getDuration()
+        dispatchSlotNotifies(s, prevAdd, s.time, wrappedAdd);
+        s.prevTickTime = s.time;
+    }
+    // curve auto-disarm per-slot (P1.4 行为多 slot 化)
+    if (s.curve.active) {
+        const float elapsed = _time - s.curve.startTime;
+        if (elapsed >= s.curve.duration) {
+            s.curve.active = false;
+            s.curve.from = s.curve.to;
+            if (&s == &_additiveSlots[0]) _blendWeight = s.curve.to;
+        }
+    }
+}
+
+// setTime(t) — per-slot jump (清 queue + reset cursor)
+for (AdditiveSlot& s : _additiveSlots) {
+    if (s.clip == nullptr) continue;
+    s.time = t;
+    if (s.loop) { /* wrap */ }
+    s.pendingNotifies.clear();
+    s.prevTickTime = s.time;
+    if (s.syncToBase) { s.time = _time; s.prevTickTime = s.time; }
+    // curve re-anchor outside [start, start+dur] window
+    if (s.curve.active) {
+        if (_time < s.curve.startTime || _time > s.curve.startTime + s.curve.duration) {
+            s.curve.startTime = _time;
+        }
+    }
+}
+```
+
+#### 4.11.7 Merged notify queue 算法
+
+```cpp
+void AnimationPlayer::rebuildMergedNotifies() {
+    _pendingNotifiesMerged.clear();
+    // (1) base records — sourceTag = Base
+    for (const auto& r : _pendingNotifies) {
+        AnimNotifyRecord copy = r;
+        copy.sourceTag = AnimNotifySourceTag::Base;
+        _pendingNotifiesMerged.push_back(copy);
+    }
+    // (1b) per-slot records — sourceTag = Additive_N
+    for (uint32_t slotIdx = 0; slotIdx < _additiveSlots.size(); ++slotIdx) {
+        const AnimNotifySourceTag tag = static_cast<AnimNotifySourceTag>(
+            static_cast<uint8_t>(AnimNotifySourceTag::Additive_0) + slotIdx);
+        for (const auto& r : _additiveSlots[slotIdx].pendingNotifies) {
+            AnimNotifyRecord copy = r;
+            copy.sourceTag = tag;
+            _pendingNotifiesMerged.push_back(copy);
+        }
+    }
+    // (2) sort by (time, sourceTag)
+    std::sort(_pendingNotifiesMerged.begin(), _pendingNotifiesMerged.end(),
+              [](const AnimNotifyRecord& a, const AnimNotifyRecord& b) {
+                  if (a.time != b.time) return a.time < b.time;
+                  return static_cast<uint8_t>(a.sourceTag) <
+                         static_cast<uint8_t>(b.sourceTag);
+              });
+    // (3) dedup-by-(time, name): sort 排好序后 unique walk 删 collision;
+    //     base wins (smaller sourceTag comes first in the sort key)
+    _pendingNotifiesMerged.erase(
+        std::unique(_pendingNotifiesMerged.begin(), _pendingNotifiesMerged.end(),
+            [](const AnimNotifyRecord& a, const AnimNotifyRecord& b) {
+                if (a.time != b.time) return false;
+                if (a.name == b.name) return true;
+                return (a.name != nullptr && b.name != nullptr
+                        && std::strcmp(a.name, b.name) == 0);
+            }),
+        _pendingNotifiesMerged.end());
+}
+```
+
+**`consumePendingNotifiesMerged()`** = thread_local swap(同 P1.2/P1.3 模式)。同时 drain per-source queues 防止下帧重发。
+
+**`AnimNotifyEvent.sourceTag`** ── `AnimNotifyEvent` struct 加 `sourceTag` 字段, default `Base`。kTypeId 不变(0x000A'0001)。AYEntity `AnimationSystem::onUpdate` 的 bus emit 把 `rec.sourceTag` 直接 pipe 到 event 的 `sourceTag` 字段。
+
+#### 4.11.8 AYEntity bridge
+
+**`AdditiveLayerSpec`** ── 新 struct(11 个 `AY_PROPERTY` 字段 + ctor + `AY_FINALIZE_REGISTRATION_METADATA` 注册)放在 `AYAnimationComponent.h`,在 `AnimationComponent` 之前定义:
+
+```cpp
+struct AdditiveLayerSpec {
+    AY_PROPERTY(uint32_t,    slotIndex,         kAttrSerialize)  // = position in vector if UINT32_MAX
+    AY_PROPERTY(std::string, additiveClipPath,  kAttrSerialize)
+    AY_PROPERTY(float,       additivePlayRate,  kAttrSerialize)
+    AY_PROPERTY(bool,        looping,           kAttrSerialize)
+    AY_PROPERTY(float,       blendWeight,       kAttrSerialize)
+    AY_PROPERTY(bool,        syncToBase,        kAttrSerialize)
+    AY_PROPERTY(bool,        refPoseCapture,    kAttrSerialize)
+    AY_PROPERTY(float,       blendCurveFrom,    kAttrSerialize)
+    AY_PROPERTY(float,       blendCurveTo,      kAttrSerialize)
+    AY_PROPERTY(float,       blendCurveDuration,kAttrSerialize)
+    AY_PROPERTY(uint8_t,     blendCurveEasing,  kAttrSerialize)
+    // ctor defaults 全部 → uniform / OFF 状态
+};
+AY_FINALIZE_REGISTRATION_METADATA(AdditiveLayerSpec)
+```
+
+**`AnimationComponent`** 加 `AY_PROPERTY(std::vector<AdditiveLayerSpec>, additiveLayers, kAttrSerialize)`(vector field first-of-kind, AYReflect 支持 via `tryRegisterVector<E>`,已在 serializer 验证可用)。
+
+**`AYAnimationSystem::onUpdate`** per-frame push 三分支:
+
+```cpp
+if (!anim->additiveLayers.empty()) {
+    // (a) Multi-slot path — iterate over additiveLayers[]
+    for (size_t i = 0; i < min(additiveLayers.size(), 8); ++i) {
+        const AdditiveLayerSpec& spec = anim->additiveLayers[i];
+        const uint32_t slotIdx = (spec.slotIndex == UINT32_MAX) ? i : spec.slotIndex;
+        if (slotIdx >= 8) continue;
+        // 1. source bind (rebind-detection on path)
+        if (!spec.additiveClipPath.empty()) {
+            if (lastPath(e, slotIdx) != spec.additiveClipPath) {
+                loadAdditiveClip(spec.additiveClipPath);
+                player.setAdditiveLayerSource(slotIdx, clip, spec.additivePlayRate, spec.looping);
+            }
+        } else {
+            if (lastPath(e, slotIdx) was bound) player.clearAdditiveLayerSource(slotIdx);
+        }
+        // 2. weight, 3. sync, 4. refPose, 5. curve (per-slot rebind-detection)
+        player.setAdditiveLayerWeight(slotIdx, spec.blendWeight);
+        // ... per-slot rebind detection ...
+    }
+} else if (!anim->additiveClipPath.empty()) {
+    // (b) Legacy P1.3/P1.4 single-slot path — slot[0]
+    // ... 旧 push lines mirror 在 slot 0 ...
+} else {
+    // (c) 全 OFF — clear 所有 slot + erase per-slot rebind caches
+    for (each slot that was previously bound) player.clearAdditiveLayerSource(slotIdx);
+}
+```
+
+**4 个 nested rebind-detection maps** (在 `AYAnimationSystem.h`):`_lastAppliedAdditivePaths` / `_lastAppliedSyncToBase` / `_lastAppliedRefPoseCapture` / `_lastAppliedBlendCurveDuration` / `_lastAppliedBlendCurveEasing` 全部从 `entity → T` 升级为 `entity → unordered_map<uint32_t, T>`。
+
+**AnimNotifyEvent dispatch** 改用 `consumePendingNotifiesMerged()` 单接口;per-slot record 的 `clipName` 从 `_lastAppliedAdditivePaths[e][slotIdx]` 反查;`sourceTag` 直接 pipe 到 event 字段。
+
+#### 4.11.9 Test breakdown(22 + 5 = 27 new)
+
+**AYAnimation 22**(详见 commit `3b222a3`):
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `P1_5_SlotBind_AssignsSlotIndex` | `setAdditiveLayerSource(1, src)` 写 `_additiveSlots[1].clip` |
+| 2 | `P1_5_SlotCleared_LayerSilent` | `clearAdditiveLayerSource(2)` 后 slot 2 evaluate 不贡献 |
+| 3 | `P1_5_MultiSlot_IndependentTime` | 两 slot 独立 advance |
+| 4 | `P1_5_MultiSlot_AccumulatePosition` | 两 slot Root.position delta → sum |
+| 5 | `P1_5_MultiSlot_RotationOrderMatters` | slot 0 then 1 ≠ slot 1 then 0(paint order) |
+| 6 | `P1_5_SlotFlagsIndependent` | slot 0 sync, slot 1 NOT → 各自 time 行为 |
+| 7 | `P1_5_SlotPauseIndependent` | slot 0 paused + slot 1 ticking |
+| 8 | `P1_5_SlotRefPoseCapture_PerSlot` | slot 0 capture, slot 1 NOT → 不同 base |
+| 9 | `P1_5_SlotCurve_PerSlot` | slot 0 curve from 0→1 + slot 1 static weight |
+| 10 | `P1_5_MaxSlots_Bound_Rejects9th` | 9th bind → false;getAdditiveLayerCount 仍 8 |
+| 11 | `P1_5_Stop_DisposesAllSlots` | `stop()` 清所有 slot clip |
+| 12 | `P1_5_NotifyMerged_SourceTag_Base` | base record tagged `Base` |
+| 13 | `P1_5_NotifyMerged_SourceTag_Additive_0` | slot 0 record tagged `Additive_0` |
+| 14 | `P1_5_NotifyMerged_SortedByTime` | merged sort by (time, sourceTag) |
+| 15 | `P1_5_NotifyMerged_Dedup_TimePlusName` | base vs slot collision → base wins |
+| 16 | `P1_5_SetTimeJumpsAllSlots` | `setTime(t)` 锚定所有 slot playhead |
+| 17 | `P1_5_Play_PreservesSlots` | `play(base)` 不清 slots(P1.3 行为) |
+| 18 | `P1_5_SlotBindOldAPI_DefaultsToSlot0` | `setAdditiveSource(src)` → `slot[0]` wrapper |
+| 19 | `P1_5_SetBoneIndexCache_MultiSlot` | `setSkeleton()` invalidate 所有 slot tracks |
+| 20 | `P1_5_NotifyMergedDegenerate_NoBase` | 无 base + slot 0 → merged queue 仅 `Additive_0` |
+| 21 | `P1_5_SlotBindRebind_PathUnchanged_NoReassign` | P1.3 rebind 模式镜像到 per-slot |
+| 22 | `P1_5_TrackWeights_OptionalPerSlotMask` | `trackWeights[k]=0.5` halve that track |
+
+**AYEntity 5**:
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `animation_component_multi_layer_bridge_pushes_each_slot` | `additiveLayers[3]` → 3 slot 都 bind |
+| 2 | `animation_component_multi_layer_bridge_rebind_per_slot` | 改 `additiveLayers[1].path` 只触发 slot 1 rebind |
+| 3 | `animation_component_legacy_scalar_layers_zero_size` | `additiveLayers.size()==0` + scalar fields → slot[0] |
+| 4 | `animation_component_merged_notify_eventbus_carries_source_tag` | merged → `AnimNotifyEvent.sourceTag` round-trip |
+| 5 | `animation_component_oversized_layers_no_rebind` | 9-layer config 静默 reject 9th |
+
+**3-run verification**:
+
+| Module | Baseline | + New | Expected | 3-run |
+|--------|----------|-------|----------|-------|
+| AYAnimation | 376 | 22 | **398** | ✅ × 3 |
+| AYEntity | 211 | 5 | **216** | ✅ × 3 |
+| AYResource | 701 | 0 (no change) | **701** | (unchanged from P1.4 baseline) |
+
+#### 4.11.10 Out-of-scope for P1.5(留 P1.6 / Phase 2)
+
+- **共享 skeleton tick cache** ── N 个 player 同一 skeleton 时,findBone / boneIdx resolve 一次 vs N 次。零 API 影响,纯 hot-path 优化。
+- **`MontageSlot` 语义对齐** ── UE Montage 上半身 slot 不是 additive stack,需要独立 §14 P2.3 子项目;P1.5 AdditiveSlot 不能冒充 MontageSlot。
+- **`setAdditiveWeight` / `getAdditiveWeight` 真实 deprecate** ── 留 P1.6 全删(当前 DEPRECATE-P1.5 marker)。
+- **`consumePendingNotifiesAdditive` 真实 deprecate** ── 同上;当前仅 drain slot[0] 的 backward-compat wrapper。
+
+#### 4.11.11 关键工程教训(给后续 reviewer / P2 Montage)
+
+1. **Slot weight 必须 sync `_blendWeight ↔ slot[0].curve.from`** ── P1.4 single-slot 时代 `setBlendWeight(w)` 写 `_blendWeight = w`,sampleBlendCurve() inactive 路径返回 `_blendWeight`。P1.5 通用化为 per-slot 后,slot[0] 必须 mirror `_blendWeight` 到 `slot[0].curve.from`,否则 `setBlendWeight(0.5)` 后 slot[0] 仍按 `curve.from=0`(default) 评估,Phase 1b 静默 skip。**根因**:测试 12 个 regression 第一波全部来自这个缺口;redirect 到 slot[0] wrapper 不是"调用 forwarding"那么简单。
+2. **Curve 时钟用 base `_time` 不是 slot `time`** ── loop wrap 时 `s.time` 短暂回到 0 → `elapsed = s.time - s.curve.startTime` 也回到 0 → `curve.active` 永不 disarm。**改用 base `_time`**(`elapsed = _time - s.curve.startTime`)保证曲线窗口基于 host time。
+3. **INV-7 capture 必须 Phase 0 Valid-apply + post-Phase-1a capture,Phase 1b NEVER re-capture** ── 否则:enable 立即 capture rest + Phase 1b 末尾又 capture additive-final → 第二帧 double-add(`1.98 → 3.96`)。Phase 0 (top of evaluate) Phase 1a 之前 apply-captured;post-1a capture;Phase 1b 只加 delta。design.md §4.10.6 顺序是 contract。
+4. **Merged notify dedup-by-(time, name) 必须 sort by (time, sourceTag)** ── stable secondary key 保证 base 在 collision 时排在前,`std::unique` 删后面那个。`std::sort` 不是 stable sort?——**`std::sort` 不是 stable**;但 sourceTag 是 unique 区分键,所以 base 永远 < additive 同时间,sort by (time ASC, sourceTag ASC) 之后 base 必然先,unique 删除逻辑跟 stable sort 等价。**仍然保险**:sort 用 stable version 的话加 `std::stable_sort` 即可。
+5. **AnimNotifyEvent 不能再 include AYEventSystem** ── AYAnimation 不 link AYEventSystem(模块隔离),所以 AnimNotifyEvent.h 不能依赖 `EventPriority.h`。**P1.5 修正**:从 AnimNotifyEvent.h 删 kPriority 字段(只在 bus subscribe path 隐式用,subscriber-side 转换)。`kTypeId` 保留为 uint32_t 不依赖 ayt::event namespace。
+6. **AYEntity vector<AY_PROPERTY struct> first-of-kind** ── `AY_PROPERTY(std::vector<AdditiveLayerSpec>, additiveLayers, ...)` 是本 codebase 第一个 vector-of-reflected-struct 字段;PropertyMacros 已支持(`tryRegisterVector`),但 struct 自身必须先 `AY_FINALIZE_REGISTRATION_METADATA(AdditiveLayerSpec)` 注册才能 vector 注册。**顺序硬约束**:struct 必须在 field 之前;finalize 紧跟 struct 之后。
+7. **Per-slot rebind-detection 必须 nested map** ── P1.3 的 `_lastAppliedAdditivePath` 是 `entity → string`;P1.5 必须升级为 `entity → unordered_map<slotIdx, string>`,否则两 slot path 互相覆盖。**4 个 P1.4 rebind map 都同理**。
+8. **`isAdditiveLayerActive()` 保留 slot[0] 语义** ── 多 slot 后 P1.5 决定**不** 改它语义,只读 slot[0];需要真 multi-slot 活跃度检测的 host 用 `getAdditiveLayerCount()` 自遍历。**降低破坏性 + P1.3/P1.4 测试零修改**。
 
 ---
 
@@ -897,17 +1319,21 @@ AYAnimation/
 - [x] **P1.3 Additive Layer 2 / Cross-Fade**（2026-07-26）─ dual-source AnimationPlayer; setAdditiveSource + setBlendWeight + 5 invariants + 2 notify queues; IAnimation VERSION 4 (no on-disk change); 0 regression across 3 modules (701+261+177)
 - [x] **P1.4 Hot-Path BoneIdx Cache**（2026-07-26, hot-path ship）─ `TrackSlice.boneIdx` lazy-resolve + `setSkeleton()` invalidate;消除 evaluate Phase 1a/1b 每帧 findBone 调用; dual-source 收益翻倍; 0 regression across 3 modules (701+282+177);详见 §4.9
 - [x] **P1.4 Cross-Fade Full Ship**（2026-07-26）─ keyframed weight curve (`blendWeightOverTime`) + syncToBase + ref-pose capture + additive pause 全 ship;3 new invariants INV-6/7/8 + 8 AnimationPlayer tests + 3 AYEntity integration tests; 0 regression across 3 modules (701+312+187);详见 §4.10
+- [x] **P1.5 Multi-Slot Additive Stack**（2026-07-27）─ `vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + merged notify queue + `AnimNotifySourceTag` enum + per-track `trackWeights` opt-in mask + 18 旧 single-slot API 全 redirect 到 slot[0] backward-compat wrappers + AYEntity `AdditiveLayerSpec` 结构 + nested (entity → slot) rebind-detection maps + per-slot push loop + EventBus `AnimNotifyEvent.sourceTag` pipe; INV-9/10/11 (per-slot 化 INV-6/7/8 + 新增 capture-buffer size + dedup 守则) + 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398 + AYEntity 216 + AYResource 701 unchanged); 详见 §4.11
+- [x] **P1.5 Multi-Slot stack（Player）**（文档对齐 2026-07-27）─ `AdditiveSlot`×8 + merged notify/`sourceTag` + per-slot trackWeights；**ECS/测试桥接未齐**；详见 §4.8
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
-- [ ] CrossFade / Blend 1D / Blend 2D
-- [ ] Additive 动画层
-- [ ] 骨骼遮罩 (Skeleton Mask)
-- [ ] 多 Slot / 多 Layer
+- [x] CrossFade（Player 侧 P1.3/P1.4）／[ ] Blend 1D / Blend 2D（仍缺）
+- [x] Additive 动画层（P1.2–P1.5 Player）
+- [ ] 骨骼遮罩 (Skeleton Mask) 作为一等资源类型（P1.5 仅有 per-slot `trackWeights`）
+- [x] 多 Additive Slot（P1.5）／[ ] Montage 语义 Slot（与 §4.8 对齐，勿第二套 API）
 - [ ] Dual-Quaternion Skinning
 - [ ] CPU 蒙皮真输出（CPUSkinning Pass）
 - [ ] GPU 蒙皮 Skeleton UBO 上传（与 AYRenderer 接通）
-
+- [ ] 主线程 evaluate 规模策略 / 可选 worker（未写规格）
+- [ ] Root Motion 通道草案（可提前到 P2，见 §14）
+- [ ] 网络：pose/time/notify 复制边界（空白）
 ### Phase 3: 状态机 ── ⏳ 排队
 
 - [ ] L1 简单状态机
@@ -942,58 +1368,47 @@ AYAnimation/
 
 ## 13. AN-01 ship 状态 vs 工业差距对照表
 
-**审查日期**：2026-07-26
-**评估对象**：当前 AN-01 已 ship 的 200 行代码 + 11 个 test case
-**评分**：✅ = 已 ship / ⚠️ = 部分 / ❌ = 未 ship / 🔧 = 本期 P0/P1 修
+**审查日期**：2026-07-27（对齐 P1.5 Player）  
+**评估对象**：AnimationPlayer 薄内核（非完整角色管线）  
+**评分**：✅ = 已 ship / ⚠️ = 部分 / ❌ = 未 ship
 
-| # | 工业能力 | 工业引擎 | AN-01 | Phase |
+| # | 工业能力 | 工业引擎 | 现状 | Phase |
 |---|---|---|---|---|
 | 1 | 单 clip 播放 + 时间控制 | UE/Unity/Godot | ✅ | AN-01 |
-| 2 | 多 track 采样 (T+R+S) | UE/Unity | ✅（via ISkeleton parallel arrays）| AN-01 |
-| 3 | Quaternion slerp | UE/Unity | ✅（含 dot<0 选优,P0 修）| AN-01 |
-| 4 | ticks → seconds 自动归一 | UE | ✅（setClip 预转换）| P0 |
+| 2 | 多 track 采样 (T+R+S) | UE/Unity | ✅ | AN-01 |
+| 3 | Quaternion slerp | UE/Unity | ✅（dot<0）| AN-01 |
+| 4 | ticks → seconds 自动归一 | UE | ✅ | P0 |
 | 5 | 局部 TRS → world 矩阵 | UE `FCompactPose` | ✅ | AN-01 |
 | 6 | skin matrix = world × IBM | UE | ✅ | AN-01 |
 | 7 | 循环 wrap (mod) | UE/Unity | ✅ | AN-01 |
-| 8 | 时间 clamp | UE `bLoop=false` | ✅ | AN-01 |
+| 8 | 时间 clamp / 末帧定格 | UE `bLoop=false` | ✅（≠ HoldTimer，§4.3.1）| AN-01 |
 | 9 | playRate 控制 | UE/Unity | ✅ | AN-01 |
-| 10 | **Float track 参数曲线出口** | UE `UAnimInstance::GetCurveValue` | 🔧 | P0 |
-| 11 | Anim Notify 事件 | UE `FAnimNotifyEvent` | ✅ | Phase 1.5 SHIP (2026-07-26) |
-| 12 | **拓扑序 assert** | UE `RebuildPoseCache` | 🔧 | P0 |
-| 13 | **矩阵方向 lock-test** | UE `FAnimationRuntime` | 🔧 | P0 |
-| 14 | **IBM = 0 NaN-safe** | UE `Check` macros | 🔧 | P0 |
-| 15 | CrossFade | UE `UAnimMontage` | ❌ | Phase 2 |
-| 16 | Blend 1D / 2D | UE `BlendSpace` | ❌ | Phase 2 |
-| 17 | Additive 动画 (Layer 1) | UE `bAdditive` | ✅ | Phase 1.2 SHIP (2026-07-26) |
-| 17b | Additive 动画 (Layer 2 / Cross-Fade) | UE `UAnimMontage` | ✅ | Phase 1.3 SHIP (2026-07-26) |
-| 17c | BoneIdx cache (hot-path findBone 消除) | UE `FCompactPose` BoneIndexCache | ✅ | Phase 1.4 SHIP (2026-07-26) |
-| 17d | Cross-fade 4-pack (curve + syncToBase + ref-pose + additive pause) | UE `UAnimMontage::BlendIn` / `bForceRootLock` / Unity `AnimationPlayable` | ✅ | Phase 1.4 SHIP (2026-07-26) |
-| 18 | 骨骼遮罩 Mask | UE `FAnimationRuntime::BlendPosesInGraph` | ❌ | Phase 2 |
-| 19 | Montage / Slot / Layer | UE `UAnimMontage` | ❌ | Phase 2 |
-| 20 | AnimGraph (Node-based) | UE `UAnimGraphSchema` | ❌ | Phase 3 |
-| 21 | L1-L2 状态机 | UE/Unity | ❌ | Phase 3 |
-| 22 | L3-L4 状态机 + MotionMatching | UE `UAnimInstance` | ❌ | Phase 3 |
-| 23 | TwoBone IK | UE `AnimNode_TwoBoneIK` | ❌ | Phase 4 |
-| 24 | FABRIK / CCD IK | UE `AnimNode_Fabrik` | ❌ | Phase 4 |
-| 25 | IK 约束 (angle/dist/rot) | UE `AnimNode_LookAt` | ❌ | Phase 4 |
-| 26 | FullBody IK | UE `FBIK` | ❌ | Phase 4 |
-| 27 | 骨骼重定向 | UE `RetargetSource` | ❌ | Phase 4 |
-| 28 | Root Motion | UE `ERootMotionMode` | ❌ | Phase 4 |
-| 29 | Dual-Quaternion Skinning | UE `bUseDualQuaternion` | ❌ | Phase 2 |
-| 30 | CPU 蒙皮 (顶点变形) | Unity `SkinnedMeshRenderer.BakeMesh` | ❌ | Phase 2 |
-| 31 | GPU 蒙皮 + Skeleton UBO | UE/Unity | ⚠️ SkeletonComponent 已 wire,renderer 未读 | Phase 2 |
-| 32 | Morph Target / BlendShape | UE `FAnimSequence::MorphTarget` | ❌ | Phase 4 |
-| 33 | 自适应压缩 | UE `AnimCompress` | ❌ | Phase 5 (Converter 侧) |
-| 34 | LOD 动画 | UE `LODThreshold` | ❌ | Phase 5 |
-| 35 | Debug 可视化 | UE `AnimDebugView` | ❌ | Phase 5 |
-| 36 | Profiler (hot path 标记) | UE `STAT_Anim` | ❌ | Phase 5 |
-| 37 | AnimCurve (Float param track) | UE `UAnimInstance::GetCurveValue` | 🔧 | P0 (sink 出口) |
+| 10 | Float track 参数曲线出口 | UE Curve | ✅ | P0 |
+| 11 | Anim Notify 事件 | UE `FAnimNotifyEvent` | ✅ | P1.1 |
+| 12 | 拓扑序 assert | UE | ✅ | P0 |
+| 13 | 矩阵方向 lock-test | UE | ✅ | P0 |
+| 14 | IBM = 0 NaN-safe | UE | ✅ | P0 |
+| 15 | CrossFade（双源 + curve） | UE Montage | ✅ | P1.3/P1.4 |
+| 16 | Blend 1D / 2D | UE BlendSpace | ❌ | Phase 2 |
+| 17 | Additive Layer | UE `bAdditive` | ✅ | P1.2–P1.5 |
+| 17c | BoneIdx cache | UE | ✅ | P1.4 |
+| 17d | syncToBase / ref-pose / pause | UE/Unity | ✅ | P1.4 |
+| 17e | Multi AdditiveSlot + merged notify | UE Slot | ✅ | P1.5 |
+| 18 | 骨骼遮罩 Mask（资源级） | UE | ⚠️ trackWeights only | Phase 2 |
+| 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
+| 20–22 | AnimGraph / 状态机 | UE/Unity | ❌ | Phase 3 |
+| 23–27 | IK / Retarget | UE | ❌ | Phase 4 |
+| 28 | Root Motion | UE | ❌ | Phase 4（可提前）|
+| 29–31 | DQ / CPU / GPU 蒙皮闭环 | UE/Unity | ⚠️ skinMatrices wire | Phase 2 |
+| 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
+| 37 | HoldTimer / PoseHold | UE NotifyState | ❌ | 未立项 |
 
-**统计**：37 项工业能力中，AN-01 已 ship **9**（24%），P0 修 +5（合计 14，38%），Phase 2-5 还需 **23** 项（62%）。
+**统计（2026-07-27）**：上表约 **20** 项 ✅/⚠️ 内核能力已落地或半落地；完整角色管线关键缺口仍是 **ASM / BlendSpace / Root Motion / Retarget / LOD / 网络 pose**。  
+**内核工业分 ~6/10**；**完整角色管线 ~4.5/10**。
 
 ---
 
-## 14. P0-P3 路线图（2026-07-26 修订）
+## 14. P0-P3 路线图（2026-07-27 修订）
 
 ### P0 — 架构债收口（2026-07-26 起，1 PR 量）
 
@@ -1018,7 +1433,7 @@ AYAnimation/
 | P1.2 | Additive Layer 1 MVP（per-track blendMode + global additiveWeight）── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 3 + v2 backward compat + AnimationPlayer Phase 1 additive branch (position += / rotation pow / scale *= (1+)) + AYEntity AnimationComponent.additiveWeight + 7 new tests (1 AYResource v2 + 6 AnimationPlayer) |
 | P1.3 | CrossFade in/out (Layer 2 — separate base + additive clip source mixing) ── ✅ **SHIP 2026-07-26**, root pin bump landed；IAnimation VERSION 4 (no on-disk change) + 5 invariants + AnimationPlayer dual-source state machine + Phase 1b additive branch (reuses P1.2 three formulas) + 2 notify queues + AYEntity AnimationComponent.{additiveClipPath,additivePlayRate,blendWeight} + 14 new tests (1 AYResource forward-compat + 10 AnimationPlayer + 3 AYEntity integration) |
 | P1.4 | Hot-path 优化 + Cross-Fade full ship：track → boneIndex 预解析 (已 ship) + keyframed weight curve (`blendWeightOverTime` with 4 ease flavors reusing AYMath) + syncToBase option (additive playhead lock-step to base) + ref-pose capture path (CaptureState 3-state machine replacing rest-pose-at-0 assumption) + additive pause/resume (INV-8 unified with base pause)── ✅ **FULL SHIP 2026-07-26**; 8 AnimationPlayer tests + 3 AYEntity tests; 0 regression across 3 modules (701+312+187) |
-| P1.5 | Tick cache（多 player 共享 skeleton 时避免重复 evaluate）+ notify merge (source-tag + dedup-by-(time,name)) + vector<AdditiveSlot> 多层 stack |
+| P1.5 | Multi-slot stack：`vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + notify merge/`sourceTag` + `trackWeights` opt-in + AYEntity `AdditiveLayerSpec` 桥接 + EventBus `AnimNotifyEvent.sourceTag` pipe ── ✅ **FULL SHIP 2026-07-27**; 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398/398 + AYEntity 216/216 × 3); 详见 §4.11; 共享 skeleton tick cache 仍留 P1.6 |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
 
@@ -1026,7 +1441,7 @@ AYAnimation/
 |---|---|
 | P2.1 | Blend 1D / Blend 2D（BlendTree 节点类型）|
 | P2.2 | 骨骼遮罩 (Skeleton Mask) |
-| P2.3 | 多 Slot / 多 Layer |
+| P2.3 | Montage 语义 Slot（**对齐** §4.8 AdditiveSlot，禁止第二套 layer API）|
 | P2.4 | Dual-Quaternion Skinning |
 | P2.5 | CPUSkinningPass（独立 module，CPU 顶点变形真输出）|
 | P2.6 | AYRenderer 改造：SkinnedLit 读 `SkeletonComponent.skinMatrices`（统一渲染路径）|
@@ -1068,3 +1483,13 @@ AYAnimation/
 | `track.times` 直接当秒用 | 内部预转换 ticks→s,缓存 normalized times | 单位约定统一 |
 | Quaternion slerp 无 dot<0 选优 | **修复**（Phase 1.5）| 视觉抽搐根因 |
 | Float track 静默丢弃 | **暴露 sink**（Phase 1.5）| silent data loss 修 |
+
+---
+
+## 16. Changelog
+
+| 日期 | 变更 |
+|------|------|
+| 2026-07-26 | P0–P1.4 多轮 SHIP；工业对照表初版 |
+| 2026-07-27 | **设计审计补丁**：状态抬头；§4.3.1 Hold≠末帧 clamp；§4.7 Override 忽略 weight 陷阱；**§4.8 P1.5 Player SHIP 对齐代码**；§11/§13/§14 勾选与统计修正；Montage Slot 与 AdditiveSlot 对齐约束 |
+ |
