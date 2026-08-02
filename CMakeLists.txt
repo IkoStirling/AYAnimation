@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.12)
-project(AYAnimation)
+project(AYAnimation
+    VERSION 0.1.0
+    DESCRIPTION "AYAnimation — animation subsystem (BlendSpace 1D/2D + Shared Skeleton Tick Cache + AdditiveLayer)"
+)
 
 set(CMAKE_CXX_STANDARD 23)
 set(MODULE_NAME AYAnimation)
@@ -31,3 +34,5 @@ target_link_libraries(${MODULE_NAME} PUBLIC AYMath AYResource)
 
 enable_testing()
 add_subdirectory(unittest)
+
+message(STATUS "AYAnimation v0.1.0 (P2.1 BlendSpace ship + P1.7 final pieces) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
