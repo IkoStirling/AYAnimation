@@ -102,6 +102,7 @@
 #include <assetsDefs/IAYSkeleton.h>
 
 #include <ayanimation/AnimNotifyEvent.h>   // P1.5 — AnimNotifySourceTag definition
+#include <ayanimation/ISkeletonMask.h>    // P2.2 — Skeleton Mask interface
 
 #include <cstdint>
 #include <functional>
@@ -572,6 +573,47 @@ public:
     const std::vector<AnimNotifyRecord>& consumePendingNotifiesMerged();
     size_t getPendingNotifyCountMerged() const { return _pendingNotifiesMerged.size(); }
 
+    // === P2.2 — Resource-level bone mask ===
+    //
+    // Bind a skeleton-bone-name → weight mask. Per-bone weight in [0, 1]
+    // gates the contribution of every Phase 1a base write and every
+    // Phase 1b additive write into that bone local TRS slot. Empty mask
+    // (via clearSkeletonMask()) restores identity behavior. Weights are
+    // read once (eagerly) and cached in _boneMaskWeights.
+    //
+    // Takes ownership of the mask via std::shared_ptr — passing a
+    // shared_ptr<SkeletonMask> from SkeletonMask::create() is the
+    // canonical authoring path. The shared_ptr guarantees lifetime
+    // covers every evaluate() that reads it; a stack-local mask
+    // reference would UAF on scope exit (INV-13/14 robustness).
+    //
+    // Orthogonal to P1.5 trackWeights (per-slot per-track). Either, both,
+    // or neither can be active simultaneously. Order of apply within a
+    // frame: trackWeights then boneMask so the final visible TRS =
+    // trackMask × boneMask.
+    //
+    // Resolution rules (see AnimationPlayer.cpp §resolveSkeletonMask):
+    //   named pass    — lookup each entry's boneName via AssetBoneCache
+    //                   to a bone index; set _boneMaskWeights[idx] = weight
+    //   wildcard pass — for every bone i that no named entry hit, set
+    //                   _boneMaskWeights[i] = wildcard weight (if any)
+    //   Default       — bones not touched by any entry default to 1.0f
+    //                   (identity).
+    //
+    // setSkeleton() re-resolves the mask if one is bound (INV-13).
+    // The mask's own weights are assumed pre-clamped to [0, 1] by the
+    // authoring layer (INV-14); setSkeletonMask does not re-clamp.
+    void setSkeletonMask(std::shared_ptr<const ayt::anim::ISkeletonMask> mask);
+    void clearSkeletonMask();
+
+    bool        hasSkeletonMask()             const { return static_cast<bool>(_skeletonMask); }
+    std::size_t getSkeletonMaskBoneCount()     const { return _boneMaskWeights.size(); }
+    const std::vector<float>& getResolvedBoneMaskWeights() const { return _boneMaskWeights; }
+    // Bumped on every setSkeletonMask / clearSkeletonMask / setSkeleton
+    // that triggers re-resolve. Tests use this to assert rebind-cache
+    // stability across frames.
+    std::uint32_t getSkeletonMaskGeneration()  const { return _skeletonMaskGeneration; }
+
     float getTime() const             { return _time; }
     float getPlayRate() const         { return _playRate; }
     float getDuration() const         { return _baseClip ? _baseClip->getDuration() : 0.0f; }
@@ -666,6 +708,13 @@ private:
 
     // Merged notify rebuild + consume.
     void rebuildMergedNotifies();
+
+    // P2.2 — resolve every entry of _skeletonMask into _boneMaskWeights.
+    // Idempotent. Called from setSkeletonMask() AND from setSkeleton() if
+    // a mask is still bound (skeleton swap invalidates resolved indices
+    // — new ISkeleton pointer means old AssetBoneCache entries stale).
+    // Eager (Q2 = X): no per-frame lazy fallback.
+    void resolveSkeletonMask();
     // consumePendingNotifies() is declared in the public API above; the
     // implementation in the .cpp swaps the thread-local return slot and
     // is the canonical consume path. consumePendingNotifiesMerged()
@@ -702,6 +751,17 @@ private:
     // After P1.5 the old _additiveClip / _additiveTime / ... fields are
     // GONE — slot[0] is the single source of truth.
     std::vector<AdditiveSlot> _additiveSlots;
+
+    // P2.2 — Resource-level bone mask. _skeletonMask is a weak type-only
+    // pointer (we keep the strong ref so the mask survives across
+    // evaluate() but is dropped on clearSkeletonMask()). _boneMaskWeights
+    // is the resolved per-bone float vector of length
+    // _skeleton->getBoneCount() filled by resolveSkeletonMask().
+    // _skeletonMaskGeneration bumps on every resolve so tests / ECS bridge
+    // can detect a rebind.
+    std::shared_ptr<const ayt::anim::ISkeletonMask> _skeletonMask = nullptr;
+    std::vector<float>         _boneMaskWeights;
+    std::uint32_t              _skeletonMaskGeneration = 0;
 
     // Per-bone local TRS working buffers (float-array form to avoid
     // per-frame allocate / align to P0 hot-path goal).

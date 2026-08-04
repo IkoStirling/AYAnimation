@@ -230,12 +230,6 @@ void AnimationPlayer::setSkeleton(
         _skin.clear();
         return;
     }
-    std::fprintf(stderr,
-                 "[AnimationPlayer] setSkeleton this=%p sizeof=%zu bones=%zu "
-                 "localPos=%p\n",
-                 (void*)this, sizeof(AnimationPlayer), n, (void*)&_localPos);
-    std::fflush(stderr);
-
     // Build into temporaries then swap so fill/memset never runs against
     // a stomped member `_Myfirst` (observed as write @ 0x20).
     {
@@ -318,6 +312,16 @@ void AnimationPlayer::setSkeleton(
         } else {
             s.captureState = CaptureState::Fresh;
         }
+    }
+
+    // P2.2 — re-resolve the skeleton mask against the new skeleton
+    // pointer. The mask's bone-name → idx mapping is keyed by the
+    // current _skeleton pointer (via AssetBoneCache); a new skeleton
+    // pointer means old resolved indices are stale. Eager re-resolve
+    // here keeps INV-13 honest (mask rebinds on skeleton swap) and
+    // pays zero per-frame cost.
+    if (_skeletonMask != nullptr) {
+        resolveSkeletonMask();
     }
 }
 
@@ -1058,6 +1062,11 @@ void AnimationPlayer::evaluate()
         }
         const size_t idx = static_cast<size_t>(boneIdx);
 
+        // P2.2 — bone mask is applied once in the Phase 2 pre-lerp
+        // (INV-12 / Q3). Phase 1a writes full Override / Additive so
+        // the post-write lerp(rest, _local, mask) scales both uniformly.
+        // Multiplying mask here would square it against Phase 2.
+
         switch (tr.type) {
             case ayt::resource::AnimTrackType::Vector3: {
                 ayt::math::FVector3 v;
@@ -1099,7 +1108,8 @@ void AnimationPlayer::evaluate()
                         _localRot[idx * 4 + 2] = q.z;
                         _localRot[idx * 4 + 3] = q.w;
                     } else {
-                        if (_blendWeight <= 0.0f) {
+                        const float trackW = _blendWeight;
+                        if (trackW <= 0.0f) {
                             // weight=0 → identity, leave _localRot untouched
                         } else {
                             ayt::math::FQuaternion base(
@@ -1107,7 +1117,7 @@ void AnimationPlayer::evaluate()
                                 _localRot[idx * 4 + 1],
                                 _localRot[idx * 4 + 2],
                                 _localRot[idx * 4 + 3]);
-                            ayt::math::FQuaternion scaled = q.pow(_blendWeight);
+                            ayt::math::FQuaternion scaled = q.pow(trackW);
                             ayt::math::FQuaternion blended = (base * scaled).normalize();
                             _localRot[idx * 4 + 0] = blended.x;
                             _localRot[idx * 4 + 1] = blended.y;
@@ -1180,11 +1190,15 @@ void AnimationPlayer::evaluate()
             // within the slot's tracks array.
             // Track index in slot.tracks: we use &tr - &s.tracks[0] which
             // gives a stable offset since we never reorder tracks.
+            //
+            // INV-16: P2.2 bone mask is orthogonal and applied later via
+            // Phase 2 post-write lerp — do NOT multiply boneMaskW here
+            // or mask weight is squared against Phase 2.
             const size_t trackIdx = static_cast<size_t>(&tr - &s.tracks[0]);
-            const float trackW = (s.trackWeights.empty()
-                                  || trackIdx >= s.trackWeights.size())
-                                ? effectiveWeight
-                                : (effectiveWeight * s.trackWeights[trackIdx]);
+            const float trackW =
+                (s.trackWeights.empty() || trackIdx >= s.trackWeights.size())
+                  ? effectiveWeight
+                  : (effectiveWeight * s.trackWeights[trackIdx]);
 
             switch (tr.type) {
                 case ayt::resource::AnimTrackType::Vector3: {
@@ -1258,6 +1272,73 @@ void AnimationPlayer::evaluate()
                                    v);
                     }
                     break;
+                }
+            }
+        }
+    }
+
+    // P2.2 — Phase 2 pre-step: sole bone-mask gate (INV-12 / Q3).
+    // Lerp every bone whose _boneMaskWeights[i] < 1.0f from rest toward
+    // the just-written _local* by mask weight. Runs AFTER all Phase 1a
+    // / 1b writes so Override and Additive are gated uniformly. Skipped
+    // entirely when no mask is bound (INV-15 — zero cost).
+    //
+    // INV-16: P1.5 trackWeights already scaled additive writes in Phase
+    // 1b; this lerp then applies boneMask → final = trackW × boneMask.
+    //
+    // Quaternion interpolation: FQuaternion has no nlerp() in MathTypes;
+    // we use slerp(b, t) which is the canonical rotation interpolator
+    // and handles the partial-lerp use case correctly. When mask == 0
+    // we snap directly to rest (avoids a slerp call when the answer is
+    // trivially known).
+    if (!_boneMaskWeights.empty()) {
+        const ayt::math::FVector3*    restPos = _skeleton->getLocalPositions();
+        const ayt::math::FQuaternion* restRot = _skeleton->getLocalRotations();
+        const ayt::math::FVector3*    restScl = _skeleton->getLocalScales();
+        for (size_t i = 0; i < n; ++i) {
+            const float w = _boneMaskWeights[i];
+            if (w >= 1.0f) continue;     // no-op — common case (no mask bound)
+            if (w <= 0.0f) {
+                // Snap to rest.
+                if (restPos) {
+                    _localPos[i * 3 + 0] = restPos[i].x;
+                    _localPos[i * 3 + 1] = restPos[i].y;
+                    _localPos[i * 3 + 2] = restPos[i].z;
+                }
+                if (restRot) {
+                    _localRot[i * 4 + 0] = restRot[i].x;
+                    _localRot[i * 4 + 1] = restRot[i].y;
+                    _localRot[i * 4 + 2] = restRot[i].z;
+                    _localRot[i * 4 + 3] = restRot[i].w;
+                }
+                if (restScl) {
+                    _localScl[i * 3 + 0] = restScl[i].x;
+                    _localScl[i * 3 + 1] = restScl[i].y;
+                    _localScl[i * 3 + 2] = restScl[i].z;
+                }
+            } else {
+                if (restPos) {
+                    _localPos[i * 3 + 0] = restPos[i].x + (_localPos[i * 3 + 0] - restPos[i].x) * w;
+                    _localPos[i * 3 + 1] = restPos[i].y + (_localPos[i * 3 + 1] - restPos[i].y) * w;
+                    _localPos[i * 3 + 2] = restPos[i].z + (_localPos[i * 3 + 2] - restPos[i].z) * w;
+                }
+                if (restRot) {
+                    const ayt::math::FQuaternion restQR(
+                        restRot[i].x, restRot[i].y,
+                        restRot[i].z, restRot[i].w);
+                    const ayt::math::FQuaternion liveQ(
+                        _localRot[i * 4 + 0], _localRot[i * 4 + 1],
+                        _localRot[i * 4 + 2], _localRot[i * 4 + 3]);
+                    const ayt::math::FQuaternion blended = restQR.slerp(liveQ, w);
+                    _localRot[i * 4 + 0] = blended.x;
+                    _localRot[i * 4 + 1] = blended.y;
+                    _localRot[i * 4 + 2] = blended.z;
+                    _localRot[i * 4 + 3] = blended.w;
+                }
+                if (restScl) {
+                    _localScl[i * 3 + 0] = restScl[i].x + (_localScl[i * 3 + 0] - restScl[i].x) * w;
+                    _localScl[i * 3 + 1] = restScl[i].y + (_localScl[i * 3 + 1] - restScl[i].y) * w;
+                    _localScl[i * 3 + 2] = restScl[i].z + (_localScl[i * 3 + 2] - restScl[i].z) * w;
                 }
             }
         }
@@ -1628,6 +1709,77 @@ float AnimationPlayer::applyEasing(float t01, BlendEasing e)
             return ayt::math::smoothstep(t01);
     }
     return t01;
+}
+
+// ============================================================================
+// P2.2 — Resource-level bone mask
+// ============================================================================
+
+// Bind a mask. Takes ownership of the shared_ptr (the caller must
+// keep it alive for the duration of every evaluate() that reads it).
+// The shared_ptr handles its own lifetime — no dangling pointer risk
+// because the resource stays alive until the last shared_ptr drops.
+// This replaces an earlier `shared_ptr(&mask, no-op deleter)` design
+// that UAF'd once the caller's stack-local mask went out of scope.
+void AnimationPlayer::setSkeletonMask(std::shared_ptr<const ayt::anim::ISkeletonMask> mask)
+{
+    _skeletonMask = std::move(mask);
+    resolveSkeletonMask();
+}
+
+// Drop the mask reference. Resets _boneMaskWeights so the per-frame
+// mask gate becomes a single bounds check (idx < empty.size() == false).
+void AnimationPlayer::clearSkeletonMask()
+{
+    _skeletonMask.reset();
+    _boneMaskWeights.clear();
+    ++_skeletonMaskGeneration;
+}
+
+// Eager resolver — populate _boneMaskWeights from _skeletonMask. Two
+// passes: named entries set per-bone weight via AssetBoneCache, then
+// the wildcard (if any) fills every bone the named pass didn't touch.
+// Default for untouched bones is 1.0f (identity). No-op when either
+// mask or skeleton is null (just clears the vector + bumps generation).
+void AnimationPlayer::resolveSkeletonMask()
+{
+    if (_skeletonMask == nullptr || _skeleton == nullptr) {
+        _boneMaskWeights.clear();
+        ++_skeletonMaskGeneration;
+        return;
+    }
+
+    const size_t n = _skeleton->getBoneCount();
+    _boneMaskWeights.assign(n, 1.0f);  // identity default
+
+    auto& cache = ayt::anim::AssetBoneCache::instance();
+
+    // First pass: named entries.
+    std::vector<bool> namedHit(n, false);
+    const size_t entryCount = _skeletonMask->getAuthoredBoneCount();
+    const ayt::anim::SkeletonMaskBone* entries = _skeletonMask->getEntries();
+    for (size_t i = 0; i < entryCount; ++i) {
+        const ayt::anim::SkeletonMaskBone& e = entries[i];
+        // Skip wildcard rows in the named pass.
+        if (e.name[0] == '\0') continue;
+        const int32_t boneIdx = cache.resolveAndCache(_skeleton.get(), e.name);
+        if (boneIdx >= 0 && static_cast<size_t>(boneIdx) < n) {
+            _boneMaskWeights[static_cast<size_t>(boneIdx)] = e.weight;
+            namedHit[static_cast<size_t>(boneIdx)] = true;
+        }
+        // Unresolved name — silently skipped. Same behavior as P1.7
+        // track slice with no matching bone.
+    }
+
+    // Second pass: wildcard applies to every bone not explicitly named.
+    if (_skeletonMask->hasWildcard()) {
+        const float w = _skeletonMask->wildcardWeight();
+        for (size_t i = 0; i < n; ++i) {
+            if (!namedHit[i]) _boneMaskWeights[i] = w;
+        }
+    }
+
+    ++_skeletonMaskGeneration;
 }
 
 } // namespace ayt::anim
