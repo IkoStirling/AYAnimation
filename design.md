@@ -1,9 +1,10 @@
 # AYAnimation Design
 
 > **状态（2026-08-06）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机 (`StateMachine` class + `AnimationStateMachineComponent` + `StateMachineSystem` priority 460 + `AnimStateChangedEvent` EventBus pipe)**）。3-run stable：AYAnimation 543/543 + AYResource 1044/1044 + AYEntity 370/370 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L2 condition DSL / L3 子状态机 / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine 全部 deferred。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L2 condition DSL / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states 全部 deferred。L1 + L3 子状态机已 ship（P3.1 + P3.2 2026-08-06）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §14 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
+> **2026-08-06 设计审计 (三次)**：新增 §4.15 P3.2 L3 子状态机 ship 文档；§4.14.11 UPGRADE-HOOK(P3.2) 标 resolved；§13 row 20c 改为 ✅ + 加 row 20e（L3.5 deferred）；§14 P3.2 row 勾选 + §16 changelog 加 P3.2 entry；3-run 385/385 + 600/600 + 1044/1044 stable。
 
 ---
 
@@ -1466,7 +1467,7 @@ AYAnimation/
 
 - [x] **P3.1 L1 简单状态机**（2026-08-06）─ `StateMachine` class (events-driven FSM + first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft) + `AnimationStateMachineComponent` (POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + currentState/previousState/isTransitioning read-back + setTrigger convenience) + `StateMachineSystem` priority 460 (after AnimationSystem 450, sync params + drain triggers + tick SM + push new clip + emit `AnimStateChangedEvent` via EventBus kTypeId=0x000A'0010) + 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3)；详见 §4.14 + §13 row 20 + §14 P3.1 row
 - [ ] L2 条件转换 (expression DSL — multi-condition / per-state AnimNotify routing)
-- [ ] L3 子状态机 (locomotion sub-state-machine)
+- [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §14 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
 ### Phase 4: IK + 重定向 ── ⏳ 排队
@@ -1530,8 +1531,9 @@ AYAnimation/
 | 20 | L1 简单状态机（State + Trigger + Condition + Cross-fade + AnimStateChangedEvent）| UE `UAnimStateMachine` / Unity `Animator` | ✅ | P3.1 |
 | 20a | L1 priority 460 + EventBus pipe + ECS bridge | UE `UAnimInstance::NativeUpdateAnimation` priority chain | ✅ | P3.1 |
 | 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ❌ | P3.x (deferred) |
-| 20c | L3 子状态机 | UE `UAnimStateMachine` nested SM | ❌ | P3.2 (deferred) |
+| 20c | L3 子状态机（nested SM + 递归 trigger/param 传播 + child-first transition fallback + active leaf state name + ECS bridge dt plumbing 兑现 + sub-machine entry 不调 player.play + AnimationStateMachineComponent.activeSubState read-back）| UE `UAnimStateMachine` nested SM | ✅ | P3.2 |
 | 20d | L4 MotionMatching 风格状态机 | UE Pose Search | ❌ | P3.3 (deferred) |
+| 20e | L3.5 多状态机 / parallel states / `.ayasm` loader | UE multi-layer SM / parallel state | ❌ | P3.x / P4.x (deferred) |
 | 21–22 | AnimGraph visual editor / BlendTree nodes in SM | UE/Unity AnimatorController | ❌ | P3.x刀 2 + P4.x |
 | 23–27 | IK / Retarget | UE | ❌ | Phase 4 |
 | 28 | Root Motion | UE | ❌ | Phase 4（可提前）|
@@ -1539,7 +1541,7 @@ AYAnimation/
 | 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
 | 37 | HoldTimer / PoseHold | UE NotifyState | ❌ | 未立项 |
 
-**统计（2026-08-06）**：上表约 **22** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.1 L1 状态机 1 + L1 ECS bridge sub-row 1）；完整角色管线关键缺口仍是 **L2-L4 状态机 / AnimGraph / BlendTree / Root Motion / Retarget / LOD / 网络 pose**。  
+**统计（2026-08-06）**：上表约 **24** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.2 L3 子状态机 1 sub-row 1 + §13 row 20c 改为 ✅，原 20c/20d deferred rows 保留）；完整角色管线关键缺口仍是 **L2 condition DSL / L4 MotionMatching / AnimGraph / BlendTree in SM / Root Motion / Retarget / LOD / 网络 pose**。  
 **内核工业分 ~6.5/10**；**完整角色管线 ~5/10**。
 
 ---
@@ -2273,11 +2275,11 @@ P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resource
 
 #### 4.14.11 Migration / Upgrade Hooks
 
-- **UPGRADE-HOOK(P3.2)** — 子状态机（L3）：`StateMachine` 加 `vector<unique_ptr<StateMachine>> _children` + `currentChildIndex`。L1 ship 时 `_children` 字段不存在（zero-cost）。
+- **UPGRADE-HOOK(P3.2)** — 子状态机（L3）：`StateMachine` 加 `vector<unique_ptr<StateMachine>> _children` + `currentChildIndex`。L1 ship 时 `_children` 字段不存在（zero-cost）。**✅ RESOLVED 2026-08-06 by §4.15 P3.2 ship**：`_children` + `_currentChildIndex = -1` + `State.isSubMachine/subMachineIndex` + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` + 递归 `setTrigger/setParam` + child-first transition fallback + INV-27..31。详见 §4.15。
 - **UPGRADE-HOOK(P3.x刀2)** — BlendTree nodes in state machine：`State::clipPath` 改 `vector<AnimNode>`；state machine 内部可以挂 BlendSpace 1D/2D（与 P2.1 已 ship 的 BlendSpace 共存）。
-- **UPGRADE-HOOK(P4.x)** — `.ayasm` loader + `IAYStateMachine` formal interface + `ResourceManager::load<IStateMachine>(path)`；`StateMachineSystem::buildStateMachine` 改走 load 路径。L1 ship 不带 loader —— bridge 在 `_machines.count(e) == 0` 时仅 create 空 SM，buildStateMachine 是 no-op stub。
-- **UPGRADE-HOOK(P4.x editor)** — AYEditor state graph editor wiring：`AnimationStateMachineComponent` 暴露 serialize / deserialize API；editor UI 用 `getStates()` / `getTransitions()` 反向生成图。
-- **UPGRADE-HOOK(P4.x net)** — `AnimStateChangedEvent` 加 net replication channel：`_currentState` / `_pendingToState` / `_triggers` 跨 network 复制（replacing host-script-driven state sync）。
+- **UPGRADE-HOOK(P4.x)** — `.ayasm` loader + `IAYStateMachine` formal interface + `ResourceManager::load<IStateMachine>(path)`；`StateMachineSystem::buildStateMachine` 改走 load 路径。P3.2 ships 仍 procedural via `addSubMachine`；`buildStateMachine` 仍 no-op stub。
+- **UPGRADE-HOOK(P4.x editor)** — AYEditor state graph editor wiring：`AnimationStateMachineComponent` 暴露 serialize / deserialize API；editor UI 用 `getStates()` / `getTransitions()` 反向生成图（含 `isSubMachine` / `subMachineIndex` 字段）。
+- **UPGRADE-HOOK(P4.x net)** — `AnimStateChangedEvent` 加 net replication channel：`_currentState` / `_pendingToState` / `_triggers` / **`_currentChildIndex`** 跨 network 复制（replacing host-script-driven state sync）。
 
 #### 4.14.12 Open Questions
 
@@ -2286,6 +2288,365 @@ P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resource
 - (c) **`fromState==""` vs `fromState="ANY"` sentinel？** Decision: **`fromState==""` = ANY**（UE convention + 与 §4.13 `mask.addEntry("", w)` wildcard 一致）。显式 "ANY" sentinel 太 verbose 且容易 typo。
 - (d) **State machine 是否 ship MontageSlot 联动？** Decision: **NO**，P3.1 ships 状态机不联动 montage。Montage 是 P2.3 scope。
 - (e) **system priority 440 (before AnimationSystem) vs 460 (after)？** Decision: **460 after**。L1 simple，1-frame latency 可接受。P3.x 可升级为 440 + system-driven player clock（需 system 调 `player.tick(dt)`）── 复杂。
+
+---
+
+### 4.15 ✅ P3.2 L3 子状态机 (Sub-State Machine) — SHIP（2026-08-06）
+
+> 本节为 P3.2 L3 完整 ship 文档。L3 = **嵌套子状态机**（root → child）+ 递归触发器/参数传播 + child-first transition fallback + active leaf state name + ECS bridge 兑现 dt plumbing。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。
+> 兑现 §4.14.11 UPGRADE-HOOK(P3.2)（设计文档预留路径）。
+> 不含 L4 MotionMatching / 多状态机（multi-graph）/ parallel states / BlendTree nodes in SM / MontageSlot 联动 / `.ayasm` loader / editor state graph wiring（全部 deferred 到 P3.x / P4.x）。
+
+#### 4.15.1 Overview
+
+P3.1 L1 已 ship 「flat」状态图——entity 绑一个 `StateMachine`，states 与 transitions 平铺。然而 production locomotion 需要**嵌套结构**：root state "Move" 内部是一个完整 sub-graph（Idle ↔ Walk ↔ Run），整个 locomotion block 作为 atomic entry/exit。
+
+P3.2 ship **`StateMachine` 加嵌套子状态机能力**——`vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine` 标记；ECS bridge 兑现 `sm.update(dt)` 真值（§4.14.5 P3.1 stub 改为真实 plumbing）；sub-machine entry state 进入时自动激活 child sub-graph；child transition 自动 propagate triggers/params 到 active child；child-first transition fallback；active leaf state name read-back。
+
+L3 ships **root → child 单层嵌套**（深度 ≤ 2）；多状态机 / 无限嵌套 / parallel states / BlendTree nodes 留 P3.x / P4.x。
+
+#### 4.15.2 Motivation
+
+P3.1 ship 之后，flat state graph 仍有三大缺口：
+
+1. **Hierarchical state 不可表达**——locomotion block（Idle/Walk/Run/Crouch）无法整体作为一个 atomic state（"Move"）与其他 states（Attack / Hit / Die）做 transition。
+2. **Trigger / param 重复广播**——host 必须分别向 root 和 child 调 `setTrigger` / `setParam`；child 子状态机不感知 root 收到的 signal。**UE 模式：parent → child 自动 forward**。
+3. **Transition fallback 不分层**——flat first-match-wins 在 child-only 与 parent-only 之间没有优先级；UE 模式：child 先，parent fallback。
+
+P3.2 ship **子状态机**：root 是顶层状态图，child 是 sub-graph；transition 进 `isSubMachine=true` state 时 child 自动 active；child 内部 transition 用 child 自己的 duration；parent transition（root 的 level）只在 child 没 match 时 fallback。**sub-machine entry state 的 clip 选择由 child SM drives**（不是 root 的 `clipPath`）—— parent SM 仅提供 hierarchical container。
+
+#### 4.15.3 Data Model
+
+```cpp
+// include/ayanimation/StateMachine.h (P3.2 modify)
+namespace ayt::anim {
+
+struct State {
+    // ... (P3.1 fields) ...
+    // P3.2 NEW
+    bool isSubMachine    = false;
+    int  subMachineIndex = -1;     // -1 if not a sub-machine
+};
+
+class StateMachine {
+public:
+    // ... (P3.1 API preserved) ...
+
+    // === Sub-state machine API (P3.2 NEW) ===
+    int  addSubMachine(std::unique_ptr<StateMachine> sm);
+    int  getCurrentChildIndex() const { return _currentChildIndex; }
+    StateMachine*       getSubMachine(int idx);
+    const StateMachine* getSubMachine(int idx) const;
+    StateMachine*       getActiveSubMachine();
+    const StateMachine* getActiveSubMachine() const;
+    std::string getActiveLeafStateName() const;
+    std::size_t getSubMachineCount() const { return _children.size(); }
+
+    // === Move/copy semantics (P3.2 NEW — vector<unique_ptr> 不可拷贝) ===
+    StateMachine(const StateMachine&) = delete;
+    StateMachine& operator=(const StateMachine&) = delete;
+    StateMachine(StateMachine&&) = default;
+    StateMachine& operator=(StateMachine&&) = default;
+
+private:
+    // ... (P3.1 fields) ...
+    // P3.2 NEW
+    std::vector<std::unique_ptr<StateMachine>> _children;
+    int  _currentChildIndex = -1;          // -1 = no active child
+};
+
+} // namespace ayt::anim
+```
+
+**布局图**：
+
+```
+StateMachine (root)
+  ├ _states : vector<State>            (P3.1; may contain sub-machine entry)
+  ├ _transitions : vector<Transition>  (P3.1)
+  ├ _stateIndexByName : unordered_map  (P3.1)
+  ├ _triggers : unordered_set          (P3.1; recursive to active child)
+  ├ _params : unordered_map            (P3.1; recursive to active child)
+  ├ _currentState / _prevStateName     (P3.1)
+  ├ _transitioning / _transitionElapsed / _transitionDuration / _pendingToState  (P3.1)
+  ├ _transitionedThisFrame             (P3.1)
+  └ _children : vector<unique_ptr<StateMachine>>  (P3.2 NEW)
+  └ _currentChildIndex : int = -1                (P3.2 NEW)
+```
+
+#### 4.15.4 Public API
+
+| API | 返回 | 用途 |
+|---|---|---|
+| `addSubMachine(unique_ptr<StateMachine>)` | int | owner-ship 移交；返 child index |
+| `getCurrentChildIndex()` | int | -1 = no active child |
+| `getSubMachine(idx)` | StateMachine* | nullptr if invalid |
+| `getActiveSubMachine()` | StateMachine* | nullptr if `_currentChildIndex < 0` |
+| `getActiveLeafStateName()` | string | deepest leaf state in active path |
+| `getSubMachineCount()` | size_t | number of added sub-machines |
+| `State.isSubMachine` | bool | true ⇒ state is sub-graph entry |
+| `State.subMachineIndex` | int | must match `addSubMachine` 返的 index |
+
+**Move semantics**：因 `_children: vector<unique_ptr<StateMachine>>`，`StateMachine` 显式 delete copy ctor / assign；move ctor / assign = default。Caller 必须用 `std::unique_ptr<StateMachine>` 或 `std::move`。
+
+#### 4.15.5 Internal Algorithm
+
+**`update(dt)` 重写**：
+
+```cpp
+void StateMachine::update(float dt) {
+    _transitionedThisFrame = false;
+    if (_states.empty()) return;
+
+    if (!_initialized) {
+        _currentState = _states.front().name;
+        _prevStateName = _currentState;
+        _initialized = true;
+        _currentChildIndex = findSubMachineIndex(_currentState);  // P3.2 NEW
+    }
+
+    // (0) P3.2 NEW — tick active child sub-SM first (if any).
+    if (auto* child = activeChild()) child->update(dt);
+
+    // (1) Advance own transition clock if mid-transition.
+    if (_transitioning) {
+        _transitionElapsed += dt;
+        if (_transitionElapsed >= _transitionDuration) {
+            _prevStateName    = _currentState;
+            _currentState     = _pendingToState;
+            _pendingToState.clear();
+            _transitioning    = false;
+            _transitionElapsed  = 0.0f;
+            _transitionDuration = 0.0f;
+            _transitionedThisFrame = true;
+            _currentChildIndex = findSubMachineIndex(_currentState);  // P3.2 NEW
+        }
+        return;
+    }
+
+    // (2) P3.2 NEW — child-first transition fallback.
+    const Transition* t = findEligibleTransitionForSelf();
+    if (t != nullptr) {
+        fireTransition(*t);
+        _transitionedThisFrame = true;
+    }
+}
+```
+
+**`fireTransition` (P3.2 NEW line)**——instant cut 路径也更新 `_currentChildIndex`（P3.1 ship 时仅 cross-fade 完成路径更新；fix 后两边都更新）：
+
+```cpp
+void StateMachine::fireTransition(const Transition& t) {
+    _prevStateName = _currentState;
+    if (t.duration <= 0.0f) {
+        _currentState = t.toState;
+        _pendingToState.clear();
+        _transitioning = false;
+        _transitionDuration = 0.0f;
+        _transitionElapsed = 0.0f;
+        _currentChildIndex = findSubMachineIndex(_currentState);   // P3.2 NEW
+    } else {
+        _pendingToState = t.toState;
+        _transitioning = true;
+        _transitionDuration = t.duration;
+        _transitionElapsed = 0.0f;
+    }
+    if (!t.trigger.empty()) _triggers.erase(t.trigger);
+}
+```
+
+**`setTrigger` / `setParam` 递归传播**（INV-28）：
+
+```cpp
+void StateMachine::setTrigger(const std::string& name) {
+    if (name.empty()) return;
+    _triggers.insert(name);
+    if (auto* child = activeChild()) child->setTrigger(name);  // P3.2 NEW
+}
+
+void StateMachine::setParam(const std::string& name, float value) {
+    if (name.empty()) return;
+    _params[name] = value;
+    if (auto* child = activeChild()) child->setParam(name, value);  // P3.2 NEW
+}
+```
+
+**`findEligibleTransitionForSelf`——child-first fallback**（INV-29）：
+
+```cpp
+const Transition* StateMachine::findEligibleTransitionForSelf() const {
+    if (auto* child = const_cast<StateMachine*>(activeChild())) {
+        if (const Transition* t = child->findEligibleTransition()) return t;
+    }
+    return findEligibleTransition();
+}
+```
+
+**`getActiveLeafStateName`——deferred leaf**（INV-30）：
+
+```cpp
+std::string StateMachine::getActiveLeafStateName() const {
+    if (auto* child = const_cast<StateMachine*>(activeChild())) {
+        if (child->_initialized) return child->getActiveLeafStateName();
+    }
+    return _currentState;
+}
+```
+
+注：`_initialized` 检查确保 child 至少被 tick 过一次（lazy-init 完成）；否则返回 parent 的 currentState，避免未初始化的 child currentState="" 泄漏到 caller。
+
+#### 4.15.6 ECS Bridge
+
+**File**: `AYEntity/src/AYStateMachineSystem.cpp` (modify)
+
+P3.2 兑现 §4.14.5 §5.5 的 dt plumbing hook——`sm.update(0.0f)` → `sm.update(dt)`。Sub-machine entry state 跳过 `player.play()`（child SM drives）。`activeSubState` 每 tick 更新。
+
+```cpp
+void StateMachineSystem::onUpdate(float dt) {
+    for (Entity* e : world.query<...>()) {
+        StateMachine& sm = *getOrCreateMachine(e);
+        // ... sync params/triggers (recursive to active child) ...
+
+        const std::string prevState = sm.getCurrentStateName();
+        sm.update(dt);   // P3.2 NEW: real dt (was stubbed 0.0f in P3.1)
+
+        if (sm.didTransitionThisFrame() || prevState != sm.getCurrentStateName()) {
+            const auto& states = sm.getStates();
+            auto it = std::find_if(states.begin(), states.end(),
+                [&](const State& s) { return s.name == sm.getCurrentStateName(); });
+            if (it != states.end()) {
+                if (it->isSubMachine) {
+                    // P3.2 NEW — do NOT call player.play(); child SM drives.
+                } else if (!it->clipPath.empty()) {
+                    auto clip = ResourceManager::load<IAnimation>(it->clipPath);
+                    if (clip) { skel->player->play(clip.get()); ... }
+                }
+            }
+            EventBus::emit<AnimStateChangedEvent>({e, prevState, sm.getCurrentStateName()});
+        }
+
+        // Read-back (P3.2 NEW — include activeSubState).
+        c->currentState    = sm.getCurrentStateName();
+        c->previousState   = sm.getPreviousStateName();
+        c->isTransitioning = sm.isTransitioning();
+        c->activeSubState  = sm.getActiveLeafStateName();
+    }
+}
+```
+
+**Component change**——`AnimationStateMachineComponent` 加 `activeSubState` 字段：
+
+```cpp
+struct AnimationStateMachineComponent : public IComponent {
+    // ... (P3.1 fields) ...
+    AY_PROPERTY(std::string, activeSubState, kAttrSerialize)   // P3.2 NEW
+};
+```
+
+#### 4.15.7 Resource Bridge (Deferred)
+
+P3.2 不引入 `.ayasm` loader / `IAYStateMachine` formal interface（与 P3.1 §4.14.7 defer 一致）。`c->resourcePath` 仍 placeholder；sub-SM 必须 procedural via `addSubMachine`。Entity setup code 典型 pattern：
+
+```cpp
+auto root  = std::make_unique<StateMachine>();
+// root: Idle ↔ Move (sub-machine entry)
+auto loco  = std::make_unique<StateMachine>();
+// loco: Idle ↔ Walk ↔ Run
+const int locoIdx = root->addSubMachine(std::move(loco));
+State r_move; r_move.name = "Move"; r_move.isSubMachine = true;
+r_move.subMachineIndex = locoIdx;
+root->addState(r_move);
+// ... transitions ...
+root->setInitialState("Idle");
+// inject root into StateMachineSystem._machines[entity]
+```
+
+**注意**：`StateMachine` 显式 `= delete` copy（因 `vector<unique_ptr>`），caller 必须 `unique_ptr<StateMachine>` 持有 root 然后 std::move 到 system（test pattern：`sm_system.getOrCreateMachine(e)` 返回 `StateMachine*`，test 直接 populate 该 SM）。
+
+#### 4.15.8 Invariants
+
+| Inv | Statement | Asserted in |
+|---|---|---|
+| **INV-27** | `State.isSubMachine=true` ⇒ `State.clipPath` is IGNORED (host MUST NOT call `player.play()` for sub-machine entry); child SM drives via its own transitions | ECS bridge (system bridge 跳 player.play) |
+| **INV-28** | `setTrigger` / `setParam` propagate recursively into the **active** child SM only (not all children) | `StateMachine::setTrigger / setParam` |
+| **INV-29** | Transition fallback order: child first, then parent (UE rule); if child fires, parent's check skipped that frame | `StateMachine::update` step 2 + `findEligibleTransitionForSelf` |
+| **INV-30** | `getActiveLeafStateName()` returns deepest current state; if no active child or child not yet ticked, returns parent's `_currentState`; recursion depth ≤ 2 (P3.2 limit) | `StateMachine::getActiveLeafStateName` |
+| **INV-31** | When entering a sub-machine entry state, `_currentChildIndex` is set BEFORE next `update()`; on exit to non-sub-machine state, reset to -1 | `StateMachine::fireTransition` (instant cut path) + `update` step 1 (cross-fade complete path) + `setInitialState` |
+
+P3.2 不改变 P3.1 INV-18..26 任何契约。**INV-26 (system 推 new clip via `player.play`)** 在 P3.2 受 INV-27 限制：仅当 state 不是 sub-machine entry 时调。
+
+#### 4.15.9 Testing
+
+P3.2 ship 增加 **12 AYAnimation unit tests** + **4 AYEntity ECS integration tests**，加上 baseline 543 + 370 = 600 + 385 total。
+
+**AYAnimation** (`unittest/AYTest_SubStateMachine.cpp` NEW, 12 cases):
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `L3_AddSubMachine_StoresAndReturnsIndex` | `addSubMachine` 返 0,1,...; out-of-range getSubMachine 返 nullptr |
+| 2 | `L3_SetTrigger_PropagatesToActiveChild` | parent 收到 trigger → active child 也收到；child 内部 transition fires |
+| 3 | `L3_SetParam_PropagatesToActiveChild` | parent `setParam` → child `getParam` 返回同值 |
+| 4 | `L3_EnterSubMachineEntry_ActivatesChild` | transition 进 sub-machine entry state → `_currentChildIndex` 更新 |
+| 5 | `L3_SubMachineTransition_AdvancesChildCurrentState` | child SM 内 transition 改 child._currentState; parent._currentState 不变 |
+| 6 | `L3_ChildTransition_FallbackToParent_WhenChildNoMatch` | child 内无 eligible transition → parent 的 findEligibleTransition 接管 |
+| 7 | `L3_ExitSubMachine_DeactivatesChild` | parent transition 离开 sub-machine entry → `_currentChildIndex` = -1 |
+| 8 | `L3_GetActiveLeafStateName_ReturnsChildCurrentState` | parent 在 sub-machine entry → 返 child._currentState |
+| 9 | `L3_GetActiveLeafStateName_NoChild_ReturnsParentState` | parent 不在 sub-machine entry → 返 parent._currentState |
+| 10 | `L3_DtPlumbing_ChildCrossFadeAdvances` | parent duration=0.5 + dt=0.1 两次 update → child cross-fade clock advance > 0 |
+| 11 | `L3_SubMachineState_ClipPathIgnored` | `isSubMachine=true` 状态即使有 clipPath，data stored as-is，active child resolution 取优先 |
+| 12 | `L3_Clear_RecursivelyClearsChildren` | `sm.clear()` → `_children` 清空，旧 child pointer dangling by unique_ptr dtor |
+
+**AYEntity** (`unittest/AYTest_StateMachineSystem.cpp` append 4 cases):
+
+| # | Name | Contract |
+|---|------|----------|
+| 9 | `sm_system_sub_machine_active_sub_state_readback` | root SM populate → `c->activeSubState` = currentState when no real child |
+| 10 | `sm_system_dt_plumbing_advances_cross_fade` | system.onUpdate(dt=0.1) → SM cross-fade `getTransitionElapsed()` > 0（P3.1 stub = 0 永远） |
+| 11 | `sm_system_sub_machine_entry_no_player_play` | sub-machine entry state → system 不调 `player.play()` (player 指针不变) |
+| 12 | `sm_system_sub_machine_animstate_event_prev_state` | sub-machine-related transition → EventBus 收到 AnimStateChangedEvent（prevState + currentState 正确） |
+
+**3-run stable verification**:
+
+| Module | Baseline | + New | Total | 3-run |
+|--------|----------|-------|-------|-------|
+| AYAnimation | 543 | 57 (含 sub-case 多 check) | **600** | ✅ × 3 |
+| AYEntity | 370 | 15 (4 cases × multi-CHECK) | **385** | ✅ × 3 |
+| AYResource | 1044 | 0 | **1044** unchanged | — |
+
+#### 4.15.10 Edge Cases & Lessons Learned (P3.2)
+
+1. **Sub-machine depth limit (P3.2 = 2 levels)** —— root → child only；depth > 2 不报错但行为未测试。**P3.x 升级**：可递归 addSubMachine（child 也可有 children）但当前 ship 仅 2 层。
+2. **State.isSubMachine 与 clipPath 互斥** —— INV-27 pin：当 `isSubMachine=true` 时 `clipPath` 字段无效（即使非空）。系统 bridge 不应读 `clipPath` 也不应 `player.play()`。Test #11 pin data layout；test #11 ECS pin 系统 bridge 行为。
+3. **Transition fallback order** —— INV-29 pin：child 先；parent fallback 当 child `findEligibleTransition` returns nullptr。**不要** 同时检查两边（避免 child 内部 transition 与 parent 同时 fire 造成 race）。
+4. **Recursive `setTrigger` / `setParam`** —— INV-28 pin：仅向 **active child** 传播（不是所有 children）；否则 inactive child 也会收到 trigger，行为混乱。
+5. **dt plumbing 真兑现** —— P3.1 §4.14.5 step 5 写了 `update(0.0f)` 是 stub。P3.2 改 `update(dt)`。Test AYAnimation #10 + AYEntity #10 钉 dt 真值行为。
+6. **`fireTransition` 同步设 `_currentChildIndex`** —— instant cut path 也更新（P3.2 fix）；cross-fade complete path 在 `update` step 1 更新（保持 P3.1 行为）。Test #7 ExitSubMachine + #4 EnterSubMachine pin 两边都对。
+7. **`addSubMachine` owner-ship** —— `unique_ptr` 参数 by-value + `std::move`；caller 不再持有 child SM 指针。**StateMachine move-only**（copy = delete 因 `vector<unique_ptr>` 不可拷贝）。Test #12 验证 clear 后访问安全。
+8. **Active child `_currentChildIndex` 越界防御** —— `findSubMachineIndex` 检查 `idx < _children.size()`；runtime `update` / `setTrigger` 全部加越界 guard（`activeChild()` helper 返回 nullptr 当越界）。
+9. **`getActiveLeafStateName` deferred leaf** —— 当 active child 未 tick（`_initialized=false`）时返回 parent 的 `_currentState`，避免未初始化 child currentState="" 泄漏。Test #8 pin: 第二次 update 后 child 才 lazy-init。
+10. **`AnimStateChangedEvent` 只 emit parent transition** —— 子 SM 内部 transition **不** emit EventBus（避免同帧两次 emit）；P3.2 ship 行为保持 P3.1 不变。Test #12 pin EventBus event prevState/currState。
+11. **Cross-fade same-frame semantic** —— `fireTransition` 立即设 `_transitioning=true` + `_transitionElapsed=0`；同帧 `_transitionElapsed` 不 advance（P3.1 INV-22）；下一帧 `update` step 1 才 advance。Test #10 dt plumbing 钉 dt advance 在第二次 update 后 > 0。
+
+**Footgun pinned during ship**：
+
+- **`StateMachine` copy = delete** —— 因 `_children: vector<unique_ptr<StateMachine>>` 不可拷贝。Test fixture 必须 `auto root = std::make_unique<StateMachine>()` 然后 `std::move` 到 `addSubMachine`。P3.1 helper `makeRootWithMoveEntry` 返 by-value → P3.2 改 `makeRootWithMoveEntryUPtr` 返 `unique_ptr<StateMachine>`。
+- **`addState(s_move)` 在 `addSubMachine` 之前 / 之后顺序** —— `addState` 不 assert subMachineIndex，但 caller 必须确保 `s_move.subMachineIndex` 在 `addState` 前设正确（否则 `findSubMachineIndex` 返 -1）。Test #4-#11 用 `root->addSubMachine` 先（拿 index），再设 `s_move.subMachineIndex`，最后 `addState(s_move)`。**不**用 `const_cast` + post-patch（post-patch 改的是副本，原 `_states` 中 entry 的 subMachineIndex 仍是 -1）。
+
+#### 4.15.11 Migration / Upgrade Hooks
+
+- **UPGRADE-HOOK(P3.x刀2)** — BlendTree nodes in state machine: `State::clipPath` 改 `vector<AnimNode>`；state machine 内部可以挂 BlendSpace 1D/2D（与 P2.1 已 ship 的 BlendSpace 共存）。**P3.2 不动 `clipPath`**。
+- **UPGRADE-HOOK(P4.x)** — `.ayasm` loader + `IAYStateMachine` formal interface + `ResourceManager::load<IStateMachine>(path)`；`StateMachineSystem::buildStateMachine` 改走 load 路径。P3.2 仍 procedural via `addSubMachine`。
+- **UPGRADE-HOOK(P4.x editor)** — AYEditor state graph editor wiring：`StateMachine` 暴露 serialize / deserialize API；editor UI 用 `getStates()` / `getTransitions()` 反向生成图（含 `isSubMachine` / `subMachineIndex` 字段）。
+- **UPGRADE-HOOK(P4.x net)** — `AnimStateChangedEvent` 加 net replication channel：`_currentState` / `_pendingToState` / `_triggers` / **`_currentChildIndex`** 跨 network 复制。
+- **UPGRADE-HOOK(P3.x递归)** — 子状态机允许无限嵌套（child 也可有 children）。当前 P3.2 limit depth=2；depth > 2 行为未测试。
+
+#### 4.15.12 Open Questions
+
+- (a) **Sub-machine cross-fade semantics：child SM 内 transition 用 child 自己的 duration，还是 inherit parent？** Decision: **child 自己的 duration**（UE 风格，child 是独立 finite state machine）。Test #10 钉 child duration=0.5 行为。
+- (b) **Depth > 2 行为？** Decision: **P3.2 limit 2 levels**；depth > 2 不报错但 behavior undefined；P3.x 升级（getActiveLeafStateName 已递归支持，可升级）。
+- (c) **Multi-graph per entity (多个独立 root SM)？** Decision: **NO**，P3.2 ships single root SM per entity；多状态机（如 base layer + additive layer SM）留 P3.x / P4.x。
+- (d) **`player.play` 在 sub-machine entry 时是否调一次以 'prime' player？** Decision: **不调**（child SM 完全 drives；首次 child update 内 transition 进 child initial state 时再 `player.play`）；最多 1 帧空白可接受。
+- (e) **`getActiveLeafStateName` 在 child 未 tick 时返 parent currentState（"deferred leaf"）vs 返 child._currentState=""（"eager empty"）？** Decision: **deferred**（避免 caller 看到 "" 误以为 leaf state is empty）。Test #8 pin: 第二次 update 后 child 才 lazy-init。
 
 ---
 
@@ -2334,7 +2695,7 @@ P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resource
 | Step | 内容 |
 |---|---|
 | P3.1 | L1-L2 状态机 ── ✅ **L1 SHIP 2026-08-06**：StateMachine class（first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft + INV-18..26）+ AnimationStateMachineComponent（POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + read-back fields + setTrigger convenience）+ StateMachineSystem priority 460（after AnimationSystem 450，sync params + drain triggers + tick SM + push new clip + emit AnimStateChangedEvent via EventBus kTypeId=0x000A'0010）+ 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；3-run stable AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3，零回归；详见 §4.14 + §13 row 20 + §14 P3.1 row。**L2 condition DSL deferred** |
-| P3.2 | L3 子状态机 |
+| P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §14 P3.2 row。**.ayasm loader / 多状态机 / parallel states deferred** |
 | P3.3 | L4 MotionMatching 风格 |
 | P3.4 | TwoBoneSolver + FABRIK + CCD |
 | P3.5 | IK 约束 (angle / distance / rotation) |
@@ -2378,4 +2739,5 @@ P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resource
 | 2026-08-03 | P2.2 Skeleton Mask ship：§4.13 全 12-section + §11 row + §13 row 17h + §14 P2.2 row |
 | 2026-08-06 | P3.x刀1 .aymask loader ship：§4.13.7 收口；删 §4.13.11 UPGRADE-HOOK(P3.x) 第一条；§11 / §13 / §14 / §16 勾选同步；新增 §13 row 17h + §14 P3.x刀1 row |
 | 2026-08-06 | **P3.1 L1 状态机 ship**：§4.14 全 12-section（StateMachine class + AnimationStateMachineComponent + StateMachineSystem priority 460 + AnimStateChangedEvent kTypeId=0x000A'0010 + 15 AYAnimation + 8 AYEntity tests）+ §11 P3.1 row + §13 row 20/20a/20b/20c/20d + §14 P3.1 row + 状态抬头同步 543/543 + 370/370 + 1044/1044 3-run stable；2 项 P3.x刀 2（BlendTree in SM）/ P4.x（.ayasm loader / editor wiring）deferred |
+| 2026-08-06 | **P3.2 L3 子状态机 ship**：§4.15 全 12-section（StateMachine._children vector<unique_ptr<StateMachine>> + _currentChildIndex + State.isSubMachine/subMachineIndex + StateMachine move-only + 递归 setTrigger/setParam INV-28 + child-first transition fallback INV-29 + getActiveLeafStateName 深度≤2 INV-30 + _currentChildIndex sync INV-31 + INV-27 sub-machine entry clipPath 忽略）+ ECS bridge 兑现 dt plumbing（sm.update(0.0f)→sm.update(dt)）+ AnimationStateMachineComponent.activeSubState read-back + sub-machine entry 不调 player.play + 12 AYAnimation + 4 AYEntity L3 tests + §4.14.11 UPGRADE-HOOK(P3.2) 标 resolved + §14 P3.2 row 勾选 + 状态抬头同步 600/600 + 385/385 + 1044/1044 3-run stable；3 项 deferred（.ayasm loader / 多状态机 / parallel states）|
  |

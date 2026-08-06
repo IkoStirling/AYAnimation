@@ -1,11 +1,12 @@
-// StateMachine.h — P3.1 (2026-08-06) L1 简单状态机.
+// StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机.
 //
-// Mirrors UE UAnimStateMachine shape (subset — L1 only; L3 nested / L4
-// MotionMatching deferred). Standalone class — NOT an AnimationPlayer
-// subclass; composition: AnimationPlayer plays the clip, StateMachine
-// decides which clip. AYEntity StateMachineSystem bridges the two.
+// Mirrors UE UAnimStateMachine shape (subset — L1 + L3; L4 MotionMatching /
+// multi-graph / BlendTree inside SM / parallel states deferred). Standalone
+// class — NOT an AnimationPlayer subclass; composition: AnimationPlayer
+// plays the clip, StateMachine decides which clip. AYEntity
+// StateMachineSystem bridges the two.
 //
-// INV-18..26 contracts:
+// INV-18..26 contracts (P3.1 L1):
 //   * INV-18 — single current state at any moment after update()
 //   * INV-19 — didTransitionThisFrame true iff state changed in update()
 //   * INV-20 — trigger fires once on first eligible transition, auto-erases
@@ -15,11 +16,29 @@
 //   * INV-24 — addTransition rejects unknown toState (debug assert)
 //   * INV-25 — StateMachineSystem runs at priority 460 (after AnimSystem 450)
 //   * INV-26 — System pushes new clip via player.play(clip) on transition
+//
+// INV-27..31 contracts (P3.2 L3):
+//   * INV-27 — State.isSubMachine=true ⇒ State.clipPath is IGNORED (host
+//              MUST NOT call player.play() for sub-machine entry; child SM owns
+//              clip selection via its own transitions)
+//   * INV-28 — setTrigger / setParam propagate into the ACTIVE child SM only
+//              (not all children); UE-pattern sharing parent→child signals
+//   * INV-29 — Transition fallback order: child first, then parent; if
+//              child's findEligibleTransition returns non-null, parent's
+//              check is skipped that frame (no race)
+//   * INV-30 — getActiveLeafStateName() returns the deepest current state;
+//              recursion depth ≤ 2 (root → child only in P3.2; deeper
+//              recursion is not error but behavior undefined)
+//   * INV-31 — When entering a sub-machine entry state, _currentChildIndex
+//              is set BEFORE next update(); when leaving (parent transition
+//              fires from a sub-machine entry to non-sub-machine state),
+//              _currentChildIndex is reset to -1
 
 #pragma once
 
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -42,7 +61,7 @@ struct StateCondition {
     float             compareValue  = 0.0f;
 };
 
-// One state in the graph. POD.
+// One state in the graph. POD; mirrors UE UAnimState shape (subset).
 struct State {
     std::string name;             // unique; used by Transition::fromState / toState
     std::string clipPath;         // AYResource path for IAnimation (.ayanm)
@@ -50,6 +69,14 @@ struct State {
     float       playRate          = 1.0f;
     float       entryTime         = 0.0f;
     float       exitTime          = 0.0f;
+
+    // === P3.2 NEW (sub-machine entry) ===
+    // When isSubMachine=true, the state represents an entry to a sub-graph
+    // (added through StateMachine::addSubMachine). clipPath / loop /
+    // playRate / entryTime / exitTime are IGNORED; the sub-machine drives
+    // its own clip selection via its own transitions.
+    bool        isSubMachine      = false;
+    int         subMachineIndex   = -1;     // -1 if not a sub-machine
 };
 
 // Transition between states. POD.
@@ -66,6 +93,13 @@ class StateMachine {
 public:
     StateMachine();
     ~StateMachine() = default;
+
+    // P3.2 NEW — non-copyable (vector<unique_ptr<StateMachine>> as member
+    // forbids implicit copy; make it explicit to silence C2672 in callers).
+    StateMachine(const StateMachine&) = delete;
+    StateMachine& operator=(const StateMachine&) = delete;
+    StateMachine(StateMachine&&) = default;
+    StateMachine& operator=(StateMachine&&) = default;
 
     // === Authoring API ===
     void addState(const State& s);
@@ -96,10 +130,48 @@ public:
     const std::vector<State>&      getStates()      const { return _states; }
     const std::vector<Transition>& getTransitions() const { return _transitions; }
 
+    // === Sub-state machine API (P3.2 NEW) ===
+    // Takes ownership of `sm` and appends to `_children`. Returns the
+    // assigned child index. Caller must NOT touch `sm` after this call.
+    int addSubMachine(std::unique_ptr<StateMachine> sm);
+
+    // Read-back: -1 if no active child.
+    int getCurrentChildIndex() const { return _currentChildIndex; }
+
+    // Lookup: returns nullptr if `idx` is out of range or invalid.
+    StateMachine*       getSubMachine(int idx);
+    const StateMachine* getSubMachine(int idx) const;
+
+    // Active child (when _currentChildIndex >= 0) or nullptr.
+    StateMachine*       getActiveSubMachine();
+    const StateMachine* getActiveSubMachine() const;
+
+    // Deepest leaf state name across the active path. Returns parent's
+    // _currentState when no active child (INV-30). When the active child
+    // has not yet been ticked (lazy-init pending), returns the parent's
+    // _currentState until the next update().
+    std::string getActiveLeafStateName() const;
+
+    // Sub-machine entry count (size of _children).
+    std::size_t getSubMachineCount() const { return _children.size(); }
+
 private:
     bool evaluateCondition(const StateCondition& c) const;
     const Transition* findEligibleTransition() const;
     void fireTransition(const Transition& t);
+
+    // P3.2 NEW: helper that returns the sub-machine index of `stateName`
+    // if it is a sub-machine entry state, else -1.
+    int findSubMachineIndex(const std::string& stateName) const;
+
+    // P3.2 NEW: like findEligibleTransition but routes through the active
+    // child first. Used by parent's update() for child-first fallback
+    // (INV-29). When no active child, falls back to self.
+    const Transition* findEligibleTransitionForSelf() const;
+
+    // P3.2 NEW: returns the active child pointer or nullptr; bounds-checked.
+    StateMachine*       activeChild();
+    const StateMachine* activeChild() const;
 
     std::vector<State>       _states;
     std::vector<Transition>  _transitions;
@@ -115,6 +187,10 @@ private:
     std::string _pendingToState;
     bool   _transitionedThisFrame  = false;
     bool   _initialized            = false;
+
+    // === P3.2 NEW fields ===
+    std::vector<std::unique_ptr<StateMachine>> _children;
+    int  _currentChildIndex = -1;          // -1 = no active child
 };
 
 } // namespace ayt::anim

@@ -1,4 +1,7 @@
-// StateMachine.cpp — P3.1 (2026-08-06) L1 简单状态机 implementation.
+// StateMachine.cpp — P3.1 (2026-08-06) L1 简单状态机 implementation +
+// P3.2 (2026-08-06) L3 子状态机 extensions (sub-machine entry + recursive
+// setTrigger/setParam + child-first transition fallback + active child
+// resolution).
 
 #include <ayanimation/StateMachine.h>
 #include <algorithm>
@@ -13,6 +16,11 @@ void StateMachine::addState(const State& s) {
     assert(!s.name.empty() && "StateMachine::addState: empty state name");
     assert(_stateIndexByName.count(s.name) == 0 &&
            "StateMachine::addState: duplicate state name");
+    // P3.2 — caller MAY set isSubMachine=true before subMachineIndex is
+    // assigned (typical pattern: addSubMachine first, then patch state via
+    // getStates(), then addState). We don't assert here; findSubMachineIndex
+    // returns -1 when the index is invalid, and setInitialState / update()
+    // silently skip activation in that case.
     _stateIndexByName[s.name] = _states.size();
     _states.push_back(s);
 }
@@ -37,6 +45,10 @@ void StateMachine::setInitialState(const std::string& name) {
     _currentState = name;
     _prevStateName = name;
     _initialized = true;
+
+    // P3.2 NEW — if the initial state is a sub-machine entry, activate the
+    // child immediately so the first update() ticks it.
+    _currentChildIndex = findSubMachineIndex(name);
 }
 
 void StateMachine::clear() {
@@ -54,23 +66,35 @@ void StateMachine::clear() {
     _transitionDuration = 0.0f;
     _transitionedThisFrame = false;
     _initialized = false;
+
+    // P3.2 NEW — recursively destroy sub-machines (unique_ptr dtor handles).
+    _children.clear();
+    _currentChildIndex = -1;
 }
 
 void StateMachine::setTrigger(const std::string& name) {
-    if (!name.empty()) {
-        _triggers.insert(name);
+    if (name.empty()) return;
+    _triggers.insert(name);
+
+    // P3.2 NEW (INV-28) — propagate into active child only.
+    if (auto* child = activeChild()) {
+        child->setTrigger(name);
     }
 }
 
 void StateMachine::setParam(const std::string& name, float value) {
-    if (!name.empty()) {
-        _params[name] = value;
+    if (name.empty()) return;
+    _params[name] = value;
+
+    // P3.2 NEW (INV-28) — propagate into active child only.
+    if (auto* child = activeChild()) {
+        child->setParam(name, value);
     }
 }
 
 float StateMachine::getParam(const std::string& name) const {
     auto it = _params.find(name);
-    return (it != _params.end()) ? it->second : 0.0f;
+    return it == _params.end() ? 0.0f : it->second;
 }
 
 void StateMachine::update(float dt) {
@@ -85,6 +109,17 @@ void StateMachine::update(float dt) {
         _currentState = _states.front().name;
         _prevStateName = _currentState;
         _initialized = true;
+        // P3.2 NEW — activate child if the lazily-initialized initial
+        // state is a sub-machine entry.
+        _currentChildIndex = findSubMachineIndex(_currentState);
+    }
+
+    // === P3.2 NEW: tick active child sub-SM first (if any). ===
+    // The child gets dt first; its transition may change its own
+    // _currentState / _transitioning but does NOT mutate the parent's
+    // state graph.
+    if (auto* child = activeChild()) {
+        child->update(dt);
     }
 
     // (1) Advance transition clock if mid-transition.
@@ -99,13 +134,18 @@ void StateMachine::update(float dt) {
             _transitionElapsed = 0.0f;
             _transitionDuration = 0.0f;
             _transitionedThisFrame = true;
+
+            // P3.2 NEW (INV-31) — if the new state is a sub-machine entry,
+            // activate the child; if it's a non-sub-machine state, clear
+            // the active child.
+            _currentChildIndex = findSubMachineIndex(_currentState);
         }
         // No new transitions during the transition window (UE rule).
         return;
     }
 
-    // (2) Look for an eligible transition from the current state.
-    const Transition* t = findEligibleTransition();
+    // (2) Look for an eligible transition (INV-29 — child first, then parent).
+    const Transition* t = findEligibleTransitionForSelf();
     if (t != nullptr) {
         fireTransition(*t);
         _transitionedThisFrame = true;
@@ -157,6 +197,9 @@ void StateMachine::fireTransition(const Transition& t) {
         _transitioning = false;
         _transitionDuration = 0.0f;
         _transitionElapsed = 0.0f;
+        // P3.2 NEW (INV-31) — instant cut also updates _currentChildIndex
+        // since the new state may be a sub-machine entry (or non).
+        _currentChildIndex = findSubMachineIndex(_currentState);
     } else {
         // INV-22 — cross-fade: latch pendingToState; currentState updates
         // only when duration elapses (StateMachine::update step 1).
@@ -169,6 +212,82 @@ void StateMachine::fireTransition(const Transition& t) {
     if (!t.trigger.empty()) {
         _triggers.erase(t.trigger);
     }
+}
+
+// === P3.2 NEW implementations ============================================
+
+int StateMachine::addSubMachine(std::unique_ptr<StateMachine> sm) {
+    assert(sm != nullptr && "StateMachine::addSubMachine: null pointer");
+    const int idx = static_cast<int>(_children.size());
+    _children.push_back(std::move(sm));
+    return idx;
+}
+
+StateMachine* StateMachine::getSubMachine(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(_children.size())) return nullptr;
+    return _children[idx].get();
+}
+
+const StateMachine* StateMachine::getSubMachine(int idx) const {
+    if (idx < 0 || idx >= static_cast<int>(_children.size())) return nullptr;
+    return _children[idx].get();
+}
+
+StateMachine* StateMachine::activeChild() {
+    return const_cast<StateMachine*>(
+        static_cast<const StateMachine*>(this)->activeChild());
+}
+
+const StateMachine* StateMachine::activeChild() const {
+    if (_currentChildIndex < 0) return nullptr;
+    if (_currentChildIndex >= static_cast<int>(_children.size())) return nullptr;
+    return _children[_currentChildIndex].get();
+}
+
+StateMachine* StateMachine::getActiveSubMachine() { return activeChild(); }
+const StateMachine* StateMachine::getActiveSubMachine() const { return activeChild(); }
+
+int StateMachine::findSubMachineIndex(const std::string& stateName) const {
+    auto it = _stateIndexByName.find(stateName);
+    if (it == _stateIndexByName.end()) return -1;
+    const State& s = _states[it->second];
+    if (!s.isSubMachine) return -1;
+    if (s.subMachineIndex < 0) return -1;
+    if (s.subMachineIndex >= static_cast<int>(_children.size())) return -1;
+    return s.subMachineIndex;
+}
+
+const Transition* StateMachine::findEligibleTransitionForSelf() const {
+    // P3.2 NEW (INV-29) — child first, parent fallback.
+    // The active child has already been ticked above in update() step
+    // before transitioning; here we ask the child for its own eligible
+    // transition only if it hasn't already fired one this frame. Since
+    // child->update() returns void, we can't know that — so we let the
+    // child search its own transitions again here. Child update() will
+    // have advanced any cross-fade clock it owned, but findEligibleTransition
+    // is read-only and idempotent, so re-searching is safe.
+    if (auto* child = const_cast<StateMachine*>(activeChild())) {
+        // (child may have transitioned this frame; search fresh.)
+        if (const Transition* t = child->findEligibleTransition()) {
+            return t;
+        }
+    }
+    // Parent fallback.
+    return findEligibleTransition();
+}
+
+std::string StateMachine::getActiveLeafStateName() const {
+    // INV-30 — recursion depth ≤ 2. P3.2 limits sub-machines to 1 level;
+    // if a child itself has its own active grandchild (not standard P3.2
+    // usage), recursion handles it but may be deep.
+    if (auto* child = const_cast<StateMachine*>(activeChild())) {
+        // Defer to parent until the child has been ticked at least once
+        // (so its lazy-init has set _currentState to a real state name).
+        if (child->_initialized) {
+            return child->getActiveLeafStateName();
+        }
+    }
+    return _currentState;
 }
 
 } // namespace ayt::anim
