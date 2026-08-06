@@ -14,9 +14,9 @@
 #include <AYTest.h>
 
 #include <ayanimation/AnimationPlayer.h>
-#include <ayanimation/ISkeletonMask.h>
+#include <assetsDefs/IAYSkeletonMask.h>   // P3.x刀1 — formal interface in AYResource
 
-#include "../src/SkeletonMask.h"   // P2.2 fixture (in-memory concrete)
+#include <assetsImpl/AYSkeletonMask.h>   // P3.x刀1 — concrete moved to AYResource
 
 #include <aymath/MathTypes.h>
 
@@ -50,9 +50,9 @@ namespace
 // shared_ptr ensures the player's setSkeletonMask(shared_ptr) holds
 // the mask alive across evaluate(); a stack-local SkeletonMask
 // variable would UAF on scope exit (see INV-13 / API fix).
-static std::shared_ptr<SkeletonMask> makeMask()
+static std::shared_ptr<ayt::resource::SkeletonMask> makeMask()
 {
-    return SkeletonMask::create();
+    return ayt::resource::SkeletonMask::create();
 }
 
 // 2-bone skeleton at rest: Root=(0,0,0), Child=(0,0,0), both identity
@@ -324,7 +324,7 @@ TEST_SUITE(SkeletonMaskTests)
 
         // Heap-allocated mask via SkeletonMask::create() — player holds
         // a shared_ptr copy for the evaluate lifetime.
-        auto maskHandle = ayt::anim::SkeletonMask::create();
+        auto maskHandle = ayt::resource::SkeletonMask::create();
         maskHandle->addEntry("Root", 0.5f);
         maskHandle->setDebugName("P22_test8_multiply");
 

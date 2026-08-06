@@ -1,9 +1,9 @@
 # AYAnimation Design
 
-> **状态（2026-07-27）**：薄播放内核 **P1.1–P1.7 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache = ECS refactor + asset-level boneIdx cache**）。3-run stable：AYAnimation 420/420 + AYResource 701/701 × 3；AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §4.11 / §4.12 / §11 / §13 row 17e–17g / §14 P1.5–P1.7 rows。  
-> **不负责**：完整角色管线（ASM / BlendSpace / Root Motion / Retarget / LOD）仍属后续 Phase。  
+> **状态（2026-08-06）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface**）。3-run stable：AYAnimation 510/510 + AYResource 1044/1044 + AYEntity 338/338 × 3。详见 §4.11 / §4.12 / §4.13 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
-> **2026-07-27 设计审计**：同步 §4.8 与代码；钉 §4.3 Hold 语义；修正 §11/§13 过时勾选与统计；新增 §4.12 P1.7 section + §11 P1.7 ship row + §13 row 17g + §14 P1.7 row。
+> **2026-08-06 设计审计**：同步 §4.13.7 为「已 ship」；删 §4.13.11 UPGRADE-HOOK(P3.x) 第一条；改 §11 / §13 / §14 勾选；新增 §13 row 17h + §14 P3.x刀1 row。
 
 ---
 
@@ -1454,7 +1454,7 @@ AYAnimation/
 
 - [x] CrossFade（Player 侧 P1.3/P1.4）／[ ] Blend 1D / Blend 2D（仍缺）
 - [x] Additive 动画层（P1.2–P1.5 Player）
-- [ ] 骨骼遮罩 (Skeleton Mask) 作为一等资源类型（P1.5 仅有 per-slot `trackWeights`）
+- [x] 骨骼遮罩 Mask 一等资源（**P2.2 ship 2026-08-03 + P3.x刀1 loader ship 2026-08-06**）
 - [x] 多 Additive Slot（P1.5）／[ ] Montage 语义 Slot（与 §4.8 对齐，勿第二套 API）
 - [ ] Dual-Quaternion Skinning
 - [ ] CPU 蒙皮真输出（CPUSkinning Pass）
@@ -1524,7 +1524,8 @@ AYAnimation/
 | 17e | Multi AdditiveSlot + merged notify | UE Slot | ✅ | P1.5 |
 | 17f | 旧 P1.2/P1.3 wrapper API 真实 deprecate（setAdditiveWeight / consumePendingNotifiesAdditive 全删） | UE clean API | ✅ | P1.6 |
 | 17g | Shared skeleton asset cache（ECS refactor + asset-level boneIdx cache） | UE `USkeletalMesh` shared asset + FAnimationRuntime helpers | ✅ | P1.7 |
-| 18 | 骨骼遮罩 Mask（资源级） | UE | ⚠️ trackWeights only | Phase 2 |
+| 17h | 资源级 Skeleton Mask（`.aymask` v1 binary loader + formal `ayt::resource::ISkeletonMask` + `SkeletonMaskLoader` registered | UE `USkeletonMask` asset + FAnimNode_LayeredBoneBlend mask input | ✅ | P2.2 + P3.x刀1 |
+| 18 | 骨骼遮罩 Mask（资源级） | UE | ✅ | P2.2 + P3.x刀1 |
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
 | 20–22 | AnimGraph / 状态机 | UE/Unity | ❌ | Phase 3 |
 | 23–27 | IK / Retarget | UE | ❌ | Phase 4 |
@@ -1535,6 +1536,278 @@ AYAnimation/
 
 **统计（2026-07-27）**：上表约 **20** 项 ✅/⚠️ 内核能力已落地或半落地；完整角色管线关键缺口仍是 **ASM / BlendSpace / Root Motion / Retarget / LOD / 网络 pose**。  
 **内核工业分 ~6/10**；**完整角色管线 ~4.5/10**。
+
+---
+
+### 4.13 ✅ P2.2 Skeleton Mask（资源级骨骼遮罩）— SHIP（2026-08-03）
+
+> 本节为 P2.2 完整 ship 文档。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。
+
+#### 4.13.1 Overview
+
+资源级 Skeleton Mask 是一个 `boneName → weight` 的 per-bone 衰减器，在 `AnimationPlayer::evaluate()` Phase 1a (base) 与 Phase 1b (additive) 完成 **所有 track write 之后**，Phase 2 世界累加 **之前**，对每个 bone 的局部 TRS 施加 `lerp(rest, _local, mask)` 的 post-write gate。
+
+与 P1.5 `AdditiveSlot::trackWeights` 的本质区别：
+
+| 维度 | P1.5 `trackWeights` | P2.2 Skeleton Mask |
+|---|---|---|
+| Key 维度 | track index（per slot）| bone name（per skeleton）|
+| 作用域 | 仅 Phase 1b additive | Phase 1a base + Phase 1b additive |
+| 作者视角 | 已知 clip 的 track 布局 | 针对骨骼 — 跨 clip 复用 |
+| 衰减语义 | effectiveWeight × trackWeight | lerp(rest, _local, mask) |
+| 正交性 | 与 mask 互不干扰（乘法复合） |  |
+
+#### 4.13.2 Motivation
+
+P1.5 已 ship 的 per-track mask 适合"hit-react 只动第4根 spine track"这种 host 已知 track 索引的场景。但下面两种用法 host 不愿（或无法）翻译 bone name → track index per clip：
+
+1. **跨 clip 复用的"上半身专用"**。一个动画师做出来的蒙版，host 想直接应用到 base + 任何 additive 上，无需关心 additive clip 的 track 顺序。
+2. **编辑期动画师直觉工作流**。"只影响 spine/head"是骨骼命名层的语义，对应 `.aymask` 资产 vs 一堆 track index 数字。
+
+P2.2 把 mask 提到 **骨骼层（resource-level）**，与 P1.5 trackWeights（slot 层）正交，host 可以 either / both / neither 启用。
+
+#### 4.13.3 Data Model
+
+```cpp
+// include/ayanimation/ISkeletonMask.h (P2.2 NEW — temporary in-package)
+namespace ayt::anim {
+
+struct SkeletonMaskBone {
+    char         name[64];
+    float        weight;            // [0,1] 后 clamp
+    std::int32_t resolvedIndex;     // -1 = 未解析
+    bool         isWildcard;        // true => apply to all bones
+};
+
+class ISkeletonMask : public ayt::resource::IResource {
+public:
+    virtual ~ISkeletonMask() = default;
+    virtual std::size_t getEntryCount() const = 0;
+    virtual const SkeletonMaskBone* getEntries() const = 0;
+    virtual std::size_t getAuthoredBoneCount() const = 0;
+    virtual bool hasWildcard() const = 0;
+    virtual float wildcardWeight() const = 0;
+    virtual const char* getDebugName() const = 0;
+    static constexpr char TYPE_TAG[16] = "SkeletonMask";
+    static constexpr uint32_t VERSION = 1;
+};
+
+} // namespace ayt::anim
+```
+
+**布局图**：
+```
+ISkeletonMask (IResource)
+  ├ _path / _type / _loaded           ← IResource 基础字段
+  ├ _entries : vector<SkeletonMaskBone>   ← named entries
+  ├ _hasWildcard + _wildcardWeight    ← 单条 wildcard
+  └ _debugName                         ← 调试 / 序列化诊断
+```
+
+`ISkeletonMask` 继承 `ayt::resource::IResource` 是 §3.1 review fix — `ResourceManager::load<T>()` 用 `dynamic_pointer_cast<T>` 必须 `T : IResource`。
+
+#### 4.13.4 Public API
+
+```cpp
+// AnimationPlayer.h 新增（P2.2）：
+void        setSkeletonMask(std::shared_ptr<const ISkeletonMask> mask);
+void        clearSkeletonMask();
+bool        hasSkeletonMask() const;
+std::size_t getSkeletonMaskBoneCount() const;       // = _boneMaskWeights.size()
+const std::vector<float>& getResolvedBoneMaskWeights() const;
+std::uint32_t getSkeletonMaskGeneration() const;
+```
+
+API shape **方案 A（shared_ptr）** — `const ISkeletonMask&` 会让 caller 传栈-local mask 时 UAF（player 在 evaluate() 后还在用，caller scope 已结束）。shared_ptr 让 mask 生命周期延伸过 player 的每次 evaluate。
+
+#### 4.13.5 Internal Algorithm
+
+**Resolve（`resolveSkeletonMask` — eager，在 setSkeletonMask 与 setSkeleton 时触发）**：
+
+```cpp
+void AnimationPlayer::resolveSkeletonMask() {
+    if (_skeletonMask == nullptr || _skeleton == nullptr) {
+        _boneMaskWeights.clear();
+        ++_skeletonMaskGeneration;
+        return;
+    }
+    const size_t n = _skeleton->getBoneCount();
+    _boneMaskWeights.assign(n, 1.0f);  // default identity
+    auto& cache = AssetBoneCache::instance();
+
+    // Pass 1: named entries via AssetBoneCache (P1.7 reuse)
+    std::vector<bool> namedHit(n, false);
+    for (size_t i = 0; i < mask->getAuthoredBoneCount(); ++i) {
+        const auto& e = mask->getEntries()[i];
+        const int32_t boneIdx = cache.resolveAndCache(_skeleton.get(), e.name);
+        if (boneIdx >= 0 && (size_t)boneIdx < n) {
+            _boneMaskWeights[boneIdx] = e.weight;
+            namedHit[boneIdx] = true;
+        }
+    }
+    // Pass 2: wildcard expands to bones not named (named-wins)
+    if (mask->hasWildcard()) {
+        for (size_t i = 0; i < n; ++i)
+            if (!namedHit[i]) _boneMaskWeights[i] = mask->wildcardWeight();
+    }
+    ++_skeletonMaskGeneration;
+}
+```
+
+**Phase 2 pre-lerp（Q3 决议）** — 在 Phase 1a + Phase 1b 完成后、Phase 2 世界累加前：
+
+```cpp
+if (!_boneMaskWeights.empty()) {
+    const FVector3*    restPos = _skeleton->getLocalPositions();
+    const FQuaternion* restRot = _skeleton->getLocalRotations();
+    const FVector3*    restScl = _skeleton->getLocalScales();
+    for (size_t i = 0; i < n; ++i) {
+        const float w = _boneMaskWeights[i];
+        if (w >= 1.0f) continue;            // identity 短路
+        if (w <= 0.0f) {
+            // snap-to-rest
+            _localPos[i*3+0] = restPos[i].x;
+            ...
+        } else {
+            _localPos[i*3+0] = restPos[i].x + (_localPos[i*3+0] - restPos[i].x) * w;
+            ...
+            const FQuaternion blended = FQuaternion::nlerp(restQR, liveQ, w);
+            _localRot[i*4+0..3] = blended.{xyzw};
+            ...
+        }
+    }
+}
+```
+
+**关键设计 — 不在 Phase 1a/1b 预乘 mask**：早期实现错误地在 Phase 1b 把 `trackW *= boneMaskW`，然后又在 Phase 2 `lerp(rest, _local, mask)` — 等于 mask²。Q3 决议：**mask 只在 Phase 2 lerp 施加一次**；Phase 1a/1b 的 trackW 不动（Override track 直接写 raw，Additive track 用 _blendWeight × trackWeights[trackIdx]）。
+
+#### 4.13.6 ECS Bridge (AYEntity)
+
+- `AnimationComponent::maskPath` (`std::string`, kAttrSerialize, default "")
+- `AYAnimationSystem::_lastAppliedMaskPath : unordered_map<const Entity*, std::string>`
+- 每 tick：`if (lastMask != anim->maskPath)` 触发：
+  - empty path → `clearSkeletonMask()`
+  - 非空 → `ResourceManager::load<ISkeletonMask>(path)` → shared_ptr → `setSkeletonMask`
+  - load 失败 → 警告 + latch `_lastAppliedMaskPath[e] = path`（fail-soft，后续 tick no-op）
+
+**Rebind block 必须在 clipPath-empty 早返之前**：bind-pose（clipPath=""）entity 也能响应 mask 翻转（user 在 inspector 把 maskPath 从非空改回空）。AYAnimationSystem.cpp 当前顺序：skel-load → mask rebind → clipPath empty continue → clip lazy-load → per-frame push。
+
+#### 4.13.7 Resource Bridge — SHIP (2026-08-06, P3.x刀1)
+
+`.aymask` v1 binary + `IAYSkeletonMask.h`（in `ayt::resource` namespace）+ `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` **全部 ship**。bridge 调用 `ResourceManager::load<ayt::resource::ISkeletonMask>(path)` 现在返回真实 `shared_ptr<SkeletonMask>`。
+
+**文件清单**：
+- `AYResource/interface/assetsDefs/IAYSkeletonMask.h` (NEW, in `ayt::resource` namespace — replaces the P2.2 in-package `ayt::anim::ISkeletonMask`; adds `getGuid()` for L2 cache key)
+- `AYResource/include/assetsImpl/AYSkeletonMask.h` + `src/AssetsImpl/AYSkeletonMask.cpp` (NEW, P2.2 in-memory fixture 升级为正式 asset class; `SkeletonMask::create()` factory 保留)
+- `AYResource/include/Loader/SkeletonMaskLoader.h` + `src/Loader/SkeletonMaskLoader.cpp` (NEW, 50 行骨架沿用 `SkeletonLoader.cpp`)
+- `AYResource/src/AYResourceBootstrap.cpp::initializeLoaders` (+1 行 `registerLoaderType`)
+- `AYResource/unittest/AYTest_SkeletonMaskLoader.cpp` (NEW, 12 cases)
+- `AYResource/unittest/AYTest_ResourceBootstrap.cpp` (+1 case `.aymask` registry)
+
+**Include flip**（4 文件）：
+- `AYAnimation/include/ayanimation/AnimationPlayer.h` — `<ayanimation/ISkeletonMask.h>` → `<assetsDefs/IAYSkeletonMask.h>`；`ayt::anim::ISkeletonMask` → `ayt::resource::ISkeletonMask`
+- `AYAnimation/include/ayanimation/ISkeletonMask.h` — **删除**
+- `AYAnimation/src/SkeletonMask.h` — **删除**（已迁到 AYResource `assetsImpl/AYSkeletonMask.h`）
+- `AYAnimation/unittest/AYTest_SkeletonMask.cpp` — include flip + using 改名
+- `AYAnimation/src/AnimationPlayer.cpp::resolveSkeletonMask()` — `SkeletonMaskBone::name` 从 `char[64]` 改 `std::string`（字段对齐 `ayt::resource::Bone`）
+- `AYEntity/src/AYAnimationSystem.cpp` — include flip + `load<ayt::resource::ISkeletonMask>`
+- `AYEntity/unittest/AYTest_SkeletonMaskBridge.cpp` — include flip + using 改名 + fixture path flip 到 AYResource
+
+**.aymask v1 binary format**（36-byte packed header + variable payload）：
+
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 0 | UInt32 | magic | `'MASK'` = 0x4D41534B |
+| 4 | UInt16 | version | = 1 (forward-compat tripwire: reject `version > 1`) |
+| 6 | FGuid | guid | 16 bytes (L2 cache key) |
+| 22 | UInt8 | flags | reserved, 0 |
+| 23 | UInt8 | hasWildcard | 0 / 1 |
+| 24 | Float32 | wildcardWeight | 0..1 |
+| 28 | UInt32 | entryCount | named entries |
+| 32 | UInt32 | entryDataSize | payload bytes (total file = 36 + entryDataSize) |
+
+Per entry: `[UInt32 nameLength][char name[nameLength]][Float32 weight]`. Empty name → wildcard row (defensive; canonical signal is `hasWildcard` header bit).
+
+**3-run stable**（2026-08-06）：AYAnimation 510/510 + AYEntity 338/338 + AYResource 1044/1044 × 3。
+
+**关键工程教训**：
+1. **namespace leak fix** — P2.2 临时 `ayt::anim::ISkeletonMask` 必须迁去 `ayt::resource`，否则 AYResource convention 破（13 个 IResource 子类都在 `ayt::resource`）
+2. **fixture 路径迁移** — `../../AYAnimation/src/SkeletonMask.h`（sibling-source）→ `<assetsImpl/AYSkeletonMask.h>`（cross-submodule 但 AYResource PUBLIC include 已 expose）
+3. **`SkeletonMask::create()` 保留** — 同一份代码既支持 loader-driven 路径也支持 in-memory 测试路径；不破坏 P2.2 测试 ergonomics
+5. **0 CMake 改动** — AYResource 用 `GLOB_RECURSE` + `target_include_directories` PUBLIC `assetsDefs`；AYAnimation 已 link `AYResource`；新 include path 自动可达。**只有**`AYResource/unittest/CMakeLists.txt` 需要显式加新测试文件（因为 unittest list 是手写而非 GLOB）
+6. **forward-compat tripwire** — `loadFromBinary` 拒绝 `version > VERSION`，跟 IAnimation V4 / Skeleton V2 一致
+7. **`Bone` 字段对齐** — `SkeletonMaskBone::name` 改 `std::string`（不是 `char[64]`），跟 `ayt::resource::Bone` 对齐；`e.name[0] == '\0'` → `e.name.empty()`，所有 P2.2 写过的 fix 仍然成立
+8. **GUID 加回来** — ResourceManager L2 cache 用 GUID key，P2.2 临时版没 GUID；ship 必须加，否则 resource 无法进入 L2 cache
+9. **`FGuid::fromString` 是非 static** — `testGuid.fromString(...)` 后赋值，跟 `std::stoul` 等成员函数用法一致
+
+#### 4.13.8 Invariants
+
+| Inv | 描述 | 强制点 | 测试 |
+|---|---|---|---|
+| **INV-12** | mask 是 post-write pre-Phase-2 lerp；Phase 1a/1b **不**预乘 mask | Phase 2 pre-lerp 块 (§4.13.5) | `mask_single_bone_half_weight_halves_override`, `mask_with_additive_track_phase_1b` |
+| **INV-13** | setSkeleton 触发 mask re-resolve（新骨骼指针失效 AssetBoneCache key） | `setSkeleton` end + `resolveSkeletonMask()` | `mask_resolves_again_after_skeleton_swap` |
+| **INV-14** | `addEntry(name, w)` clamp 到 [0,1] | `SkeletonMask::addEntry` | `mask_clamp_in_addentry` |
+| **INV-15** | 空 mask = identity, zero allocs | `!_boneMaskWeights.empty()` 短路 | `mask_no_mask_means_identity_pose` |
+| **INV-16** | mask 与 P1.5 trackWeights 正交（乘法复合） | Phase 1b `effectiveWeight * trackWeights[trackIdx] * boneMaskW`（Phase 1b 用，`trackW` Phase 1a 不再含 mask） | `mask_multiplies_with_track_weights` |
+| **INV-17** | wildcard 扩到所有未命名 bone（named-wins over wildcard） | resolve pass 2 (`!namedHit[i]`) | `mask_wildcard_applies_to_unnamed_bones`, `mask_wildcard_does_not_override_named_entry` |
+
+#### 4.13.9 Testing
+
+**AYAnimation**（`unittest/AYTest_SkeletonMask.cpp`, 16 cases）：
+1. `mask_no_mask_means_identity_pose` — INV-15 regression
+2. `mask_single_bone_zero_weight_snaps_to_rest`
+3. `mask_single_bone_half_weight_halves_override`
+4. `mask_single_bone_full_weight_one_is_identity`
+5. `mask_wildcard_applies_to_unnamed_bones` — INV-17
+6. `mask_wildcard_does_not_override_named_entry`
+7. `mask_with_additive_track_phase_1b`
+8. `mask_multiplies_with_track_weights` — INV-16
+9. `mask_resolves_again_after_skeleton_swap` — INV-13
+10. `clear_skeleton_mask_restores_identity`
+11. `mask_unresolved_bone_name_is_silently_skipped`
+12. `mask_with_no_skeleton_bound_is_safe` — defensive
+13. `mask_clamp_in_addentry` — INV-14
+14. `mask_generation_counter_increments` — diagnostic
+15. `empty_mask_entries_equal_identity`
+16. `mask_duplicate_name_takes_last_weight` — authoring determinism
+
+**AYEntity**（`unittest/AYTest_SkeletonMaskBridge.cpp`, 6 cases）：
+1. `bridge_maskpath_empty_means_no_mask_applied` — empty path → no mask
+2. `bridge_maskpath_load_failure_degrades_to_no_mask` — real nonexistent path → fail-soft
+3. `bridge_maskpath_load_failure_latched_no_retry` — ResourceManager 不被反复调用
+4. `bridge_direct_mask_survives_when_maskpath_empty_first_time` — direct API + empty path
+5. `bridge_direct_mask_survives_when_maskpath_empty_repeated_ticks` — 多帧 direct API mask 不被 bridge 干扰
+6. `bridge_maskpath_cleared_runs_clear_skeleton_mask` — 从非空翻回空触发 `clearSkeletonMask`
+
+**测试结果（2026-08-03）**：
+- AYAnimation_UnitTests: **510/510 PASS** x 3 stable（baseline 471 + 39 new P2.2）
+- AYEntityTest SkeletonMaskBridgeTests: **31/31 PASS** x 3 stable（6 cases × ~5 checks）
+- AYEntityTest 全套: **338/338 PASS**, 0 regression
+
+#### 4.13.10 Edge Cases & Lessons
+
+1. **P1.7 AssetBoneCache key stability** — `resolveAndCache(_skeleton.get(), boneName)` 用 raw ISkeleton* 作 key。setSkeleton 换指针后旧 cache entry 自动 orphan，新 skeleton 走新 key。
+2. **§4.13.5 设计错误修复（root cause #2）** — Phase 1b `trackW *= boneMaskW` + Phase 2 `lerp(rest, _local, mask)` 等于 mask²。Q3/INV-12 明确 mask 只在 Phase 2 lerp 一次施加。Phase 1a Override 写 raw，mask 在 Phase 2 之后正确生效。
+3. **Test #8 mystery（root cause #1）** — `setAdditiveSource(..., true)` 的 `loop=true` + `tick(0.5f)` + duration=1.0 → slot.time 0.5→1.0→wrap 0.0。debug print 在 `for` 循环推进之前打，读到的是 setTime 留下的 0.5，不是 post-tick 的 0.0。修正：`setAdditiveSource(..., false)` + `setTime(0.5f) + evaluate()`，无 tick。
+4. **方案 A shared_ptr API** — `setSkeletonMask(const ISkeletonMask&)` 在 stack-local mask 时 UAF。改 `shared_ptr<const ISkeletonMask>` 让 mask 活过每次 evaluate。
+5. **Phase 1a/1b mask 预乘的误导性 debug** — 单纯 "我看到 mask×2 的效果" 不够。需要看每个 phase 的中间状态。
+6. **`AnimNotifyEvent` 不被 mask 拦截** — AnimNotify 是事件层，跟 TRS 无关。
+7. **Float tracks 不被 mask** — P1.2 INV：Float 是 host-data，不是 TRS。Phase 1a/1b 在 Float case 早返，mask 不接触。
+8. **Rebind 顺序：mask rebind 在 clipPath-empty 早返之前** — bind-pose entity 也能响应 mask 翻转（user 清空 maskPath）。第 6 个 bridge test pin 这个。
+9. **bridge `maskPath` field 默认空 = legacy bit-identical** — Pre-P2.2 scenes 不带 maskPath 字段，反序列化默认空字符串，bridge 永不触发 rebind。
+10. **fail-soft latch `_lastAppliedMaskPath[e] = path`** — load 失败后 latch 失败路径，后续 tick no-op，无 per-frame log spam。
+
+#### 4.13.11 Migration / Upgrade Hooks
+
+- ~~UPGRADE-HOOK(P3.x) — .aymask loader~~ **已 ship 2026-08-06（P3.x刀1）** — 见 §4.13.7
+- **UPGRADE-HOOK(P3.x 刀2)** — multi-layer mask stack (`vector<ISkeletonMask>` 加权复合) for additive composition。同 INV-12 / INV-16 风格 — 与现有 primitives 正交。
+- **UPGRADE-HOOK(P3.x 刀3)** — mask authoring UI in AYEditor (Inspector view of `SkeletonMaskBone` list).
+
+#### 4.13.12 Open Questions
+
+- (a) **Mask 是否应该 additive-composable（multi-layer）？** Decision: defer P3.x。当前 single-mask 覆盖 90% use case；multi-layer 会让 editor UI 复杂化。INV-16 已经把 mask 与 P1.5 trackWeights 正交组合 → 等价于 "P1.5 是 P2.2 的简化版 multi-layer"。
+- (b) **Mask 是否拦截 AnimNotify？** Decision: NO。AnimNotify 是事件层，与 TRS 解耦；mask 拦截 notify 会破坏 fire-and-forget 语义。
+- (c) **Per-bone mask 在 P1.4 capture pose 下行为？** AdditiveLayerSpec::refPoseCapture 把 post-Phase-1a 当 base。Phase 2 mask lerp 仍然从 rest → _local，所以 base 选择不影响 mask。需要测试，但基于 INV-12 推理应正确。Defer formal test 到 P2.x。
 
 ---
 
@@ -1572,7 +1845,7 @@ AYAnimation/
 | Step | 内容 |
 |---|---|
 | P2.1 | Blend 1D / Blend 2D（BlendTree 节点类型）|
-| P2.2 | 骨骼遮罩 (Skeleton Mask) |
+| P2.2 | 骨骼遮罩 (Skeleton Mask) ── ✅ **SHIP 2026-08-03** + **P3.x刀1 .aymask loader ship 2026-08-06** — ISkeletonMask 移去 `ayt::resource` namespace + `IAYSkeletonMask.h` formal interface + `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` + 12 case loader 测试 + 1 case Bootstrap 测试 + 4 文件 include flip；AYAnimation 510/510 + AYEntity 338/338 + AYResource 1044/1044 × 3 stable，零回归 |
 | P2.3 | Montage 语义 Slot（**对齐** §4.8 AdditiveSlot，禁止第二套 layer API）|
 | P2.4 | Dual-Quaternion Skinning |
 | P2.5 | CPUSkinningPass（独立 module，CPU 顶点变形真输出）|

@@ -102,7 +102,7 @@
 #include <assetsDefs/IAYSkeleton.h>
 
 #include <ayanimation/AnimNotifyEvent.h>   // P1.5 — AnimNotifySourceTag definition
-#include <ayanimation/ISkeletonMask.h>    // P2.2 — Skeleton Mask interface
+#include <assetsDefs/IAYSkeletonMask.h>   // P3.x刀1 — formal interface in AYResource
 
 #include <cstdint>
 #include <functional>
@@ -603,7 +603,7 @@ public:
     // setSkeleton() re-resolves the mask if one is bound (INV-13).
     // The mask's own weights are assumed pre-clamped to [0, 1] by the
     // authoring layer (INV-14); setSkeletonMask does not re-clamp.
-    void setSkeletonMask(std::shared_ptr<const ayt::anim::ISkeletonMask> mask);
+    void setSkeletonMask(std::shared_ptr<const ayt::resource::ISkeletonMask> mask);
     void clearSkeletonMask();
 
     bool        hasSkeletonMask()             const { return static_cast<bool>(_skeletonMask); }
@@ -759,7 +759,7 @@ private:
     // _skeleton->getBoneCount() filled by resolveSkeletonMask().
     // _skeletonMaskGeneration bumps on every resolve so tests / ECS bridge
     // can detect a rebind.
-    std::shared_ptr<const ayt::anim::ISkeletonMask> _skeletonMask = nullptr;
+    std::shared_ptr<const ayt::resource::ISkeletonMask> _skeletonMask = nullptr;
     std::vector<float>         _boneMaskWeights;
     std::uint32_t              _skeletonMaskGeneration = 0;
 

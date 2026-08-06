@@ -1721,7 +1721,7 @@ float AnimationPlayer::applyEasing(float t01, BlendEasing e)
 // because the resource stays alive until the last shared_ptr drops.
 // This replaces an earlier `shared_ptr(&mask, no-op deleter)` design
 // that UAF'd once the caller's stack-local mask went out of scope.
-void AnimationPlayer::setSkeletonMask(std::shared_ptr<const ayt::anim::ISkeletonMask> mask)
+void AnimationPlayer::setSkeletonMask(std::shared_ptr<const ayt::resource::ISkeletonMask> mask)
 {
     _skeletonMask = std::move(mask);
     resolveSkeletonMask();
@@ -1757,12 +1757,12 @@ void AnimationPlayer::resolveSkeletonMask()
     // First pass: named entries.
     std::vector<bool> namedHit(n, false);
     const size_t entryCount = _skeletonMask->getAuthoredBoneCount();
-    const ayt::anim::SkeletonMaskBone* entries = _skeletonMask->getEntries();
+    const ayt::resource::SkeletonMaskBone* entries = _skeletonMask->getEntries();
     for (size_t i = 0; i < entryCount; ++i) {
-        const ayt::anim::SkeletonMaskBone& e = entries[i];
+        const ayt::resource::SkeletonMaskBone& e = entries[i];
         // Skip wildcard rows in the named pass.
-        if (e.name[0] == '\0') continue;
-        const int32_t boneIdx = cache.resolveAndCache(_skeleton.get(), e.name);
+        if (e.name.empty()) continue;
+        const int32_t boneIdx = cache.resolveAndCache(_skeleton.get(), e.name.c_str());
         if (boneIdx >= 0 && static_cast<size_t>(boneIdx) < n) {
             _boneMaskWeights[static_cast<size_t>(boneIdx)] = e.weight;
             namedHit[static_cast<size_t>(boneIdx)] = true;
