@@ -18,6 +18,9 @@ set(SRC_FILES
     # P2.1 (2026-07-27) — Blend 1D / 2D linear-simplex BlendSpace
     # independent of AnimationPlayer; owns N sample AnimationPlayers.
     src/BlendSpace.cpp
+    # P3.1 (2026-08-06) — L1 简单状态机 engine. Standalone class;
+    # AnimationSystem bridges to AnimationPlayer.
+    src/StateMachine.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

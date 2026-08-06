@@ -10,6 +10,9 @@ set(SRC_FILES
     # P2.2 (2026-08-03) — SkeletonMask unit tests (resource-level bone
     # mask; INV-12..17 + 16 cases; in-memory fixture SkeletonMask).
     AYTest_SkeletonMask.cpp
+    # P3.1 (2026-08-06) — L1 简单状态机 unit tests. 15 cases pinning
+    # INV-18..24; standalone (no AYEntity / no AnimationPlayer).
+    AYTest_StateMachine.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

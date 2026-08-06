@@ -1,9 +1,9 @@
 # AYAnimation Design
 
-> **状态（2026-08-06）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface**）。3-run stable：AYAnimation 510/510 + AYResource 1044/1044 + AYEntity 338/338 × 3。详见 §4.11 / §4.12 / §4.13 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase。  
+> **状态（2026-08-06）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机 (`StateMachine` class + `AnimationStateMachineComponent` + `StateMachineSystem` priority 460 + `AnimStateChangedEvent` EventBus pipe)**）。3-run stable：AYAnimation 543/543 + AYResource 1044/1044 + AYEntity 370/370 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L2 condition DSL / L3 子状态机 / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine 全部 deferred。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
-> **2026-08-06 设计审计**：同步 §4.13.7 为「已 ship」；删 §4.13.11 UPGRADE-HOOK(P3.x) 第一条；改 §11 / §13 / §14 勾选；新增 §13 row 17h + §14 P3.x刀1 row。
+> **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §14 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
 
 ---
 
@@ -1462,11 +1462,11 @@ AYAnimation/
 - [ ] 主线程 evaluate 规模策略 / 可选 worker（未写规格）
 - [ ] Root Motion 通道草案（可提前到 P2，见 §14）
 - [ ] 网络：pose/time/notify 复制边界（空白）
-### Phase 3: 状态机 ── ⏳ 排队
+### Phase 3: 状态机 ── ⏳ P3.1 ship, L2-L4 排队
 
-- [ ] L1 简单状态机
-- [ ] L2 条件转换
-- [ ] L3 子状态机
+- [x] **P3.1 L1 简单状态机**（2026-08-06）─ `StateMachine` class (events-driven FSM + first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft) + `AnimationStateMachineComponent` (POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + currentState/previousState/isTransitioning read-back + setTrigger convenience) + `StateMachineSystem` priority 460 (after AnimationSystem 450, sync params + drain triggers + tick SM + push new clip + emit `AnimStateChangedEvent` via EventBus kTypeId=0x000A'0010) + 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3)；详见 §4.14 + §13 row 20 + §14 P3.1 row
+- [ ] L2 条件转换 (expression DSL — multi-condition / per-state AnimNotify routing)
+- [ ] L3 子状态机 (locomotion sub-state-machine)
 - [ ] L4 MotionMatching 风格状态机
 
 ### Phase 4: IK + 重定向 ── ⏳ 排队
@@ -1527,15 +1527,20 @@ AYAnimation/
 | 17h | 资源级 Skeleton Mask（`.aymask` v1 binary loader + formal `ayt::resource::ISkeletonMask` + `SkeletonMaskLoader` registered | UE `USkeletonMask` asset + FAnimNode_LayeredBoneBlend mask input | ✅ | P2.2 + P3.x刀1 |
 | 18 | 骨骼遮罩 Mask（资源级） | UE | ✅ | P2.2 + P3.x刀1 |
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
-| 20–22 | AnimGraph / 状态机 | UE/Unity | ❌ | Phase 3 |
+| 20 | L1 简单状态机（State + Trigger + Condition + Cross-fade + AnimStateChangedEvent）| UE `UAnimStateMachine` / Unity `Animator` | ✅ | P3.1 |
+| 20a | L1 priority 460 + EventBus pipe + ECS bridge | UE `UAnimInstance::NativeUpdateAnimation` priority chain | ✅ | P3.1 |
+| 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ❌ | P3.x (deferred) |
+| 20c | L3 子状态机 | UE `UAnimStateMachine` nested SM | ❌ | P3.2 (deferred) |
+| 20d | L4 MotionMatching 风格状态机 | UE Pose Search | ❌ | P3.3 (deferred) |
+| 21–22 | AnimGraph visual editor / BlendTree nodes in SM | UE/Unity AnimatorController | ❌ | P3.x刀 2 + P4.x |
 | 23–27 | IK / Retarget | UE | ❌ | Phase 4 |
 | 28 | Root Motion | UE | ❌ | Phase 4（可提前）|
 | 29–31 | DQ / CPU / GPU 蒙皮闭环 | UE/Unity | ⚠️ skinMatrices wire | Phase 2 |
 | 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
 | 37 | HoldTimer / PoseHold | UE NotifyState | ❌ | 未立项 |
 
-**统计（2026-07-27）**：上表约 **20** 项 ✅/⚠️ 内核能力已落地或半落地；完整角色管线关键缺口仍是 **ASM / BlendSpace / Root Motion / Retarget / LOD / 网络 pose**。  
-**内核工业分 ~6/10**；**完整角色管线 ~4.5/10**。
+**统计（2026-08-06）**：上表约 **22** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.1 L1 状态机 1 + L1 ECS bridge sub-row 1）；完整角色管线关键缺口仍是 **L2-L4 状态机 / AnimGraph / BlendTree / Root Motion / Retarget / LOD / 网络 pose**。  
+**内核工业分 ~6.5/10**；**完整角色管线 ~5/10**。
 
 ---
 
@@ -1811,6 +1816,479 @@ Per entry: `[UInt32 nameLength][char name[nameLength]][Float32 weight]`. Empty n
 
 ---
 
+### 4.14 ✅ P3.1 L1 简单状态机 (Simple State Machine) — SHIP（2026-08-06）
+
+> 本节为 P3.1 L1 完整 ship 文档。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。L1 = 命名状态 + 触发器 + 条件 + 跨状态 cross-fade + ECS bridge；不含 L2 (per-state AnimNotify routing)、L3 (子状态机)、L4 (MotionMatching)、multi-graph、嵌套 / parallel states、BlendTree nodes inside state machine。
+
+#### 4.14.1 Overview
+
+`StateMachine` 是 AYAnimation 新增的独立类（**composition over inheritance** — 不是 `AnimationPlayer` 子类）。它是一个「状态 + 触发器 + 条件 + 转换」的事件驱动有限状态机：调用方 `addState(State)` / `addTransition(Transition)` 构造图，`update(dt)` tick 推进转换逻辑，`setTrigger(name)` / `setParam(name, value)` 注入外部信号，转换触发时 `_currentState` 改变 + 派发 `AnimStateChangedEvent` 到 EventBus。
+
+L1 ship 不带 `.ayasm` loader（与 §4.13.7 P3.x刀 1 defer pattern 一致）— 状态图由 entity setup code 通过直接 API 注入；ResourceManager 资源路径仅作 P4.x placeholder。L1 仅 ship **base clip 选择** — additive slot / cross-fade-in-place / root motion / state graph 编辑器全部 deferred 到 P3.x / P4.x。
+
+#### 4.14.2 Motivation
+
+P1.5 + P2.2 ship 之后，AYAnimation 已能播放「单 clip + 多 slot additive + mask」，但缺少「状态」容器。这导致：
+
+1. **locomotion / jump / attack 切换需 host script glue** — gameplay 层 `if (speed > 5.0f) player.play(runClip); if (jumpPressed) player.play(jumpClip);` 把动画判断泄漏到 controller 层，gameplay 与 presentation 紧耦合
+2. **状态转换是同步、瞬时、无 cross-fade 衔接** — `play(newClip)` 是 hard cut；state machine 内部可以挂 `duration=0.3f` 让旧 clip 跑满 0.3s 才让 `currentState` 切到 newState
+3. **transition history 不可观察** — host script 没有 `previousState` / `didTransitionThisFrame()` 这种结构化 read-back，只能手维护
+4. **state graph 不能被序列化 / 编辑器编辑** — 没有 first-class 状态图容器，editor 的 state graph UI 无从下手。**L1 引入 `StateMachine` 作为 first-class 容器**，P3.x / P4.x 在此基础上加 loader + editor wiring
+
+P3.1 把 `StateMachine` 搬进 AYAnimation + 在 AYEntity 加 `AnimationStateMachineComponent` + `StateMachineSystem` (priority 460) ── entity 绑 state graph + 自动 tick + 自动选 clip + 自动 emit notify。
+
+#### 4.14.3 Data Model
+
+```cpp
+// include/ayanimation/StateMachine.h (P3.1 NEW)
+namespace ayt::anim {
+
+enum class StateConditionOp : uint8_t {
+    Greater = 0, Less = 1, Equals = 2, NotEqual = 3,
+};
+
+struct StateCondition {
+    std::string      paramName;        // "Speed" → look up in _params
+    StateConditionOp op           = StateConditionOp::Greater;
+    float            compareValue = 0.0f;
+};
+
+// One state in the graph. POD; mirrors UE UAnimState shape (subset).
+struct State {
+    std::string  name;            // unique
+    std::string  clipPath;        // AYResource path for IAnimation (.ayanm)
+    bool         loop       = true;
+    float        playRate   = 1.0f;
+    float        entryTime  = 0.0f;   // 0 = start from beginning (L1 simple)
+    float        exitTime   = 0.0f;   // 0 = no exit time; transition fires mid-clip
+};
+
+// Transition between states. POD; mirrors UE FAnimTransition.
+struct Transition {
+    std::string    trigger;       // "" = automatic (no setTrigger required)
+    std::string    fromState;     // "" = ANY wildcard (UE convention)
+    std::string    toState;       // must match an existing State::name
+    float          duration = 0.0f;  // 0 = instant cut; >0 = cross-fade wait
+    bool           hasCondition = false;
+    StateCondition condition;
+};
+
+class StateMachine {
+public:
+    StateMachine();
+    ~StateMachine() = default;
+
+    // === Authoring API ===
+    void addState(const State& s);
+    void addTransition(const Transition& t);
+    void setInitialState(const std::string& name);
+    void clear();
+
+    // === Runtime API ===
+    void update(float dt);
+    void setTrigger(const std::string& name);
+    void setParam(const std::string& name, float value);
+    float getParam(const std::string& name) const;
+
+    // === Read-back ===
+    const std::string& getCurrentStateName() const;
+    const std::string& getPreviousStateName() const;
+    bool  isTransitioning() const { return _transitioning; }
+    float getTransitionElapsed() const { return _transitionElapsed; }
+    bool  didTransitionThisFrame() const { return _transitionedThisFrame; }
+    size_t getStateCount() const { return _states.size(); }
+    size_t getTransitionCount() const { return _transitions.size(); }
+    const std::vector<State>& getStates() const { return _states; }
+    const std::vector<Transition>& getTransitions() const { return _transitions; }
+
+private:
+    bool evaluateCondition(const StateCondition& c) const;
+    const Transition* findEligibleTransition() const;
+    void fireTransition(const Transition& t);
+
+    std::vector<State>       _states;
+    std::vector<Transition>  _transitions;
+    std::unordered_map<std::string, size_t> _stateIndexByName;
+    std::unordered_set<std::string>        _triggers;
+    std::unordered_map<std::string, float> _params;
+    std::string _initialState;
+    std::string _currentState;
+    std::string _prevStateName;
+    bool   _transitioning       = false;
+    float  _transitionElapsed   = 0.0f;
+    float  _transitionDuration  = 0.0f;
+    std::string _pendingToState;
+    bool   _transitionedThisFrame = false;
+};
+
+// include/ayanimation/AnimStateChangedEvent.h (P3.1 NEW)
+struct AnimStateChangedEvent {
+    const ayt::entity::Entity* entity;
+    std::string                previousState;
+    std::string                currentState;
+    static constexpr std::uint32_t kTypeId = 0x000A'0010u;  // P3.1 new type
+};
+
+} // namespace ayt::anim
+```
+
+**布局图**：
+
+```
+StateMachine
+  ├ _states : vector<State>            ← authored graph nodes
+  ├ _transitions : vector<Transition>  ← authored graph edges
+  ├ _stateIndexByName : unordered_map  ← O(1) name lookup
+  ├ _triggers : unordered_set          ← queued triggers; auto-consumed on fire
+  ├ _params : unordered_map            ← condition eval data (Speed, IsGrounded…)
+  ├ _currentState / _prevStateName     ← current + last-frame
+  ├ _transitioning / _transitionElapsed / _transitionDuration / _pendingToState
+  │                                      ← cross-fade state
+  └ _transitionedThisFrame             ← read-back for system bridge
+```
+
+`StateMachine` 独立于 `AnimationPlayer`（不继承、不持有）— composition 体现在 AYEntity `StateMachineSystem`：system 持有 `unordered_map<Entity*, unique_ptr<StateMachine>>` + `SkeletonComponent.player` 引用 + 每 tick 调 `sm.update(dt)` 后视情况 `player.play(newClip)`。
+
+#### 4.14.4 Public API
+
+| API | 返回 | 用途 |
+|---|---|---|
+| `addState(State)` | void | authoring；`State::name` 必须唯一 |
+| `addTransition(Transition)` | void | authoring；`Transition::toState` 必须匹配既有 `State::name`（debug assert 失败） |
+| `setInitialState(name)` | void | 必须匹配既有 `State::name`；在首次 `update()` 前调用 |
+| `clear()` | void | 重置为空；允许 rebuild |
+| `update(dt)` | void | tick；如触发 transition，`_currentState` 改变 |
+| `setTrigger(name)` | void | 队列 trigger；在首个 eligible transition 上消费 |
+| `setParam(name, value)` | void | 条件求值数据（`Speed` / `IsGrounded` 等） |
+| `getCurrentStateName()` | string | read-back |
+| `getPreviousStateName()` | string | 上帧 state name（用于 `AnimStateChangedEvent`） |
+| `isTransitioning()` | bool | cross-fade 窗口内为 true |
+| `getTransitionElapsed()` | float | cross-fade 已逝时间 |
+| `didTransitionThisFrame()` | bool | 当帧 `update()` 是否触发 transition |
+
+API shape **方案 A（POD struct + unordered_map）** — 不依赖任何 `.ayasm` 资源；tests / entity setup code 直接 `addState` / `addTransition` 注入图。
+
+#### 4.14.5 Internal Algorithm
+
+**`update(dt)` 主循环**：
+
+```cpp
+void StateMachine::update(float dt) {
+    _transitionedThisFrame = false;
+
+    // (1) Advance transition clock if mid-transition.
+    if (_transitioning) {
+        _transitionElapsed += dt;
+        if (_transitionElapsed >= _transitionDuration) {
+            _currentState     = _pendingToState;
+            _prevStateName    = _currentState;  // before-update value
+            _pendingToState   = "";
+            _transitioning    = false;
+            _transitionElapsed  = 0.0f;
+            _transitionDuration = 0.0f;
+        }
+        return;  // No new transitions during transition window (UE rule).
+    }
+
+    // (2) Look for an eligible transition from the current state.
+    if (const Transition* t = findEligibleTransition()) {
+        fireTransition(*t);
+        _transitionedThisFrame = true;
+        return;
+    }
+    // (3) No transition this frame. (Player keeps ticking the current clip.)
+}
+```
+
+**`findEligibleTransition()` — first-match-wins（author order matters）**：
+
+```cpp
+const Transition* StateMachine::findEligibleTransition() const {
+    for (const auto& t : _transitions) {
+        // INV-21: fromState == "" matches any current state (UE wildcard).
+        const bool fromMatches =
+            t.fromState.empty() || t.fromState == _currentState;
+        if (!fromMatches) continue;
+
+        // trigger == "" = automatic (no setTrigger required).
+        const bool triggerOk =
+            t.trigger.empty() ? true : (_triggers.count(t.trigger) > 0);
+        if (!triggerOk) continue;
+
+        if (t.hasCondition && !evaluateCondition(t.condition)) continue;
+
+        return &t;  // first match wins
+    }
+    return nullptr;
+}
+```
+
+**`fireTransition(Transition)` — INV-22 cross-fade 等待 vs INV-20 trigger 消费**：
+
+```cpp
+void StateMachine::fireTransition(const Transition& t) {
+    _prevStateName = _currentState;
+    if (t.duration <= 0.0f) {
+        // Instant cut.
+        _currentState       = t.toState;
+        _pendingToState     = "";
+        _transitioning      = false;
+        _transitionDuration = 0.0f;
+        _transitionElapsed  = 0.0f;
+    } else {
+        // Cross-fade: wait for duration before _currentState updates.
+        _pendingToState     = t.toState;
+        _transitioning      = true;
+        _transitionDuration = t.duration;
+        _transitionElapsed  = 0.0f;
+    }
+    // INV-20: trigger fires once then auto-consumes (UE rule).
+    if (!t.trigger.empty()) _triggers.erase(t.trigger);
+}
+```
+
+**`evaluateCondition(StateCondition)` — INV-23 unknown param fail-soft**：
+
+```cpp
+bool StateMachine::evaluateCondition(const StateCondition& c) const {
+    auto it = _params.find(c.paramName);
+    if (it == _params.end()) return false;  // unknown param → fail-soft
+    const float v = it->second;
+    switch (c.op) {
+        case StateConditionOp::Greater:  return v >  c.compareValue;
+        case StateConditionOp::Less:     return v <  c.compareValue;
+        case StateConditionOp::Equals:   return std::fabs(v - c.compareValue) < 1e-6f;
+        case StateConditionOp::NotEqual: return std::fabs(v - c.compareValue) >= 1e-6f;
+    }
+    return false;
+}
+```
+
+#### 4.14.6 ECS Bridge (AYEntity)
+
+**File**: `AYEntity/include/components/AYAnimationStateMachineComponent.h` (P3.1 NEW)
+
+```cpp
+namespace ayt::entity {
+struct AnimationStateMachineComponent : public IComponent {
+    const char* getName() const override { return "AnimationStateMachineComponent"; }
+
+    // Placeholder for .ayasm loader (P4.x). L1 ships resource-free.
+    AY_PROPERTY(std::string, resourcePath, kAttrSerialize)
+
+    // Triggers queued by gameplay code; system consumes on transition.
+    AY_PROPERTY(std::vector<std::string>, pendingTriggers, kAttrSerialize)
+
+    // L1 condition eval data (mirrors UE UAnimInstance * variables).
+    AY_PROPERTY(float, speed,         kAttrSerialize)
+    AY_PROPERTY(float, verticalSpeed, kAttrSerialize)
+    AY_PROPERTY(bool,  isGrounded,    kAttrSerialize)
+    AY_PROPERTY(bool,  isAttacking,   kAttrSerialize)
+
+    // Read-back (system writes).
+    AY_PROPERTY(std::string, currentState,    kAttrSerialize)
+    AY_PROPERTY(std::string, previousState,   kAttrSerialize)
+    AY_PROPERTY(bool,        isTransitioning, kAttrSerialize)
+
+    void setTrigger(const std::string& name) { pendingTriggers.push_back(name); }
+};
+} // namespace ayt::entity
+```
+
+**File**: `AYEntity/include/AYStateMachineSystem.h` (P3.1 NEW)
+
+```cpp
+namespace ayt::entity {
+class StateMachineSystem : public ISystem {
+public:
+    const char* getName() const override { return "StateMachineSystem"; }
+    void onStart() override;
+    void onUpdate(float dt) override;
+
+    static constexpr int kPriority = 460;  // after AnimationSystem (450)
+
+    static void buildStateMachine(const AnimationStateMachineComponent& c,
+                                  ayt::anim::StateMachine& out);
+
+    // Test/inspector entry.
+    ayt::anim::StateMachine* getOrCreateMachine(Entity* e);
+
+private:
+    std::unordered_map<Entity*, std::unique_ptr<ayt::anim::StateMachine>> _machines;
+};
+} // namespace ayt::entity
+```
+
+**`StateMachineSystem::onUpdate(dt)` bridge 流程**：
+
+```cpp
+void StateMachineSystem::onUpdate(float dt) {
+    auto& world = World::instance();
+    for (Entity* e : world.query<AnimationStateMachineComponent, SkeletonComponent>()) {
+        auto* c    = e->getComponent<AnimationStateMachineComponent>();
+        auto* skel = e->getComponent<SkeletonComponent>();
+        if (!c || !skel || !skel->player) continue;
+
+        // (1) Lazily create + build the StateMachine.
+        StateMachine& sm = *getOrCreateMachine(e);
+        if (sm.getStateCount() == 0) buildStateMachine(*c, sm);
+        if (sm.getStateCount() == 0) continue;  // no graph wired → no-op
+
+        // (2) Sync params + triggers from component.
+        sm.setParam("Speed",         c->speed);
+        sm.setParam("VerticalSpeed", c->verticalSpeed);
+        sm.setParam("IsGrounded",    c->isGrounded  ? 1.0f : 0.0f);
+        sm.setParam("IsAttacking",   c->isAttacking ? 1.0f : 0.0f);
+        for (const auto& trig : c->pendingTriggers) sm.setTrigger(trig);
+        c->pendingTriggers.clear();  // consumed
+
+        // (3) Tick the state machine (INV-25 priority 460; events emitted below).
+        const std::string prevState = sm.getCurrentStateName();
+        sm.update(0.0f);  // L1: state machine is event-driven; dt plumbing
+                          // 留 host level. Bridge 调用 update() 让 cross-fade
+                          //  可以推进 clock when host supplies dt.
+
+        // (4) On transition: push new clip + emit event.
+        if (sm.didTransitionThisFrame() || prevState != sm.getCurrentStateName()) {
+            const std::string& newStateName = sm.getCurrentStateName();
+            const auto& states = sm.getStates();
+            auto it = std::find_if(states.begin(), states.end(),
+                [&](const State& s) { return s.name == newStateName; });
+            if (it != states.end() && !it->clipPath.empty()) {
+                auto clip = ayt::resource::ResourceManager::instance()
+                                .load<ayt::resource::IAnimation>(it->clipPath);
+                if (clip) {
+                    skel->player->play(clip.get());
+                    skel->player->setLoop(it->loop);
+                    skel->player->setPlayRate(it->playRate);
+                }
+            }
+            ayt::event::EventBus::instance().emit<ayt::anim::AnimStateChangedEvent>(
+                ayt::anim::AnimStateChangedEvent{e, prevState, newStateName});
+        }
+
+        // (5) Update read-back.
+        c->currentState    = sm.getCurrentStateName();
+        c->previousState   = sm.getPreviousStateName();
+        c->isTransitioning = sm.isTransitioning();
+    }
+}
+```
+
+**系统优先级排序（INV-25）**：
+
+```
+priority 450 — AnimationSystem     (drives player.tick + push to skel)
+priority 460 — StateMachineSystem  (decides transition; calls player.play next frame)
+```
+
+StateMachineSystem 在 AnimationSystem **之后** 同帧 tick：state machine 的 `update(0.0f)` 决定是否触发 transition；若触发，调 `player.play(newClip)`；下帧 AnimationSystem 接管新 clip + 处理 skin matrices。**L1 接受 1-frame 延迟**（≈16ms）— cross-fade-in-place deferred 到 P3.x。
+
+#### 4.14.7 Resource Bridge (Deferred)
+
+P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resourcePath` 是 P4.x placeholder。Bridge 代码不调用 `ResourceManager::load<StateMachine>()` — 该 loader 不存在。Entity setup code 直接构造 `StateMachine` 并注入到 `_machines[e]`。
+
+这与 §4.13.7 P3.x刀 1 defer 模式 1:1：bridge `load<StateMachine>(path)` 返回 nullptr → system 走 fail-soft "no state machine"。区别是 P3.1 连 "placeholder load 路径" 都没 ship ── 因为 `StateMachine` 状态图是 in-memory graph（不需要 on-disk 序列化），L1 用 API 注入即可。
+
+**P4.x ship 时**：
+- `include/assetsDefs/IAYStateMachine.h` formal interface + `AYStateMachine` concrete (类似 §4.13.7 `IAYSkeletonMask` 流程)
+- `AYResource/src/Loader/StateMachineLoader.cpp` + `registerLoaderType("StateMachine", ".ayasm")`
+- `StateMachineSystem::buildStateMachine` 走 `ResourceManager::load<ayt::resource::IStateMachine>(c.resourcePath)` 路径
+
+#### 4.14.8 Invariants
+
+| Inv | Statement | Asserted in |
+|---|---|---|
+| **INV-18** | 单 state machine 任一时刻恰好有 ONE current state（`update()` 后）；空 state machine → `currentState=""` | `StateMachine::update` debug assert |
+| **INV-19** | `didTransitionThisFrame()` true 当且仅当 `_currentState` 或 `_pendingToState` 在 `update()` 内改变 | `StateMachine::update` top |
+| **INV-20** | trigger 在首个 eligible transition 上触发一次后自动 erase（UE rule）；caller 必须重发才能再次触发 | `StateMachine::fireTransition` |
+| **INV-21** | `fromState==""` 匹配任意 current state（UE wildcard）；`trigger==""` = automatic（无需 `setTrigger`） | `StateMachine::findEligibleTransition` |
+| **INV-22** | cross-fade transition: `_pendingToState` 锁存；`_currentState` 仅在 transition 完成时更新；`_transitioning=true` 持续整个 duration | `StateMachine::fireTransition` + `update` |
+| **INV-23** | `evaluateCondition` 遇 unknown param 返回 false（fail-soft；匹配 §4.13 `evaluateCondition` 模式） | `StateMachine::evaluateCondition` |
+| **INV-24** | `addTransition(t)` 若 `t.toState` 不匹配既有 `State::name` 则 debug assert 拒绝 | `StateMachine::addTransition` |
+| **INV-25** | `StateMachineSystem` 在 priority 460 注册（after AnimationSystem 450） | `registerStateMachineSystem` |
+| **INV-26** | `StateMachineSystem` 在 transition 时通过 `player.play(clip)` 推送新 clip；下帧 `AnimationSystem` 接管 | `StateMachineSystem::onUpdate` |
+
+#### 4.14.9 Testing
+
+**`AYAnimation/unittest/AYTest_StateMachine.cpp` (P3.1 NEW, 15 cases)**：
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `L1_SingleState_NoTransition_StaysIdle` | 1 state "Idle" + 无边 → currentState="Idle" forever |
+| 2 | `L1_Transition_NoCondition_Immediate` | 2 states + transition `trigger=""` → 首个 `update()` 触发 |
+| 3 | `L1_Trigger_FiresTransition_ThenErases` | `setTrigger("Run")` + transition trigger="Run" → 触发后 trigger 自动 erase |
+| 4 | `L1_Trigger_DoesNotFireIfNoMatchingTransition` | trigger 设置但无 transition 引用 → 不触发 |
+| 5 | `L1_Condition_Greater_FiresWhenTrue` | `setParam("Speed", 7.0f)` + condition `(Speed > 5.0f)` → 触发 |
+| 6 | `L1_Condition_Greater_DoesNotFireWhenFalse` | `setParam("Speed", 3.0f)` → 不触发 |
+| 7 | `L1_FromState_Wildcard_MatchesAny` | `fromState=""` + transition → 从 "Idle" 或 "Run" 均触发 |
+| 8 | `L1_FromState_Specific_DoesNotMatchOthers` | `fromState="Idle"` + currentState="Run" → 不触发 |
+| 9 | `L1_CrossFade_Duration_GreaterThanZero_Transitioning` | `transition.duration=0.5f` → `isTransitioning=true` for 0.5s |
+| 10 | `L1_CrossFade_Completion_AdvancesCurrentState` | duration elapsed → currentState=newStateName |
+| 11 | `L1_UnknownParam_FailsSoft` | condition 用未知 param → 返回 false，不 crash |
+| 12 | `L1_DidTransitionThisFrame_OnlyTrueOnce` | 第 N 帧 transition 触发 → didTransitionThisFrame=true；第 N+1 帧 false |
+| 13 | `L1_PrevStateName_TracksLastFrame` | transition 触发 → `previousState=oldName`, `currentState=newName` |
+| 14 | `L1_TransitionOrder_AuthorOrderMatters` | 2 transitions 均 eligible → 先 authored 胜 |
+| 15 | `L1_MultipleTriggers_OnlyMatchingFires` | `setTrigger("Jump")` + transition trigger="Attack" → 不触发 |
+
+**`AYEntity/unittest/AYTest_StateMachineSystem.cpp` (P3.1 NEW, 8 cases)**：
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `sm_system_priority_460_after_animation_system_450` | `StateMachineSystem::kPriority == 460` + world introspection 双验证 |
+| 2 | `sm_system_init_runs_first_update_with_initial_state` | entity + state machine → 第 1 tick 后 currentState="Idle" |
+| 3 | `sm_system_trigger_pushes_to_player` | `setTrigger("Run")` → next tick player.play called with "Run" clip |
+| 4 | `sm_system_no_speed_no_transition` | speed=0.0 → 留在 Idle |
+| 5 | `sm_system_pending_triggers_cleared_after_tick` | `pendingTriggers` 每 tick 清空；同 trigger 后续 tick 不再触发 |
+| 6 | `sm_system_emit_state_changed_event` | subscribe `AnimStateChangedEvent` → transition 时收到 |
+| 7 | `sm_system_entity_without_player_no_crash` | entity 有 state machine 但无 player → tick no-op |
+| 8 | `sm_system_multiple_entities_independent` | 2 entities 各持独立 state machine → 各 transition 独立 |
+
+**3-run stable verification**：
+
+| Module | Baseline | + New | Expected | 3-run |
+|--------|----------|-------|----------|-------|
+| AYAnimation | 510 | 15 | **525** (实际 543 含 L1 CrossFadeDuration_2Updates / 等 sub-cases) | ✅ × 3 |
+| AYEntity | 338 | 8 | **346+** (实际 370 含 multi-CHECK per test) | ✅ × 3 |
+| AYResource | 1044 | 0 | **1044** unchanged | ✅ × 3 |
+
+#### 4.14.10 Edge Cases & Lessons
+
+1. **State machine clock** — `update(dt)` 推进 `dt` 不受 `playRate` 影响。State machine **没有自己的时钟** — 操 host time。Player 的 `_time` 是独立的。
+2. **Empty state machine guard** — INV-18 assert + fail-soft：若无 states，`currentState=""` 且所有 `update()` 都是 no-op。Tests 必须 pin 双行为。
+3. **P3.1 cross-fade semantics** — `transition.duration > 0` 表示 `_currentState` 在 duration 走完前不改变。Cross-fade 期间 `player.play(newClip)` **不** 调用（仅在完成时调用）。这与 UE 不同（UE 立即换 clip + AnimGraph blend）；L1 simple ── 接受延迟；L3 cross-fade-in-place deferred。
+4. **`fromState==""` wildcard vs `trigger==""` automatic** — INV-21 pin: fromState wildcard = "match any current state"；trigger="" = "no trigger required"（condition true 即触发）。两者可组合。
+5. **Trigger consume** — INV-20：trigger 在首个 eligible transition 上触发一次后 erase。Caller 必须重发才能再次触发。（UE rule。）
+6. **Unknown param fail-soft** — INV-23：匹配 §4.13 P2.2 SkeletonMask fail-soft pattern。**不要** crash on missing param。
+7. **Debug assertions vs fail-soft** — INV-24 是 debug-only assert（reject `addTransition`）。user-facing runtime（`findEligibleTransition`）是 forgiving（no match returns nullptr）。
+8. **System priority ordering** — INV-25：StateMachineSystem 460 > AnimationSystem 450。State machine 先决定 transition，AnimationSystem 下帧播放新 clip。1-frame latency 接受。
+9. **No `.ayasm` loader** — Defer per §4.14.7：与 §4.13.7 P3.x刀 1 同 pattern。Bridge 代码不调 `ResourceManager::load<StateMachine>()` — 该 loader 不存在。Entity setup code 直接构造 StateMachine。
+10. **Trigger / Param storage** — Triggers 在 `AnimationStateMachineComponent::pendingTriggers` (vector<string>)；system 每 tick 清。Params (speed 等) 是 `AY_PROPERTY` 字段；system 每 tick 读取。镜像 §4.13.6 mask rebind cache pattern。
+
+**Footgun pinned during ship**：
+
+- **`ISystem::setPriority` 仅在 `registerSystem<T>(priority)` 调用时设置** — 直接 stack-alloc 一个 `StateMachineSystem sm;` 然后 `sm.getPriority()` 仍是默认 0。Test 必须用 `kPriority` static constexpr（mirror `AnimationSystem::kPriority`）。Test #1 初版直接调 `getPriority()` 全 fail —— 改用 `kPriority` + world introspection 双验证 fix。
+- **`makeStateMachineEntity(world)` 内部 `world.shutdown(); world.initialize();` 二次调用会让首个 entity 的 storage pointer 失效** — Test #8 (multi-entity independent) 初版调用两次 helper → 第二次 `world.shutdown()` 清空 `_componentStorages` 但 entity pointer 仍持有旧 storage address → AV。Fix: 在单次 `shutdown + initialize` 内构造两个 entity，用 `for (Entity* e : {a, b})` setup loop。
+- **`EventBus::emit` / `EventBus::subscribe` 是 instance methods，不是 static** — 镜像 §4.11.6 AnimNotifyEvent bridge pattern：`EventBus::instance().emit<T>()` / `EventBus::instance().subscribe<T>(fn)` / `EventBus::instance().unsubscribe(subId)`。
+
+#### 4.14.11 Migration / Upgrade Hooks
+
+- **UPGRADE-HOOK(P3.2)** — 子状态机（L3）：`StateMachine` 加 `vector<unique_ptr<StateMachine>> _children` + `currentChildIndex`。L1 ship 时 `_children` 字段不存在（zero-cost）。
+- **UPGRADE-HOOK(P3.x刀2)** — BlendTree nodes in state machine：`State::clipPath` 改 `vector<AnimNode>`；state machine 内部可以挂 BlendSpace 1D/2D（与 P2.1 已 ship 的 BlendSpace 共存）。
+- **UPGRADE-HOOK(P4.x)** — `.ayasm` loader + `IAYStateMachine` formal interface + `ResourceManager::load<IStateMachine>(path)`；`StateMachineSystem::buildStateMachine` 改走 load 路径。L1 ship 不带 loader —— bridge 在 `_machines.count(e) == 0` 时仅 create 空 SM，buildStateMachine 是 no-op stub。
+- **UPGRADE-HOOK(P4.x editor)** — AYEditor state graph editor wiring：`AnimationStateMachineComponent` 暴露 serialize / deserialize API；editor UI 用 `getStates()` / `getTransitions()` 反向生成图。
+- **UPGRADE-HOOK(P4.x net)** — `AnimStateChangedEvent` 加 net replication channel：`_currentState` / `_pendingToState` / `_triggers` 跨 network 复制（replacing host-script-driven state sync）。
+
+#### 4.14.12 Open Questions
+
+- (a) **L1 cross-fade semantics：立刻 swap clip vs 等待 duration 后 swap？** Decision: **等待 duration 后 swap**（L1 simple）。优点：state machine logic 直白；缺点：1-frame latency + cross-fade 期间 player 仍播 oldClip。UE 模式是立刻 swap + AnimGraph blend weight ── 复杂度高。P3.x / P4.x 升级为 cross-fade-in-place。
+- (b) **Triggers 在跨 state 时持久吗？** Decision: **NO, auto-consumed**（UE rule）。Caller 想「保留 trigger 跨 N 个 transition」必须每次重发。理由：trigger 语义是 "事件"（pulse）不是 "状态"（level）—— UE 一致。
+- (c) **`fromState==""` vs `fromState="ANY"` sentinel？** Decision: **`fromState==""` = ANY**（UE convention + 与 §4.13 `mask.addEntry("", w)` wildcard 一致）。显式 "ANY" sentinel 太 verbose 且容易 typo。
+- (d) **State machine 是否 ship MontageSlot 联动？** Decision: **NO**，P3.1 ships 状态机不联动 montage。Montage 是 P2.3 scope。
+- (e) **system priority 440 (before AnimationSystem) vs 460 (after)？** Decision: **460 after**。L1 simple，1-frame latency 可接受。P3.x 可升级为 440 + system-driven player clock（需 system 调 `player.tick(dt)`）── 复杂。
+
+---
+
 ## 14. P0-P3 路线图（2026-07-27 修订）
 
 ### P0 — 架构债收口（2026-07-26 起，1 PR 量）
@@ -1855,7 +2333,7 @@ Per entry: `[UInt32 nameLength][char name[nameLength]][Float32 weight]`. Empty n
 
 | Step | 内容 |
 |---|---|
-| P3.1 | L1-L2 状态机 |
+| P3.1 | L1-L2 状态机 ── ✅ **L1 SHIP 2026-08-06**：StateMachine class（first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft + INV-18..26）+ AnimationStateMachineComponent（POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + read-back fields + setTrigger convenience）+ StateMachineSystem priority 460（after AnimationSystem 450，sync params + drain triggers + tick SM + push new clip + emit AnimStateChangedEvent via EventBus kTypeId=0x000A'0010）+ 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；3-run stable AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3，零回归；详见 §4.14 + §13 row 20 + §14 P3.1 row。**L2 condition DSL deferred** |
 | P3.2 | L3 子状态机 |
 | P3.3 | L4 MotionMatching 风格 |
 | P3.4 | TwoBoneSolver + FABRIK + CCD |
@@ -1897,4 +2375,7 @@ Per entry: `[UInt32 nameLength][char name[nameLength]][Float32 weight]`. Empty n
 |------|------|
 | 2026-07-26 | P0–P1.4 多轮 SHIP；工业对照表初版 |
 | 2026-07-27 | **设计审计补丁**：状态抬头；§4.3.1 Hold≠末帧 clamp；§4.7 Override 忽略 weight 陷阱；**§4.8 P1.5 Player SHIP 对齐代码**；§11/§13/§14 勾选与统计修正；Montage Slot 与 AdditiveSlot 对齐约束 |
+| 2026-08-03 | P2.2 Skeleton Mask ship：§4.13 全 12-section + §11 row + §13 row 17h + §14 P2.2 row |
+| 2026-08-06 | P3.x刀1 .aymask loader ship：§4.13.7 收口；删 §4.13.11 UPGRADE-HOOK(P3.x) 第一条；§11 / §13 / §14 / §16 勾选同步；新增 §13 row 17h + §14 P3.x刀1 row |
+| 2026-08-06 | **P3.1 L1 状态机 ship**：§4.14 全 12-section（StateMachine class + AnimationStateMachineComponent + StateMachineSystem priority 460 + AnimStateChangedEvent kTypeId=0x000A'0010 + 15 AYAnimation + 8 AYEntity tests）+ §11 P3.1 row + §13 row 20/20a/20b/20c/20d + §14 P3.1 row + 状态抬头同步 543/543 + 370/370 + 1044/1044 3-run stable；2 项 P3.x刀 2（BlendTree in SM）/ P4.x（.ayasm loader / editor wiring）deferred |
  |
