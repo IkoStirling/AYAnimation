@@ -16,6 +16,9 @@ set(SRC_FILES
     # P3.2 (2026-08-06) — L3 子状态机 unit tests. 12 cases pinning
     # INV-27..31; standalone (no AYEntity / no AnimationPlayer).
     AYTest_SubStateMachine.cpp
+    # P3.x (2026-08-07) — L2 Condition DSL unit tests. 30 cases pinning
+    # INV-32..35 (parser + evaluator + cache + back-compat); standalone.
+    AYTest_ConditionExpr.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

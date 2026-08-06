@@ -1,4 +1,6 @@
-// StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机.
+// StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机
+//                  + P3.x  (2026-08-07) L2 Condition DSL (string expr + lazy parse +
+//                  dirty cache).
 //
 // Mirrors UE UAnimStateMachine shape (subset — L1 + L3; L4 MotionMatching /
 // multi-graph / BlendTree inside SM / parallel states deferred). Standalone
@@ -35,6 +37,8 @@
 //              _currentChildIndex is reset to -1
 
 #pragma once
+
+#include <ayanimation/ConditionExpr.h>
 
 #include <cmath>
 #include <cstddef>
@@ -79,7 +83,20 @@ struct State {
     int         subMachineIndex   = -1;     // -1 if not a sub-machine
 };
 
-// Transition between states. POD.
+// Transition between states. POD + P3.x L2 DSL cache layer.
+//
+// L1 path (back-compat, INV-23..26 preserved): hasCondition=true + condition
+// holds the single-predicate gate. Used when conditionExpr is empty.
+//
+// L2 path (P3.x NEW, INV-32..35): a non-empty conditionExpr is parsed lazily
+// into cachedAst the first time evaluateCondition runs. The cache is dirty
+// by default (conditionDirty=true) and is invalidated whenever the source
+// string changes (via setConditionExpr, which auto-flags dirty) or via an
+// explicit invalidateConditionCache() call.
+//
+// On parse failure (INV-33): cachedAst stays nullptr, conditionParseError
+// captures the first diagnostic, the evaluate returns false unconditionally
+// (transition never fires) — no assert, no throw, no crash.
 struct Transition {
     std::string    trigger;        // "" = automatic (fires when condition true)
     std::string    fromState;      // "" = ANY (from any state)
@@ -87,6 +104,30 @@ struct Transition {
     float          duration        = 0.0f;   // 0 = instant cut; >0 = cross-fade
     bool           hasCondition    = false;
     StateCondition condition;
+
+    // === P3.x L2 NEW — DSL source + cache layer ===
+    std::string conditionExpr;                 // source string; "" = no L2 condition
+    // shared_ptr (not unique_ptr) because Transition itself lives in
+    // std::vector<Transition> via push_back (copy required). shared_ptr
+    // retains single-owner RAII semantics for the AST; the cache field is
+    // mutable to allow lazy init in const evaluateCondition().
+    mutable std::shared_ptr<CondExprAst> cachedAst;       // lazy parse result
+    mutable bool      conditionDirty    = true;          // first evaluate triggers parse
+    mutable std::string conditionParseError;             // last parse diagnostic ("" = OK)
+
+    // Setter: replaces conditionExpr and auto-flags dirty (INV-34). Skips
+    // assignment when the new string is identical to the current one.
+    void setConditionExpr(std::string s);
+
+    // Explicit invalidation. Use after mutating conditionExpr in place (not
+    // recommended) or from editor / hot-reload flows.
+    void invalidateConditionCache();
+
+    // Unified entry point. When conditionExpr is non-empty, routes through
+    // the L2 path (lazy parse + cache). When empty, falls back to L1
+    // single-predicate semantics (or true if hasCondition is also false —
+    // INV-32). Parse failures (INV-33) return false.
+    bool evaluateCondition(const ConditionEvalCtx& ctx) const;
 };
 
 class StateMachine {

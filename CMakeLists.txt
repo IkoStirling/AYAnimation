@@ -21,6 +21,10 @@ set(SRC_FILES
     # P3.1 (2026-08-06) — L1 简单状态机 engine. Standalone class;
     # AnimationSystem bridges to AnimationPlayer.
     src/StateMachine.cpp
+    # P3.x (2026-08-07) — L2 Condition DSL mini lexer + precedence-climbing
+    # parser. Independent of AYShader / AYScript / AYGraph (borrow precedence
+    # pattern only, no link). Consumed by Transition::evaluateCondition.
+    src/ConditionParser.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

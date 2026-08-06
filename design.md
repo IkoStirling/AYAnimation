@@ -1,10 +1,11 @@
 # AYAnimation Design
 
-> **状态（2026-08-06）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机 (`StateMachine` class + `AnimationStateMachineComponent` + `StateMachineSystem` priority 460 + `AnimStateChangedEvent` EventBus pipe)**）。3-run stable：AYAnimation 543/543 + AYResource 1044/1044 + AYEntity 370/370 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L2 condition DSL / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states 全部 deferred。L1 + L3 子状态机已 ship（P3.1 + P3.2 2026-08-06）。  
+> **状态（2026-08-07）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)**）。3-run stable：AYAnimation 703/703 + AYResource 1044/1044 + AYEntity 401/401 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；per-state AnimNotify routing / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 算术 / 函数调用 全部 deferred。L1 + L2 DSL + L3 子状态机已 ship（P3.1 + P3.x + P3.2 2026-08-06..07）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §14 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
 > **2026-08-06 设计审计 (三次)**：新增 §4.15 P3.2 L3 子状态机 ship 文档；§4.14.11 UPGRADE-HOOK(P3.2) 标 resolved；§13 row 20c 改为 ✅ + 加 row 20e（L3.5 deferred）；§14 P3.2 row 勾选 + §16 changelog 加 P3.2 entry；3-run 385/385 + 600/600 + 1044/1044 stable。
+> **2026-08-07 设计审计 (四次)**：新增 §4.16 P3.x L2 Condition DSL 完整 ship 文档（12-section 全模板）；§11 P3.x row ✅；§13 row 20b ❌→✅ + 统计 25 项 ✅ + 内核 6.7/10 + 完整角色管线 5.2/10；§14 P3.x row ✅；§16 changelog 加 P3.x entry；3-run 401/401 + 703/703 + 1044/1044 stable。
 
 ---
 
@@ -1466,7 +1467,7 @@ AYAnimation/
 ### Phase 3: 状态机 ── ⏳ P3.1 ship, L2-L4 排队
 
 - [x] **P3.1 L1 简单状态机**（2026-08-06）─ `StateMachine` class (events-driven FSM + first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft) + `AnimationStateMachineComponent` (POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + currentState/previousState/isTransitioning read-back + setTrigger convenience) + `StateMachineSystem` priority 460 (after AnimationSystem 450, sync params + drain triggers + tick SM + push new clip + emit `AnimStateChangedEvent` via EventBus kTypeId=0x000A'0010) + 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3)；详见 §4.14 + §13 row 20 + §14 P3.1 row
-- [ ] L2 条件转换 (expression DSL — multi-condition / per-state AnimNotify routing)
+- [x] **P3.x L2 条件 DSL**（2026-08-07）─ `Transition` 扩展缓存层 (conditionExpr / cachedAst / conditionDirty / conditionParseError 4 字段) + `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族 (Binary/Unary/Identifier/Literal + Visitor 接口) + `ConditionParser` (mini Lexer + precedence-climbing Parser) + 8 算子 (`> < == != && || ! ()`) + 字面量 float/bool + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + `ConditionEvalCtx` 4 字段 (`params/triggers/currentState/currentStateTime` 留 P3.x刀 N+1 钩子) + 30 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3)；详见 §4.16 + §13 row 20b + §14 P3.x row
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §14 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
@@ -1530,7 +1531,7 @@ AYAnimation/
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
 | 20 | L1 简单状态机（State + Trigger + Condition + Cross-fade + AnimStateChangedEvent）| UE `UAnimStateMachine` / Unity `Animator` | ✅ | P3.1 |
 | 20a | L1 priority 460 + EventBus pipe + ECS bridge | UE `UAnimInstance::NativeUpdateAnimation` priority chain | ✅ | P3.1 |
-| 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ❌ | P3.x (deferred) |
+| 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ✅（L2 DSL ship；per-state AnimNotify routing deferred to P3.x刀 N+1）| **P3.x (2026-08-07)** |
 | 20c | L3 子状态机（nested SM + 递归 trigger/param 传播 + child-first transition fallback + active leaf state name + ECS bridge dt plumbing 兑现 + sub-machine entry 不调 player.play + AnimationStateMachineComponent.activeSubState read-back）| UE `UAnimStateMachine` nested SM | ✅ | P3.2 |
 | 20d | L4 MotionMatching 风格状态机 | UE Pose Search | ❌ | P3.3 (deferred) |
 | 20e | L3.5 多状态机 / parallel states / `.ayasm` loader | UE multi-layer SM / parallel state | ❌ | P3.x / P4.x (deferred) |
@@ -1541,8 +1542,8 @@ AYAnimation/
 | 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
 | 37 | HoldTimer / PoseHold | UE NotifyState | ❌ | 未立项 |
 
-**统计（2026-08-06）**：上表约 **24** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.2 L3 子状态机 1 sub-row 1 + §13 row 20c 改为 ✅，原 20c/20d deferred rows 保留）；完整角色管线关键缺口仍是 **L2 condition DSL / L4 MotionMatching / AnimGraph / BlendTree in SM / Root Motion / Retarget / LOD / 网络 pose**。  
-**内核工业分 ~6.5/10**；**完整角色管线 ~5/10**。
+**统计（2026-08-07）**：上表约 **25** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.x L2 condition DSL 1 sub-row 1 + §13 row 20b 改为 ✅，原 20c/20d deferred rows 保留）；完整角色管线关键缺口仍是 **per-state AnimNotify routing / L4 MotionMatching / AnimGraph / BlendTree in SM / Root Motion / Retarget / LOD / 网络 pose**。  
+**内核工业分 ~6.7/10**；**完整角色管线 ~5.2/10**。
 
 ---
 
@@ -2650,6 +2651,313 @@ P3.2 ship 增加 **12 AYAnimation unit tests** + **4 AYEntity ECS integration te
 
 ---
 
+### 4.16 ✅ P3.x L2 Condition DSL (Transition Expression DSL) — SHIP（2026-08-07）
+
+> 本节为 P3.x L2 完整 ship 文档。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。L2 = transition condition 字符串表达式 + lazy parse + dirty cache + 8 算子 + L1 back-compat 双轨 + 短路求值 + parse-fail-soft-false。不含 per-state AnimNotify routing / 算术 / 函数调用 / 节点图 / `.ayasm` loader。
+
+#### 4.16.1 Overview
+
+Transition 扩展缓存层: `conditionExpr / cachedAst / conditionDirty / conditionParseError` 4 字段。Host authoring 写条件表达式字符串 (e.g. `"Speed > 5.0 && IsGrounded"`)，SM 首次 eval 时 lazy parse，缓存 AST 到 `cachedAst`；改字符串自动 flag dirty，parse 失败 → 永假 (fail-soft, INV-33)。8 算子: `> < == != && || ! ()`；字面量: float / bool。Visitor 接口为 P4.x graph-builder 留口。
+
+#### 4.16.2 Motivation
+
+P3.1 L1 单 predicate (`Transition::condition: {paramName, op, compareValue}`) 只支持 1 param + 1 op + 1 value。生产级 locomotion 需要多 predicate 组合: `Speed > 5 && IsGrounded` / `!IsDead && (VerticalSpeed < 0 || OnSlope)` / `CurrentStateTime > 0.5`。FAIL-SOFT 容错: param 名写错不应 crash；debug 时给 error 行号。`design.md §4.14` 的 L1 struct 字段尾注 `// L2 upgrade to expression DSL — deferred` 已预留 hook，P3.x 兑现。
+
+#### 4.16.3 Data model
+
+**`Transition` 扩展缓存层** (P3.x NEW, 4 字段):
+
+```cpp
+// include/ayanimation/StateMachine.h (P3.x NEW)
+struct Transition {
+    // P3.1 + P3.2 fields preserved
+    std::string trigger, fromState, toState;
+    float duration = 0.0f;
+    bool hasCondition = false;
+    StateCondition condition;
+
+    // === P3.x L2 NEW — DSL cache layer ===
+    std::string conditionExpr;                                  // 源 DSL；"" = 无条件
+    mutable std::shared_ptr<CondExprAst> cachedAst;             // shared_ptr (not unique_ptr): vector<Transition> needs copy
+    mutable bool conditionDirty = true;                         // lazy parse flag
+    mutable std::string conditionParseError;                    // 上次 parse 错 (空 = OK)
+};
+```
+
+**`ConditionExprAst` 类族** (P3.x NEW, 5 个类):
+
+```cpp
+// include/ayanimation/ConditionExpr.h (P3.x NEW)
+namespace ayt::anim {
+
+enum class CondOp : uint8_t {
+    GT=0, LT=1, EQ=2, NE=3,   // 比较
+    And=4, Or=5, Not=6,        // 逻辑
+};
+
+struct CondBinaryExpr : CondExprAst {
+    std::unique_ptr<CondExprAst> left;
+    CondOp op;
+    std::unique_ptr<CondExprAst> right;
+    bool evaluate(const ConditionEvalCtx&) const override;   // 短路求值
+};
+
+struct CondUnaryExpr : CondExprAst {
+    CondOp op;  // Not only
+    std::unique_ptr<CondExprAst> operand;
+    bool evaluate(const ConditionEvalCtx&) const override;
+};
+
+struct CondIdentifierExpr : CondExprAst {
+    std::string name;
+    bool evaluate(const ConditionEvalCtx&) const override;
+    float evaluateAsFloat(const ConditionEvalCtx&) const override;  // ctx.params lookup
+};
+
+struct CondLiteralExpr : CondExprAst {
+    std::variant<bool, float> value;
+    bool evaluate(const ConditionEvalCtx&) const override;
+    float evaluateAsFloat(const ConditionEvalCtx&) const override;
+};
+
+class CondExprAst {
+public:
+    virtual ~CondExprAst() = default;
+    virtual bool evaluate(const ConditionEvalCtx&) const = 0;
+    virtual void accept(class CondVisitor& v) const = 0;
+    virtual float evaluateAsFloat(const ConditionEvalCtx&) const { (void)ctx; return 0.0f; }
+};
+
+class CondVisitor {  // P4.x graph-builder 留口
+    virtual void visit(const CondBinaryExpr&)     = 0;
+    virtual void visit(const CondUnaryExpr&)      = 0;
+    virtual void visit(const CondIdentifierExpr&) = 0;
+    virtual void visit(const CondLiteralExpr&)    = 0;
+};
+
+struct ConditionEvalCtx {
+    const std::unordered_map<std::string, float>* params  = nullptr;
+    const std::unordered_set<std::string>*       triggers = nullptr;
+    std::string currentState;        // P3.x 留空 (未消费; 留 P3.x刀 N+1)
+    float currentStateTime = 0.0f;   // P3.x 留 0.0 (未消费; 留 P3.x刀 N+1)
+};
+
+} // namespace ayt::anim
+```
+
+**`ConditionParser` 签名** (P3.x NEW):
+
+```cpp
+// include/ayanimation/ConditionParser.h (P3.x NEW)
+class ConditionParser {
+public:
+    static std::unique_ptr<CondExprAst> parse(const std::string& src, std::string& outErr);
+};
+```
+
+#### 4.16.4 Public API
+
+| API | 返回 | 用途 |
+|---|---|---|
+| `Transition::setConditionExpr(std::string)` | void | 写源字符串；自动 flag dirty (auto-invalidate) |
+| `Transition::invalidateConditionCache()` | void | 显式 invalidate；debug / hot-reload 用 |
+| `Transition::evaluateCondition(ctx)` | bool | 统一 entry: 优先 L2 expression, fallback L1 single predicate, parse fail-soft false |
+| (新字段) `conditionExpr` | string | 源 DSL |
+| (新字段) `cachedAst` | shared_ptr | lazy parse cache |
+| (新字段) `conditionDirty` | bool | dirty flag |
+| (新字段) `conditionParseError` | string | 上次 parse 错信息 |
+| `ConditionParser::parse(src, outErr)` | unique_ptr | mini Lexer + Parser entry |
+
+#### 4.16.5 Internal algorithm
+
+##### 4.16.5.1 Lexer (~150 LoC, 单 pass char-by-char)
+
+照抄 AYShader `AYLexer.cpp` 的 `tokenize(src, tokens)` pattern:
+- 跳过空白 + 注释 (`//` 到行尾)
+- Number: `[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?`，**支持 leading `-`** 负数字面量
+- Ident: `[A-Za-z_][A-Za-z0-9_]*`, 关键字查表 (`true` / `false`)
+- `>` `<` `==` `!=` `&&` `||` `!` `(` `)` 单/双字符 op dispatch
+- 记录 `line + col` 位置, 用于 error message
+- Unknown char → push Unknown token + 报告 outErr, 但 lexer 继续 (recovery pattern)
+
+##### 4.16.5.2 Parser (~150 LoC, precedence-climbing)
+
+照抄 AYShader `AYParser.cpp:210-245` 结构:
+
+```
+precedence (low → high):
+  1. Or   (||)
+  2. And  (&&)
+  3. Not  (!)   unary
+  4. Compare (>, <, ==, !=)
+  5. Primary (literal, ident, paren)
+
+parseExpression(minPrec):
+    left = parseUnary()
+    while peek.prec >= minPrec:
+        op = peek
+        advance
+        right = parseExpression(op.prec + 1)   // 左结合
+        left = make_unique<CondBinaryExpr>(left, op.kind, right)
+    return left
+
+parseUnary():
+    if peek == Not:
+        advance
+        operand = parseUnary()                  // 右结合
+        return make_unique<CondUnaryExpr>(Not, operand)
+    return parsePrimary()
+```
+
+错误恢复: 语法错 (expect 但不匹配) → 记录 `line:col: unexpected token X`, advance, return null；不尝试 recover / sync (mini DSL scope 小, panic-mode overhead 高); 多次错只记第 1 个 (fail-fast).
+
+##### 4.16.5.3 Evaluator — recursive tree-walk
+
+```cpp
+bool CondBinaryExpr::evaluate(const ConditionEvalCtx& ctx) const {
+    switch (op) {
+        case CondOp::And: return left->evaluate(ctx) && right->evaluate(ctx);   // 短路
+        case CondOp::Or:  return left->evaluate(ctx) || right->evaluate(ctx);   // 短路
+        case CondOp::GT:  return left->evaluateAsFloat(ctx) >  right->evaluateAsFloat(ctx);
+        case CondOp::LT:  return left->evaluateAsFloat(ctx) <  right->evaluateAsFloat(ctx);
+        case CondOp::EQ:  return std::fabs(left->evaluateAsFloat(ctx) - right->evaluateAsFloat(ctx)) < 1e-6f;
+        case CondOp::NE:  return std::fabs(left->evaluateAsFloat(ctx) - right->evaluateAsFloat(ctx)) >= 1e-6f;
+    }
+    return false;
+}
+
+float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
+    if (ctx.params == nullptr) return 0.0f;                         // INV-23 fail-soft
+    auto it = ctx.params->find(name);
+    if (it == ctx.params->end()) return 0.0f;                       // INV-23 fail-soft
+    return it->second;
+}
+```
+
+##### 4.16.5.4 Transition::evaluateCondition 统一 entry (L1 + L2 dispatch)
+
+```cpp
+bool Transition::evaluateCondition(const ConditionEvalCtx& ctx) const {
+    // === L1 path (back-compat, INV-32) ===
+    if (conditionExpr.empty()) {
+        if (!hasCondition) return true;                              // 无条件 = 永真过 eval
+        return StateMachine::evaluateConditionL1(condition, ctx);   // 旧逻辑
+    }
+
+    // === L2 expression path ===
+    if (conditionDirty) {
+        std::string err;
+        cachedAst = ConditionParser::parse(conditionExpr, err);
+        conditionParseError = err;
+        conditionDirty = false;
+        if (cachedAst == nullptr) {
+            if (!err.empty()) {
+                std::fprintf(stderr, "[AYAnimation L2] condition parse fail: %s\n", err.c_str());
+            }
+            return false;   // INV-33 — 永不 fire
+        }
+    }
+    return cachedAst->evaluate(ctx);
+}
+```
+
+##### 4.16.5.5 StateMachine::findEligibleTransition — 1 line 改
+
+```cpp
+// 旧: if (t.hasCondition && !evaluateCondition(t.condition)) continue;
+// 新: if (!t.evaluateCondition(ctx)) continue;
+```
+
+ctx 构造: `ConditionEvalCtx ctx{&_params, &_triggers, _currentState, 0.0f};`
+
+#### 4.16.6 ECS bridge
+
+**0 改动**。
+
+- `AnimationStateMachineComponent` —— **0 字段** (L2 是 authoring-time 决策, 在 entity setup code 通过 `sm.addTransition(Transition{...})` 写 host-side)
+- `StateMachineSystem::onUpdate` —— **0 line** (L2 在 SM 内部消化)
+- `findEligibleTransition` 改造让 ECS bridge 不感知 L2
+
+ECS bridge 实际行为验证 (4 AYEntity tests): bridge 写 `setParam("Speed", c->speed)` (capitalized), L2 expression 用 `"Speed > 5.0"` 匹配; speed=7.0 → fire; speed=3.0 → 不 fire; cache warm across 5 ticks; parse fail (`"speed >"`) → cachedAst=null + conditionParseError 非空 + 不 crash + transition 永假.
+
+#### 4.16.7 Resource bridge (deferred)
+
+**0 改动**. `.ayasm` loader 不在 P3.x scope; conditionExpr 由 entity setup code 写. P4.x loader ship 时将消费 `Transition::conditionExpr` 字段.
+
+#### 4.16.8 Invariants
+
+| Inv | Statement | Asserted in |
+|---|---|---|
+| **INV-23** (preserved) | `evaluateCondition` 遇 unknown param → fail-soft false (L1 + L2 同样) | `ConditionExprAst::evaluate` |
+| **INV-32** (NEW) | 空 `conditionExpr` = 无条件 (transition 永真过 eval), 与 `hasCondition=false` 等价 | `Transition::evaluateCondition` |
+| **INV-33** (NEW) | parse 失败 → cachedAst=null + `conditionParseError` 非空 + 写 stderr, **return false** (transition 永不 fire); **不 assert, 不 crash** | `Transition::evaluateCondition` |
+| **INV-34** (NEW) | `setConditionExpr` 自动 flag `conditionDirty=true`; cachedAst 在下次 eval 时 lazy 重建; 旧 AST 仍可被正在遍历的旧 eval 安全持有 (transition 是 const, RAII) | `Transition::setConditionExpr` + `Transition::evaluateCondition` |
+| **INV-35** (NEW) | cache invalidation 语义: `conditionDirty=true` ⇒ 下次 eval 必 parse; `conditionDirty=false` ⇒ 用 cachedAst; cachedAst=null + conditionDirty=false ⇒ condition 永假 (INV-33 已处理) | `Transition::evaluateCondition` |
+
+**未受影响**: INV-18..26 (P3.1 L1) + INV-27..31 (P3.2 L3) — 全部 preserved.
+
+#### 4.16.9 Testing
+
+##### 4.16.9.1 AYAnimation unit — `unittest/AYTest_ConditionExpr.cpp` (NEW, 30 cases)
+
+| § | cases |
+|---|---|
+| §8.1.1 Parser unit | 8 (EmptyString / SingleIdent / SingleLiteral / Compare / AndOrPrecedence / Parens_Override / UnaryNot / SyntaxError) |
+| §8.1.2 Evaluator unit | 12 (GT_Fires / GT_Fails / AllFourCompareOps / And_ShortCircuit / Or_ShortCircuit / Not_FlipsBool / NestedParens / UnknownParam_FailsSoft / LiteralComparison / BoolCoercion / DeepNesting_5Levels / FloatLiteral_Negative) |
+| §8.1.3 Cache / invalidate | 6 (FirstEval_Parses / SecondEval_NoReparse / SetConditionExpr_Invalidates / ExplicitInvalidate / ParseFail_CachedNull / ParseFail_DoesNotCrash) |
+| §8.1.4 Back-compat (L1 zero regression) | 4 (L1Condition_StillWorks / L1UnknownParam_FailsSoft / NoCondition_AlwaysFires / SubMachinePath_Unaffected) |
+
+##### 4.16.9.2 AYEntity ECS integration — append `AYTest_StateMachineSystem.cpp` (4 cases)
+
+| # | Name | Contract |
+|---|------|----------|
+| 31 | `sm_system_L2_condition_expr_fires` | conditionExpr `"Speed > 5.0"` + bridge setParam("Speed", 7) + trigger → fires Idle→Run |
+| 32 | `sm_system_L2_condition_expr_does_not_fire` | 同上, speed=3 → 不 fire |
+| 33 | `sm_system_L2_cache_warm_across_ticks` | 5 ticks, conditionDirty=false at end + cachedAst 非 null 持久 |
+| 34 | `sm_system_L2_parse_failure_safe` | conditionExpr `"speed >"` 语法错 → 0 crash + cachedAst=null + conditionParseError 非空 + transition 永假 |
+
+3-run stable verification:
+
+| Module | Baseline (P3.2) | + P3.x | Final | 3-run |
+|---|---|---|---|---|
+| AYAnimation | 600 | +103 (30 L2 + P3.x刀1 .aymask 73) | **703/703** | ✅ × 3 |
+| AYEntity | 385 | +16 (12 P3.2 L3 + 4 L2) | **401/401** | ✅ × 3 |
+| AYResource | 1044 | 0 | 1044 | unchanged |
+
+#### 4.16.10 Edge cases & lessons
+
+1. **Cache invalidate 语义** — 不要假设"set string 一次后就稳". 任何 `setConditionExpr` / `invalidateConditionCache` 调用必须 flag dirty. Test #21..24 钉 setter auto-flag + 显式 invalidate + no-reparse.
+2. **Parse 失败 = 永假** — 不抛异常, 不 assert, 不返回 true (true 会让 transition 误 fire). 永假是安全选择 (跟 INV-23 fail-soft 一致). 关键决策: stderr 输出错误而非 Logia warn (避免引入 Logia 依赖).
+3. **短路求值** — `A && B` 当 `A=false` 时 B 不 evaluate. Test #12 / #13 钉.
+4. **Back-compat 双轨** — `hasCondition=true` + 空 `conditionExpr` 走 L1; 非空 `conditionExpr` 走 L2. **L2 优先 L1**: 若 `conditionExpr` 非空, 完全忽略 L1 字段, 即使 `hasCondition=true`. Test #27 钉.
+5. **`cachedAst` 用 `shared_ptr` 而非 `unique_ptr`** — Transition 住在 `vector<Transition>` 内 by-value, 要求 copyable. 唯一 std lib shared_ptr copyable; unique_ptr copy 会编译 fail. P3.x 决策: shared_ptr (零额外开销, 单 owner).
+6. **mutable + const Transition::evaluate** — `evaluateCondition` 标 const, 但通过 mutable cache 字段 lazy init; 调用方无需 const_cast. RAII 安全: 旧 AST 在 setConditionExpr 后仍可被正在遍历的旧 eval 持有 (shared_ptr 引用计数).
+7. **Lexer unknown token recovery** — 遇到不识别字符 (`@#$`) 不 crash, 记到 outErr, push Unknown token, parser 看到 Unknown 报"unexpected token". AYShader pattern.
+8. **多次 parse 错误只记第 1 个** — fail-fast; 避免 error cascade 让 user 不知道 root cause.
+9. **负数字面量** — `-3.14` 在 lexer 阶段 tokenize 为 `Number(-3.14)` (单 token); 不走 unary 处理, 避免 `-A > 5` 错位 (unary 应只对 ident/literal/paren 起作用).
+10. **空 conditionExpr 语义对齐 hasCondition=false** — INV-32 钉. 空字符串 + `hasCondition=true` 仍走 L1 (用户可能 L1 单 predicate + 不写 L2 expression).
+11. **ECS bridge param 大小写敏感** — `StateMachineSystem` 写 `setParam("Speed", c->speed)` (capitalized). L2 expression 必须用 `"Speed > 5.0"`. 关键教训: 测试 §16.9.2 #31..33 早期用 `"speed > 5.0"` (lowercase) 失败, 改为 `"Speed > 5.0"` 通过. 这是 bridge-by-convention, 文档需明示.
+12. **`currentState` / `currentStateTime` 字段留 P3.x刀 N+1** — 字段已在 ctx struct, 但 P3.x 不消费. 避免 "ship 时即 API 半残" 风险. P3.x刀 N+1 hook (e.g. `CurrentStateTime > 0.5` 防 "落地立刻起跳") 留后续.
+13. **`string` / `int` param 类型** — L1 `_params` 是 `map<string, float>`, L2 沿用. 扩展类型留 P3.x刀 N+2.
+14. **AST depth 无 cap** — INV-30 L3 限定 depth ≤ 2 是子状态机; condition AST 是 expression 不是状态图, depth 由 host expression 决定. Test #19 5 层验证; 恶意深嵌套不 ship 时处理.
+15. **Visitor 接口未消费** — P3.x ship 时 0 consumer; 但为 P4.x graph builder 留口 (§11 row 21–22 AnimGraph visual editor). 当前 0 link 成本.
+16. **mini Lexer/Parser 自写** — 借鉴 pattern 但 0 link AYShader / AYScript / AYGraph. 风险中等, 3-run + back-compat test 锚定.
+
+#### 4.16.11 UPGRADE-HOOK(P4.x — graph builder)
+
+L2 AST Visitor 接口 (`CondVisitor::visit(BinaryExpr/UnaryExpr/IdentifierExpr/LiteralExpr)`) 是 P4.x 状态图编辑器 (AnimGraph-style 节点连接 UI) 的 hook. P4.x ship 时 `Editor` 模块消费 Visitor 遍历 AST → 生成 Blueprint-style 节点; 反向 (用户点 UI → 生成 expression 字符串) 走 `ConditionParser::parse`.
+
+#### 4.16.12 Open questions
+
+1. **算子集是否含算术 (`+ - * /`)?** → **Defer to P3.x刀 N+1** — condition 是布尔, 算术留给 `setParam` 在 host code 算. L2 ship 不引入算术.
+2. **`currentStateTime` 字段 ship 即消费?** → **Defer to P3.x刀 N+1** — 字段已在 ctx, 不消费. ship 时无 "CurrentStateTime > 0.5" 表达式可用; 后续 ship.
+3. **per-state AnimNotify routing?** → **Defer to P3.x刀 N+1** — §13 row 20b 第 2 部分 (per-state AnimNotify) 留后续. L2 ship 仅 condition DSL.
+4. **`.ayasm` loader?** → **Defer to P4.x** — P4.x 与 editor wiring 同期.
+5. **错误消息输出位置?** → **stderr** (chosen) — AYAnimation 走 Logia pattern 之前 ship 时验证过 (P1.4 cross-fade + P3.1 transition 错误都走 stderr 直接 `fprintf`). 不引入 Logia 链接.
+6. **string / int param type?** → **Defer to P3.x刀 N+2** — L1 + L2 都用 `map<string, float>`, 不引入 string param.
+
+---
+
 ## 14. P0-P3 路线图（2026-07-27 修订）
 
 ### P0 — 架构债收口（2026-07-26 起，1 PR 量）
@@ -2694,8 +3002,9 @@ P3.2 ship 增加 **12 AYAnimation unit tests** + **4 AYEntity ECS integration te
 
 | Step | 内容 |
 |---|---|
-| P3.1 | L1-L2 状态机 ── ✅ **L1 SHIP 2026-08-06**：StateMachine class（first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft + INV-18..26）+ AnimationStateMachineComponent（POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + read-back fields + setTrigger convenience）+ StateMachineSystem priority 460（after AnimationSystem 450，sync params + drain triggers + tick SM + push new clip + emit AnimStateChangedEvent via EventBus kTypeId=0x000A'0010）+ 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；3-run stable AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3，零回归；详见 §4.14 + §13 row 20 + §14 P3.1 row。**L2 condition DSL deferred** |
-| P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §14 P3.2 row。**.ayasm loader / 多状态机 / parallel states deferred** |
+| P3.1 | L1 状态机 ── ✅ **SHIP 2026-08-06**：StateMachine class（first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft + INV-18..26）+ AnimationStateMachineComponent（POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + read-back fields + setTrigger convenience）+ StateMachineSystem priority 460（after AnimationSystem 450，sync params + drain triggers + tick SM + push new clip + emit AnimStateChangedEvent via EventBus kTypeId=0x000A'0010）+ 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；3-run stable AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3，零回归；详见 §4.14 + §13 row 20 + §14 P3.1 row |
+| P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §14 P3.2 row |
+| **P3.x** | **L2 Condition DSL ── ✅ SHIP 2026-08-07**：Transition 扩展缓存层（`conditionExpr / cachedAst / conditionDirty / conditionParseError` 4 字段）+ `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族（Binary/Unary/Identifier/Literal + Visitor 接口给 P4.x graph-builder 留口）+ `ConditionParser`（mini Lexer + precedence-climbing Parser，照抄 AYShader pattern 但 0 link AYShader / AYScript / AYGraph）+ 8 算子（`> < == != && \|\| ! ()`）+ 字面量 float / bool + 短路求值（`&&` / `\|\|`）+ 负数字面量 + lazy parse + dirty cache + `setConditionExpr` auto-flag dirty + 显式 `invalidateConditionCache()` + parse-fail-soft-false（cachedAst=null + conditionParseError 非空 + stderr 一行 + transition 永假）+ L1 back-compat 双轨（`hasCondition=true + conditionExpr=""` 走 L1；非空 conditionExpr 走 L2）+ `ConditionEvalCtx` 4 字段（`params / triggers / currentState / currentStateTime`，后两个留 P3.x刀 N+1 钩子）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）；3-run stable AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3，零回归；详见 §4.16 + §13 row 20b + §14 P3.x row。**.ayasm loader / per-state AnimNotify routing / 算术 / 函数调用 / 节点图 deferred** |
 | P3.3 | L4 MotionMatching 风格 |
 | P3.4 | TwoBoneSolver + FABRIK + CCD |
 | P3.5 | IK 约束 (angle / distance / rotation) |
@@ -2740,4 +3049,5 @@ P3.2 ship 增加 **12 AYAnimation unit tests** + **4 AYEntity ECS integration te
 | 2026-08-06 | P3.x刀1 .aymask loader ship：§4.13.7 收口；删 §4.13.11 UPGRADE-HOOK(P3.x) 第一条；§11 / §13 / §14 / §16 勾选同步；新增 §13 row 17h + §14 P3.x刀1 row |
 | 2026-08-06 | **P3.1 L1 状态机 ship**：§4.14 全 12-section（StateMachine class + AnimationStateMachineComponent + StateMachineSystem priority 460 + AnimStateChangedEvent kTypeId=0x000A'0010 + 15 AYAnimation + 8 AYEntity tests）+ §11 P3.1 row + §13 row 20/20a/20b/20c/20d + §14 P3.1 row + 状态抬头同步 543/543 + 370/370 + 1044/1044 3-run stable；2 项 P3.x刀 2（BlendTree in SM）/ P4.x（.ayasm loader / editor wiring）deferred |
 | 2026-08-06 | **P3.2 L3 子状态机 ship**：§4.15 全 12-section（StateMachine._children vector<unique_ptr<StateMachine>> + _currentChildIndex + State.isSubMachine/subMachineIndex + StateMachine move-only + 递归 setTrigger/setParam INV-28 + child-first transition fallback INV-29 + getActiveLeafStateName 深度≤2 INV-30 + _currentChildIndex sync INV-31 + INV-27 sub-machine entry clipPath 忽略）+ ECS bridge 兑现 dt plumbing（sm.update(0.0f)→sm.update(dt)）+ AnimationStateMachineComponent.activeSubState read-back + sub-machine entry 不调 player.play + 12 AYAnimation + 4 AYEntity L3 tests + §4.14.11 UPGRADE-HOOK(P3.2) 标 resolved + §14 P3.2 row 勾选 + 状态抬头同步 600/600 + 385/385 + 1044/1044 3-run stable；3 项 deferred（.ayasm loader / 多状态机 / parallel states）|
+| 2026-08-07 | **P3.x L2 Condition DSL ship**：§4.16 全 12-section（Transition 扩展缓存层 4 字段 + 3 API + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + ConditionEvalCtx 4 字段留 P3.x刀 N+1 钩子 + Visitor 接口为 P4.x graph-builder 留口）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）+ §11 P3.x row ✅ + §13 row 20b ❌→✅ + §14 P3.x row ✅ + 状态抬头同步 703/703 + 401/401 + 1044/1044 3-run stable；4 项 deferred（per-state AnimNotify routing / .ayasm loader / 算术表达式 / 函数调用 & 节点图）|
  |

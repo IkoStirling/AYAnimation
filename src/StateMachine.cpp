@@ -1,11 +1,15 @@
 // StateMachine.cpp — P3.1 (2026-08-06) L1 简单状态机 implementation +
 // P3.2 (2026-08-06) L3 子状态机 extensions (sub-machine entry + recursive
 // setTrigger/setParam + child-first transition fallback + active child
-// resolution).
+// resolution) + P3.x (2026-08-07) L2 Condition DSL cache layer
+// (setConditionExpr / invalidateConditionCache / evaluateCondition with
+//  lazy parse + dirty flag).
 
+#include <ayanimation/ConditionParser.h>
 #include <ayanimation/StateMachine.h>
 #include <algorithm>
 #include <cassert>
+#include <cstdio>
 
 namespace ayt::anim
 {
@@ -169,6 +173,17 @@ bool StateMachine::evaluateCondition(const StateCondition& c) const {
 }
 
 const Transition* StateMachine::findEligibleTransition() const {
+    // P3.x L2 — evaluation context built here so Transition::evaluateCondition
+    // can read SM internals via ConditionEvalCtx (params / triggers) without
+    // exposing them to callers. currentState + currentStateTime are reserved
+    // fields (P3.x刀 N+1).
+    const ConditionEvalCtx ctx{
+        &_params,
+        &_triggers,
+        _currentState,
+        0.0f,
+    };
+
     // Author order matters — first match wins.
     for (const auto& t : _transitions) {
         // INV-21 — fromState=="" wildcard; trigger=="" automatic.
@@ -180,7 +195,8 @@ const Transition* StateMachine::findEligibleTransition() const {
             t.trigger.empty() ? true : (_triggers.count(t.trigger) > 0);
         if (!triggerOk) continue;
 
-        if (t.hasCondition && !evaluateCondition(t.condition)) continue;
+        // P3.x: dispatch via Transition::evaluateCondition (L1 or L2 path).
+        if (!t.evaluateCondition(ctx)) continue;
 
         return &t;
     }
@@ -288,6 +304,83 @@ std::string StateMachine::getActiveLeafStateName() const {
         }
     }
     return _currentState;
+}
+
+// === P3.x L2 NEW — Transition DSL cache layer ===========================
+
+void Transition::setConditionExpr(std::string s) {
+    // INV-34 — auto-flag dirty only when the source actually changed.
+    // Same-string assignments are no-ops to avoid redundant re-parses.
+    if (conditionExpr == s) return;
+    conditionExpr = std::move(s);
+    invalidateConditionCache();
+}
+
+void Transition::invalidateConditionCache() {
+    conditionDirty = true;
+    // Note: cachedAst is intentionally NOT reset here. It stays alive so a
+    // concurrent evaluate() reading it (through Transition::evaluateCondition
+    // — called from findEligibleTransition) can complete safely. The next
+    // call to evaluateCondition will swap it out via unique_ptr assignment
+    // (RAII handles the destroy of the old AST).
+}
+
+bool Transition::evaluateCondition(const ConditionEvalCtx& ctx) const {
+    // === L2 path — DSL expression ===
+    // INV-32 / INV-33 / INV-34 / INV-35 contract surface.
+    if (!conditionExpr.empty()) {
+        if (conditionDirty) {
+            // Lazy parse. cachedAst is assigned (RAII destroys old AST if any).
+            std::string err;
+            cachedAst = ConditionParser::parse(conditionExpr, err);
+            conditionParseError = err;
+            conditionDirty = false;
+
+            if (cachedAst == nullptr) {
+                // INV-33 — parse failure. Surface to stderr for debug, then
+                // return false (transition NEVER fires). NOT a crash, NOT
+                // an assert. Subsequent evaluate() calls hit the same path
+                // because conditionDirty=false + cachedAst=null ⇒ permanent
+                // false (the cache does not re-attempt; a new string is
+                // needed to retry).
+                if (!err.empty()) {
+                    std::fprintf(stderr,
+                                 "[AYAnimation L2] condition parse fail: %s\n",
+                                 err.c_str());
+                }
+                return false;
+            }
+        }
+
+        if (cachedAst == nullptr) {
+            // INV-33 / INV-35 — cached failure stays permanent until the
+            // source string changes (setConditionExpr flags dirty again).
+            return false;
+        }
+
+        return cachedAst->evaluate(ctx);
+    }
+
+    // === L1 path — single predicate (back-compat, INV-23 preserved) ===
+    if (!hasCondition) {
+        // INV-32 — no condition at all ⇒ evaluates true unconditionally.
+        return true;
+    }
+    // The L1 evaluator is private on StateMachine; replicate its body here
+    // so callers (findEligibleTransition) can route through Transition::
+    // evaluateCondition uniformly. Mirrors StateMachine::evaluateCondition
+    // body — same fail-soft semantics.
+    if (ctx.params == nullptr) return false;
+    auto it = ctx.params->find(condition.paramName);
+    if (it == ctx.params->end()) return false;       // INV-23
+    const float v = it->second;
+    switch (condition.op) {
+        case StateConditionOp::Greater:   return v >  condition.compareValue;
+        case StateConditionOp::Less:      return v <  condition.compareValue;
+        case StateConditionOp::Equals:    return std::fabs(v - condition.compareValue) <  1e-6f;
+        case StateConditionOp::NotEqual:  return std::fabs(v - condition.compareValue) >= 1e-6f;
+    }
+    return false;
 }
 
 } // namespace ayt::anim
