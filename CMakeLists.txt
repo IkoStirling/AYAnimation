@@ -42,4 +42,12 @@ target_link_libraries(${MODULE_NAME} PUBLIC AYMath AYResource)
 enable_testing()
 add_subdirectory(unittest)
 
+# P0 polish (2026-08-07) — micro-benchmark for params/triggers lookup
+# performance. Default OFF; build with -DAY_BUILD_BENCHMARKS=ON to
+# verify pre/post-refactor speedup numbers. NOT in PR-gate.
+option(AY_BUILD_BENCHMARKS "Build AYAnimation micro-benchmarks" OFF)
+if(AY_BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
+endif()
+
 message(STATUS "AYAnimation v0.1.0 (P2.1 BlendSpace ship + P1.7 final pieces) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

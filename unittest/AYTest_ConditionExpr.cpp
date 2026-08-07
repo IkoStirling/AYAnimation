@@ -65,14 +65,23 @@ StateMachine makeIdleRunSM()
 
 ConditionEvalCtx makeCtx(std::initializer_list<std::pair<std::string, float>> params)
 {
-    static std::unordered_map<std::string, float> paramMap;
-    paramMap.clear();
-    for (auto& p : params) paramMap.emplace(p.first, p.second);
-    static std::unordered_set<std::string> trigSet;
-    trigSet.clear();
+    // P0 polish (2026-08-07) — adapt to flat-vector containers.
+    // The signature is unchanged (still takes string→float pairs), but
+    // internals switch from unordered_map<string,float> to
+    // vector<ParamEntry> with FNV-1a hash via ParamNameRegistry.
+    static std::vector<ParamEntry> paramVec;
+    paramVec.clear();
+    for (auto& p : params) {
+        paramVec.push_back({
+            ayt::anim::detail::ParamNameRegistry::instance().intern(p.first),
+            p.second,
+        });
+    }
+    static std::vector<uint32_t> trigVec;
+    trigVec.clear();
     ConditionEvalCtx ctx;
-    ctx.params = &paramMap;
-    ctx.triggers = &trigSet;
+    ctx.params = &paramVec;
+    ctx.triggers = &trigVec;
     return ctx;
 }
 

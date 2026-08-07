@@ -4,7 +4,10 @@
 // resolution) + P3.x (2026-08-07) L2 Condition DSL cache layer
 // (setConditionExpr / invalidateConditionCache / evaluateCondition with
 //  lazy parse + dirty flag) + P3.x刀 N+1.B (2026-08-07) Time-in-State
-// Query (update top +dt + fireTransition reset + ctx plumbing).
+// Query (update top +dt + fireTransition reset + ctx plumbing) +
+// P0 polish (2026-08-07) Flat-array params/triggers + global name
+// registry (replace unordered_map<string,float> + unordered_set<string>
+// with hash-based vector lookups; see design §4.18 + INV-43..46).
 
 #include <ayanimation/ConditionParser.h>
 #include <ayanimation/StateMachine.h>
@@ -15,7 +18,72 @@
 namespace ayt::anim
 {
 
-StateMachine::StateMachine() = default;
+// === P0 polish (2026-08-07) — ParamNameRegistry out-of-line storage ===
+// The registry is header-only; only the static kEmpty sentinel needs
+// a definition in one TU. Returns "" for unknown hashes — debug-only.
+const std::string detail::ParamNameRegistry::kEmpty;
+
+StateMachine::StateMachine() {
+    // P0 polish (INV-45, INV-46) — pre-reserve capacity so the first
+    // few setParam/setTrigger calls don't reallocate. Production per-
+    // entity params usually ≤ 8; triggers ≤ 4.
+    _params.reserve(8);
+    _triggers.reserve(4);
+}
+
+// === P0 polish (2026-08-07) — flat-array helpers ========================
+
+std::size_t StateMachine::findParamIndex(uint32_t hash) const {
+    // Linear scan. With pre-reserved capacity 8 and N ≤ 8 production,
+    // this is cache-friendly and beats hash lookup for N ≤ 8.
+    for (std::size_t i = 0; i < _params.size(); ++i) {
+        if (_params[i].hash == hash) return i;
+    }
+    return static_cast<std::size_t>(-1);
+}
+
+void StateMachine::setParamByHash(uint32_t hash, float value) {
+    // INV-43 — hash 0 is reserved as empty-slot sentinel. Real names
+    // are guaranteed non-zero by FNV-1a baseline (2166136261u).
+    assert(hash != 0 && "StateMachine::setParamByHash: hash 0 is reserved");
+    const std::size_t idx = findParamIndex(hash);
+    if (idx != static_cast<std::size_t>(-1)) {
+        _params[idx].value = value;
+    } else {
+        _params.push_back({ hash, value });
+    }
+}
+
+float StateMachine::getParamByHash(uint32_t hash) const {
+    // INV-43 — hash 0 is unrecoverable; return 0.0f (INV-23 fail-soft).
+    if (hash == 0) return 0.0f;
+    const std::size_t idx = findParamIndex(hash);
+    return idx == static_cast<std::size_t>(-1) ? 0.0f : _params[idx].value;
+}
+
+void StateMachine::addTriggerHash(uint32_t hash) {
+    // INV-43 — hash 0 is reserved.
+    assert(hash != 0 && "StateMachine::addTriggerHash: hash 0 is reserved");
+    // Binary search for insertion point to keep sorted (INV-46).
+    auto it = std::lower_bound(_triggers.begin(), _triggers.end(), hash);
+    if (it == _triggers.end() || *it != hash) {
+        _triggers.insert(it, hash);
+    }
+}
+
+bool StateMachine::hasTriggerHash(uint32_t hash) const {
+    if (hash == 0) return false;
+    auto it = std::lower_bound(_triggers.begin(), _triggers.end(), hash);
+    return it != _triggers.end() && *it == hash;
+}
+
+void StateMachine::eraseTriggerHash(uint32_t hash) {
+    if (hash == 0) return;
+    auto it = std::lower_bound(_triggers.begin(), _triggers.end(), hash);
+    if (it != _triggers.end() && *it == hash) {
+        _triggers.erase(it);
+    }
+}
 
 void StateMachine::addState(const State& s) {
     assert(!s.name.empty() && "StateMachine::addState: empty state name");
@@ -83,7 +151,9 @@ void StateMachine::clear() {
 
 void StateMachine::setTrigger(const std::string& name) {
     if (name.empty()) return;
-    _triggers.insert(name);
+    // P0 polish (2026-08-07) — intern to hash, store in sorted vector.
+    const uint32_t hash = detail::ParamNameRegistry::instance().intern(name);
+    addTriggerHash(hash);
 
     // P3.2 NEW (INV-28) — propagate into active child only.
     if (auto* child = activeChild()) {
@@ -93,7 +163,9 @@ void StateMachine::setTrigger(const std::string& name) {
 
 void StateMachine::setParam(const std::string& name, float value) {
     if (name.empty()) return;
-    _params[name] = value;
+    // P0 polish (2026-08-07) — intern to hash, write into flat array.
+    const uint32_t hash = detail::ParamNameRegistry::instance().intern(name);
+    setParamByHash(hash, value);
 
     // P3.2 NEW (INV-28) — propagate into active child only.
     if (auto* child = activeChild()) {
@@ -102,8 +174,10 @@ void StateMachine::setParam(const std::string& name, float value) {
 }
 
 float StateMachine::getParam(const std::string& name) const {
-    auto it = _params.find(name);
-    return it == _params.end() ? 0.0f : it->second;
+    if (name.empty()) return 0.0f;
+    // P0 polish (2026-08-07) — intern to hash, lookup in flat array.
+    const uint32_t hash = detail::ParamNameRegistry::instance().intern(name);
+    return getParamByHash(hash);
 }
 
 void StateMachine::update(float dt) {
@@ -173,12 +247,14 @@ void StateMachine::update(float dt) {
 }
 
 bool StateMachine::evaluateCondition(const StateCondition& c) const {
-    auto it = _params.find(c.paramName);
-    if (it == _params.end()) {
+    // P0 polish (2026-08-07) — intern c.paramName to hash, lookup in flat array.
+    const uint32_t hash = detail::ParamNameRegistry::instance().intern(c.paramName);
+    const std::size_t idx = findParamIndex(hash);
+    if (idx == static_cast<std::size_t>(-1)) {
         // INV-23 — unknown param fail-soft (matches P2.2 ISkeletonMask).
         return false;
     }
-    const float v = it->second;
+    const float v = _params[idx].value;
     switch (c.op) {
         case StateConditionOp::Greater:   return v >  c.compareValue;
         case StateConditionOp::Less:      return v <  c.compareValue;
@@ -194,6 +270,10 @@ const Transition* StateMachine::findEligibleTransition() const {
     // exposing them to callers. currentState + currentStateTime were reserved
     // fields in P3.x; P3.x刀 N+1.B plumbs the live time-in-state value here
     // so CondIdentifierExpr's "CurrentStateTime" reserved ident can read it.
+    //
+    // P0 polish (2026-08-07) — ctx field types changed:
+    //   params:   const std::vector<ParamEntry>* (was unordered_map<string,float>*)
+    //   triggers: const std::vector<uint32_t>*    (was unordered_set<string>*)
     const ConditionEvalCtx ctx{
         &_params,
         &_triggers,
@@ -208,8 +288,9 @@ const Transition* StateMachine::findEligibleTransition() const {
             t.fromState.empty() || t.fromState == _currentState;
         if (!fromMatches) continue;
 
-        const bool triggerOk =
-            t.trigger.empty() ? true : (_triggers.count(t.trigger) > 0);
+        // P0 polish (2026-08-07) — binary search for trigger hash.
+        const bool triggerOk = t.trigger.empty() ? true
+            : hasTriggerHash(detail::ParamNameRegistry::instance().intern(t.trigger));
         if (!triggerOk) continue;
 
         // P3.x: dispatch via Transition::evaluateCondition (L1 or L2 path).
@@ -248,8 +329,11 @@ void StateMachine::fireTransition(const Transition& t) {
         _transitionElapsed = 0.0f;
     }
     // INV-20 — trigger consumed on first eligible transition.
+    // P0 polish (2026-08-07) — binary-search erase from sorted vector.
     if (!t.trigger.empty()) {
-        _triggers.erase(t.trigger);
+        const uint32_t triggerHash =
+            detail::ParamNameRegistry::instance().intern(t.trigger);
+        eraseTriggerHash(triggerHash);
     }
 }
 
@@ -393,10 +477,19 @@ bool Transition::evaluateCondition(const ConditionEvalCtx& ctx) const {
     // so callers (findEligibleTransition) can route through Transition::
     // evaluateCondition uniformly. Mirrors StateMachine::evaluateCondition
     // body — same fail-soft semantics.
+    //
+    // P0 polish (2026-08-07) — hash-based lookup via ParamNameRegistry.
+    // ctx.params is now std::vector<ParamEntry>* (was unordered_map*), so
+    // we walk the vector linearly after the string-to-hash intern.
     if (ctx.params == nullptr) return false;
-    auto it = ctx.params->find(condition.paramName);
-    if (it == ctx.params->end()) return false;       // INV-23
-    const float v = it->second;
+    const uint32_t condHash =
+        detail::ParamNameRegistry::instance().intern(condition.paramName);
+    float v = 0.0f;
+    bool found = false;
+    for (const auto& entry : *ctx.params) {
+        if (entry.hash == condHash) { v = entry.value; found = true; break; }
+    }
+    if (!found) return false;       // INV-23
     switch (condition.op) {
         case StateConditionOp::Greater:   return v >  condition.compareValue;
         case StateConditionOp::Less:      return v <  condition.compareValue;

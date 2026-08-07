@@ -18,6 +18,7 @@
 
 #include <ayanimation/ConditionExpr.h>
 #include <ayanimation/ConditionParser.h>
+#include <ayanimation/StateMachine.h>  // P0 polish — for detail::ParamNameRegistry
 
 #include <cctype>
 #include <cmath>
@@ -49,9 +50,16 @@ float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
         return ctx.currentStateTime;
     }
     if (ctx.params == nullptr) return 0.0f;       // INV-23 fail-soft
-    auto it = ctx.params->find(name);
-    if (it == ctx.params->end()) return 0.0f;     // INV-23 fail-soft
-    return it->second;
+    // P0 polish (2026-08-07) — intern the identifier to its FNV-1a
+    // hash, then walk the flat params vector (N ≤ 8 production) to
+    // find the matching entry. Hash is the canonical key from this
+    // point on; no string compare in the hot path.
+    const uint32_t identifierHash =
+        detail::ParamNameRegistry::instance().intern(name);
+    for (const auto& entry : *ctx.params) {
+        if (entry.hash == identifierHash) return entry.value;
+    }
+    return 0.0f;                                   // INV-23 fail-soft
 }
 
 bool CondLiteralExpr::evaluate(const ConditionEvalCtx& /*ctx*/) const {

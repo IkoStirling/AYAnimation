@@ -46,9 +46,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <variant>
+#include <vector>
 
 namespace ayt::anim
 {
@@ -76,10 +75,27 @@ struct CondLiteralExpr;
 // Evaluation context passed down the AST during evaluate(). Points to SM
 // internals (params / triggers). ConditionEvalCtx is cheap to construct.
 struct ConditionEvalCtx {
-    const std::unordered_map<std::string, float>* params  = nullptr;
-    const std::unordered_set<std::string>*       triggers = nullptr;
+    // P0 polish (2026-08-07) — field types changed from unordered_* to
+    // flat-vector containers. Only StateMachine.cpp constructs this
+    // struct (via findEligibleTransition); downstream users adapt.
+    // Test helpers (e.g. AYTest_ConditionExpr.cpp makeCtx) must use
+    // std::vector<ParamEntry> + ParamNameRegistry::intern() to build a
+    // compatible params vector. See design §4.18 migration notes.
+    using ParamsVector   = const std::vector<struct ParamEntry>*;
+    using TriggersVector = const std::vector<uint32_t>*;
+    ParamsVector        params  = nullptr;
+    TriggersVector      triggers = nullptr;
     std::string  currentState;                        // reserved (P3.x刀 N+1)
     float        currentStateTime = 0.0f;             // reserved (P3.x刀 N+1)
+};
+
+// P0 polish (2026-08-07) — flat-array row. Defined here (not in
+// StateMachine.h) so ConditionEvalCtx can use std::vector<ParamEntry>
+// without a circular include. StateMachine.h already includes this
+// header, so the type is visible transitively.
+struct ParamEntry {
+    uint32_t hash;    // 0 reserved (sentinel); consumers must reject hash 0
+    float    value;
 };
 
 // Abstract AST base. Subclasses implement `evaluate` (recursive tree-walk)
