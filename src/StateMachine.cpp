@@ -18,10 +18,12 @@
 namespace ayt::anim
 {
 
-// === P0 polish (2026-08-07) — ParamNameRegistry out-of-line storage ===
-// The registry is header-only; only the static kEmpty sentinel needs
-// a definition in one TU. Returns "" for unknown hashes — debug-only.
-const std::string detail::ParamNameRegistry::kEmpty;
+// === P0 polish (2026-08-07) + P1 polish (2026-08-07) — ParamNameRegistry
+// out-of-line storage. The registry is declared in ParamNameRegistry.h;
+// only the static kEmpty sentinel needs a definition in one TU. Returns ""
+// for unknown hashes — debug-only. Path was ayt::anim::detail before the
+// P1 polish header split; same definition site here.
+const std::string ayt::anim::detail::ParamNameRegistry::kEmpty;
 
 StateMachine::StateMachine() {
     // P0 polish (INV-45, INV-46) — pre-reserve capacity so the first
@@ -108,7 +110,23 @@ void StateMachine::addTransition(const Transition& t) {
         assert(_stateIndexByName.count(t.fromState) > 0 &&
                "StateMachine::addTransition: fromState not in state list");
     }
-    _transitions.push_back(t);
+
+    // P1 polish (2026-08-07) — pre-compute triggerHash and
+    // conditionParamNameHash ONCE here, eliminating per-frame
+    // ParamNameRegistry::intern() calls in findEligibleTransition,
+    // fireTransition, and Transition::evaluateCondition L1 path.
+    // Both hashes are immutable after addTransition() (INV-49); if
+    // host code mutates trigger / condition.paramName directly after
+    // construction, the cache becomes stale (documented in StateMachine.h).
+    Transition withHashes = t;
+    withHashes.triggerHash = t.trigger.empty()
+        ? 0u
+        : detail::ParamNameRegistry::instance().intern(t.trigger);
+    withHashes.conditionParamNameHash =
+        (t.hasCondition && !t.condition.paramName.empty())
+        ? detail::ParamNameRegistry::instance().intern(t.condition.paramName)
+        : 0u;
+    _transitions.push_back(std::move(withHashes));
 }
 
 void StateMachine::setInitialState(const std::string& name) {
@@ -288,9 +306,23 @@ const Transition* StateMachine::findEligibleTransition() const {
             t.fromState.empty() || t.fromState == _currentState;
         if (!fromMatches) continue;
 
-        // P0 polish (2026-08-07) — binary search for trigger hash.
+        // P1 polish (2026-08-07) — use pre-computed triggerHash from
+        // addTransition (was: per-frame intern). 0 hash ⟺ empty trigger,
+        // matches "" semantics (INV-47).
+        //
+        // Lazy fallback: if trigger is non-empty but triggerHash is 0
+        // (transition was mutated directly via const_cast after
+        // addTransition), recompute the hash on demand. Production
+        // paths never reach here because addTransition pre-computes
+        // the hash. Test fixtures (e.g. P3.x L2 back-compat tests)
+        // that mutate trigger via const_cast AFTER addTransition fall
+        // through to this lazy recompute.
+        uint32_t lookupHash = t.triggerHash;
+        if (lookupHash == 0 && !t.trigger.empty()) {
+            lookupHash = detail::ParamNameRegistry::instance().intern(t.trigger);
+        }
         const bool triggerOk = t.trigger.empty() ? true
-            : hasTriggerHash(detail::ParamNameRegistry::instance().intern(t.trigger));
+            : hasTriggerHash(lookupHash);
         if (!triggerOk) continue;
 
         // P3.x: dispatch via Transition::evaluateCondition (L1 or L2 path).
@@ -330,10 +362,15 @@ void StateMachine::fireTransition(const Transition& t) {
     }
     // INV-20 — trigger consumed on first eligible transition.
     // P0 polish (2026-08-07) — binary-search erase from sorted vector.
+    // P1 polish (2026-08-07) — use pre-computed triggerHash from
+    // addTransition (was: per-frame intern). Lazy fallback if trigger
+    // was mutated via const_cast AFTER addTransition (INV-49).
     if (!t.trigger.empty()) {
-        const uint32_t triggerHash =
-            detail::ParamNameRegistry::instance().intern(t.trigger);
-        eraseTriggerHash(triggerHash);
+        uint32_t eraseHash = t.triggerHash;
+        if (eraseHash == 0) {
+            eraseHash = detail::ParamNameRegistry::instance().intern(t.trigger);
+        }
+        eraseTriggerHash(eraseHash);
     }
 }
 
@@ -481,9 +518,28 @@ bool Transition::evaluateCondition(const ConditionEvalCtx& ctx) const {
     // P0 polish (2026-08-07) — hash-based lookup via ParamNameRegistry.
     // ctx.params is now std::vector<ParamEntry>* (was unordered_map*), so
     // we walk the vector linearly after the string-to-hash intern.
+    //
+    // P1 polish (2026-08-07) — use pre-computed conditionParamNameHash
+    // from addTransition (was: per-frame intern). 0 hash ⟺ !hasCondition
+    // OR empty paramName (INV-48 sentinel pre-check).
+    //
+    // Lazy fallback: if hasCondition=true but conditionParamNameHash is
+    // still 0 (transition was mutated directly via const_cast — e.g. in
+    // test fixtures or via direct field write after addTransition),
+    // recompute the hash on demand. This preserves the hot-path speedup
+    // (production paths never hit this branch) while remaining
+    // back-compat with test code that mutates struct fields directly.
     if (ctx.params == nullptr) return false;
-    const uint32_t condHash =
-        detail::ParamNameRegistry::instance().intern(condition.paramName);
+    uint32_t condHash = conditionParamNameHash;
+    if (condHash == 0 && hasCondition && !condition.paramName.empty()) {
+        // INV-49 — direct field mutation fallback. Production paths
+        // never reach here because addTransition pre-computes the hash.
+        // Test fixtures (e.g. P3.x L2 back-compat tests) that mutate
+        // condition.paramName via const_cast AFTER addTransition fall
+        // through to this lazy recompute.
+        condHash = detail::ParamNameRegistry::instance().intern(condition.paramName);
+    }
+    if (condHash == 0) return false;       // INV-48 sentinel pre-check
     float v = 0.0f;
     bool found = false;
     for (const auto& entry : *ctx.params) {

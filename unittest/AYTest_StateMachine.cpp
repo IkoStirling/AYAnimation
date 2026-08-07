@@ -1,5 +1,6 @@
 // AYTest_StateMachine.cpp — P3.1 (2026-08-06) L1 简单状态机 unit tests +
-//                              P0 polish (2026-08-07) flat-array tests.
+//                              P0 polish (2026-08-07) flat-array tests +
+//                              P1 polish (2026-08-07) hot-path hash cache.
 //
 // 15 cases pinning INV-18..24 contracts from design.md §4.14:
 //   INV-18 single current state at any moment after update()
@@ -16,6 +17,16 @@
 //              linear probe; vec reserve 8
 //   INV-46     _triggers is a sorted std::vector<uint32_t>; binary search
 //              via std::lower_bound; vec reserve 4
+//
+// + 2 cases (P1 polish) pinning INV-47..49:
+//   INV-47     Transition::triggerHash pre-computed at addTransition time
+//              (0 ⟺ empty trigger); eliminates per-frame intern in
+//              findEligibleTransition + fireTransition
+//   INV-48     Transition::conditionParamNameHash pre-computed at
+//              addTransition time (0 ⟺ !hasCondition || empty paramName);
+//              eliminates per-frame intern in Transition::evaluateCondition
+//              L1 path
+//   INV-49     Both hashes immutable after addTransition
 //
 // Standalone — no AYEntity, no AnimationPlayer. Direct StateMachine API.
 
@@ -420,6 +431,143 @@ TEST_SUITE(StateMachineTests)
         // match — proves the trigger is gone).
         sm.update(0.016f);
         CHECK(sm.getCurrentStateName() == "Run");
+    }
+
+    // =====================================================================
+    // §P1 polish — Hot-path hash cache (INV-47..49)
+    // =====================================================================
+    //
+    // After P1 polish, Transition carries triggerHash + conditionParamNameHash
+    // fields computed once at addTransition time. The per-frame
+    // ParamNameRegistry::intern() calls in findEligibleTransition +
+    // Transition::evaluateCondition L1 path + fireTransition are eliminated.
+
+    // ─── #18 — P1 polish: triggerHash pre-computed at addTransition. ───
+    TEST_CASE(P1_Transition_TriggerHash_CachedAtAddTransition) {
+        // INV-47 — Transition::triggerHash is computed once at addTransition
+        // time (0 ⟺ empty trigger). After addTransition, the hash is stable
+        // and matches what ParamNameRegistry::intern() returns for the same
+        // name. The per-frame findEligibleTransition + fireTransition calls
+        // use this cached hash directly (no per-frame intern).
+        //
+        // Use a unique name not registered anywhere else so we can assert
+        // the registry grew by exactly 1 (avoid shared-registry pollution
+        // from earlier tests in this suite).
+        const std::string uniqueTrig = "P1_TriggerHash_Test_Unique_Name";
+
+        StateMachine sm;
+        State sIdle; sIdle.name = "Idle"; sIdle.clipPath = "idle.ayanm"; sm.addState(sIdle);
+        State sRun;  sRun.name  = "Run";  sRun.clipPath  = "run.ayanm";  sm.addState(sRun);
+        sm.setInitialState("Idle");
+
+        Transition t;
+        t.trigger   = uniqueTrig;
+        t.fromState = "Idle";
+        t.toState   = "Run";
+
+        const std::size_t registrySizeBefore =
+            StateMachine::getParamNameRegistrySize();
+        sm.addTransition(t);
+        const std::size_t registrySizeAfter =
+            StateMachine::getParamNameRegistrySize();
+
+        // Read back the transition (via getTransitions + const_cast pattern
+        // used by P3.x L2 tests) to inspect the cached hash.
+        auto& transitions = const_cast<std::vector<Transition>&>(
+            sm.getTransitions());
+
+        CHECK(transitions.size() == 1);
+        CHECK(transitions[0].triggerHash != 0);     // INV-47: non-empty
+        CHECK(transitions[0].trigger == uniqueTrig);
+
+        // Registry should have grown by exactly 1 entry (uniqueTrig was
+        // interned at addTransition time, NOT used by any earlier test).
+        CHECK(registrySizeAfter - registrySizeBefore == 1);
+
+        // The cached hash matches what ParamNameRegistry returns for uniqueTrig.
+        const uint32_t directHash =
+            ayt::anim::detail::ParamNameRegistry::instance().intern(uniqueTrig);
+        CHECK(transitions[0].triggerHash == directHash);
+
+        // Sanity: setting trigger then firing via update goes through cached
+        // triggerHash (not a new intern()). After fire, trigger is erased
+        // using cached hash.
+        sm.setTrigger(uniqueTrig);
+        sm.update(0.016f);
+        CHECK(sm.getCurrentStateName() == "Run");
+    }
+
+    // ─── #19 — P1 polish: conditionParamNameHash pre-computed at addTransition.
+    TEST_CASE(P1_Transition_ConditionHash_CachedAtAddTransition) {
+        // INV-48 — Transition::conditionParamNameHash is computed once at
+        // addTransition time when hasCondition=true and paramName is non-empty.
+        // 0 hash otherwise (sentinel pre-check).
+        StateMachine sm;
+        State sIdle; sIdle.name = "Idle"; sIdle.clipPath = "idle.ayanm"; sm.addState(sIdle);
+        State sRun;  sRun.name  = "Run";  sRun.clipPath  = "run.ayanm";  sm.addState(sRun);
+        sm.setInitialState("Idle");
+
+        // Case A — transition WITH L1 condition: hash must be non-zero.
+        Transition condT;
+        condT.trigger        = "";
+        condT.fromState      = "Idle";
+        condT.toState        = "Run";
+        condT.hasCondition   = true;
+        condT.condition.paramName  = "Speed";
+        condT.condition.op         = StateConditionOp::Greater;
+        condT.condition.compareValue = 5.0f;
+
+        sm.addTransition(condT);
+
+        // Case B — transition WITHOUT L1 condition: hash must be 0.
+        Transition noCondT;
+        noCondT.trigger   = "";
+        noCondT.fromState = "Idle";
+        noCondT.toState   = "Run";
+        // hasCondition stays false; paramName empty.
+
+        sm.addTransition(noCondT);
+
+        auto& transitions = const_cast<std::vector<Transition>&>(
+            sm.getTransitions());
+
+        CHECK(transitions.size() == 2);
+
+        // Case A: cached hash present + matches registry intern result.
+        CHECK(transitions[0].conditionParamNameHash != 0);     // INV-48
+        CHECK(transitions[0].hasCondition == true);
+        const uint32_t speedHash =
+            ayt::anim::detail::ParamNameRegistry::instance().intern("Speed");
+        CHECK(transitions[0].conditionParamNameHash == speedHash);
+
+        // Case B: 0 sentinel because !hasCondition.
+        CHECK(transitions[1].conditionParamNameHash == 0);     // INV-48
+        CHECK(transitions[1].hasCondition == false);
+
+        // Functional verification — evaluate L1 condition using cached hash
+        // (zero intern per eval). Speed=7.0 > 5.0 should fire.
+        sm.setParam("Speed", 7.0f);
+        sm.update(0.016f);
+        CHECK(sm.getCurrentStateName() == "Run");
+
+        // Speed=3.0 < 5.0 should NOT fire. Set initial back to Idle and
+        // add a new transition Idle→Run with Speed > 50 condition.
+        sm.clear();
+        State sIdle2; sIdle2.name = "Idle"; sIdle2.clipPath = "idle.ayanm"; sm.addState(sIdle2);
+        State sRun2;  sRun2.name  = "Run";  sRun2.clipPath  = "run.ayanm";  sm.addState(sRun2);
+        sm.setInitialState("Idle");
+        Transition big;
+        big.trigger        = "";
+        big.fromState      = "Idle";
+        big.toState        = "Run";
+        big.hasCondition   = true;
+        big.condition.paramName  = "Speed";
+        big.condition.op         = StateConditionOp::Greater;
+        big.condition.compareValue = 50.0f;
+        sm.addTransition(big);
+        sm.setParam("Speed", 3.0f);
+        sm.update(0.016f);
+        CHECK(sm.getCurrentStateName() == "Idle");   // condition false, no fire
     }
 
 TEST_SUITE_END

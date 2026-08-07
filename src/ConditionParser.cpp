@@ -46,16 +46,21 @@ float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
     // param registered with setParam("CurrentStateTime", ...).
     // Mirrors UE FAnimNode_StateMachine::GetCurrentStateElapsedTime
     // access pattern (state-machine internal state, not a free param).
+    //
+    // P1 polish (2026-08-07) — string compare is cheap (~5ns SSO for
+    // "CurrentStateTime"); reserved ident priority preserved (INV-51).
     if (name == "CurrentStateTime") {
         return ctx.currentStateTime;
     }
     if (ctx.params == nullptr) return 0.0f;       // INV-23 fail-soft
-    // P0 polish (2026-08-07) — intern the identifier to its FNV-1a
-    // hash, then walk the flat params vector (N ≤ 8 production) to
-    // find the matching entry. Hash is the canonical key from this
-    // point on; no string compare in the hot path.
-    const uint32_t identifierHash =
-        detail::ParamNameRegistry::instance().intern(name);
+    // P0 polish (2026-08-07) — walk the flat params vector (N ≤ 8
+    // production) using the FNV-1a hash.
+    // P1 polish (2026-08-07) — use pre-computed nameHash from ctor
+    // (INV-50), eliminating per-eval ParamNameRegistry::intern() call.
+    // Production state machine: 100 entities × 3 idents × 60 fps =
+    // 18,000 intern/秒 saved per-frame.
+    const uint32_t identifierHash = nameHash;
+    if (identifierHash == 0) return 0.0f;          // empty name → INV-23 fail-soft
     for (const auto& entry : *ctx.params) {
         if (entry.hash == identifierHash) return entry.value;
     }

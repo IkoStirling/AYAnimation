@@ -31,6 +31,14 @@
 //   * INV-39 — reserved ident "CurrentStateTime" in CondIdentifierExpr routes
 //              to ctx.currentStateTime (SHADOWS any user param of same name)
 //
+// INV-50..51 contracts (P1 polish 2026-08-07) — Hot-Path Hash Caching:
+//   * INV-50 — CondIdentifierExpr::nameHash is pre-computed at ctor time
+//              via ParamNameRegistry::intern(); 0 hash ⟺ empty name
+//              (sentinel; FNV-1a baseline guarantees non-empty never 0).
+//   * INV-51 — Reserved ident "CurrentStateTime" (string compare) takes
+//              priority over nameHash lookup in
+//              CondIdentifierExpr::evaluateAsFloat (matches INV-39).
+//
 // Operators supported (8): > < == != && || ! ( )
 // Literals: float / bool (true / false)
 // Identifiers: bare param names looked up in ConditionEvalCtx::params;
@@ -42,6 +50,8 @@
 //   * string / int param types
 
 #pragma once
+
+#include <ayanimation/ParamNameRegistry.h>
 
 #include <cstdint>
 #include <memory>
@@ -160,8 +170,20 @@ struct CondUnaryExpr final : public CondExprAst {
 
 struct CondIdentifierExpr final : public CondExprAst {
     std::string name;
+    // P1 polish (2026-08-07) — pre-computed FNV-1a hash of `name`,
+    // computed ONCE at construction via ParamNameRegistry::intern().
+    // Used by evaluateAsFloat() instead of per-eval intern() lookup.
+    // INV-50: 0 hash ⟺ empty name (sentinel; FNV-1a baseline 2166136261u
+    // guarantees non-empty names never collide with 0).
+    uint32_t    nameHash = 0;
 
-    explicit CondIdentifierExpr(std::string n) : name(std::move(n)) {}
+    // Constructor calls ParamNameRegistry::intern() once to populate
+    // nameHash. For an empty name, the sentinel 0 is used (skips intern
+    // to avoid inserting empty-string sentinel into the registry).
+    explicit CondIdentifierExpr(std::string n)
+        : name(std::move(n)),
+          nameHash(name.empty() ? 0u
+              : detail::ParamNameRegistry::instance().intern(name)) {}
 
     bool evaluate(const ConditionEvalCtx& ctx) const override;
     void accept(CondVisitor& v) const override { v.visit(*this); }
@@ -173,6 +195,10 @@ struct CondIdentifierExpr final : public CondExprAst {
     //
     // P3.x刀 N+1.B — reserved ident "CurrentStateTime" (INV-39) takes
     // priority over user params lookup; same name user param is shadowed.
+    //
+    // P1 polish (2026-08-07) — uses pre-computed nameHash from ctor
+    // (INV-50), eliminating per-eval intern() lookup (was: linear scan
+    // of ParamNameRegistry._byHash on every evaluateAsFloat call).
     float evaluateAsFloat(const ConditionEvalCtx& ctx) const;
 };
 

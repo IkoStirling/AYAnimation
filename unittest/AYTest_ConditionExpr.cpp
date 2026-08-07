@@ -662,4 +662,82 @@ TEST_CASE(L2_BackCompat_SubMachinePath_Unaffected) {
     CHECK(sm.getActiveLeafStateName() == "Run");
 }
 
+// =====================================================================
+// §P1 polish — Hot-path hash cache for CondIdentifierExpr (INV-50..51)
+// =====================================================================
+//
+// After P1 polish, CondIdentifierExpr::nameHash is pre-computed at ctor
+// time via ParamNameRegistry::intern(). The per-eval intern() call inside
+// evaluateAsFloat is eliminated; the cached nameHash is walked directly
+// against ctx.params. Production state machines with 3+ identifiers in
+// a transition condition (e.g. "Speed > 5.0 && IsGrounded && !IsDead")
+// benefit the most — only 3 intern() calls total (one per ctor) instead
+// of 3 × N evals × 60 fps.
+
+TEST_CASE(P1_CondIdent_NameHash_NonEmpty) {
+    // INV-50 — CondIdentifierExpr::nameHash is non-zero for non-empty
+    // names. FNV-1a baseline guarantees no collision with 0.
+    CondIdentifierExpr ident(std::string("Speed"));
+    CHECK(ident.name == "Speed");
+    CHECK(ident.nameHash != 0);                   // INV-50
+    // The cached hash matches what the registry would return.
+    const uint32_t directHash =
+        ayt::anim::detail::ParamNameRegistry::instance().intern("Speed");
+    CHECK(ident.nameHash == directHash);
+}
+
+TEST_CASE(P1_CondIdent_NameHash_EmptyName_HashZero) {
+    // INV-50 sentinel — empty name yields 0 hash (no intern call,
+    // no entry inserted into the registry).
+    const std::size_t registrySizeBefore =
+        StateMachine::getParamNameRegistrySize();
+    CondIdentifierExpr identEmpty(std::string(""));
+    CondIdentifierExpr identFoo(std::string("Foo"));
+    const std::size_t registrySizeAfter =
+        StateMachine::getParamNameRegistrySize();
+
+    CHECK(identEmpty.name == "");
+    CHECK(identEmpty.nameHash == 0);              // INV-50 sentinel
+    CHECK(identFoo.name == "Foo");
+    CHECK(identFoo.nameHash != 0);
+
+    // Only "Foo" was interned; empty name skipped (no insert).
+    CHECK(registrySizeAfter - registrySizeBefore == 1);
+}
+
+TEST_CASE(P1_CondIdent_Evaluate_NoIntern) {
+    // The hot path: 1000 evaluations of the same identifier expression
+    // should NOT trigger additional ParamNameRegistry::intern() calls.
+    // Registry size is captured before/after to assert zero growth
+    // beyond the single ctor-time intern.
+    CondIdentifierExpr ident(std::string("Speed"));
+    const std::size_t registrySizeAfterCtor =
+        StateMachine::getParamNameRegistrySize();
+
+    // Build a 1-entry params vector (hash matches ident.nameHash).
+    std::vector<ParamEntry> paramVec;
+    paramVec.push_back({ ident.nameHash, 5.0f });
+
+    ConditionEvalCtx ctx;
+    ctx.params = &paramVec;
+    ctx.triggers = nullptr;
+    ctx.currentState = "Idle";
+    ctx.currentStateTime = 0.0f;
+
+    // 1000 evaluations — registry size must stay constant.
+    for (int i = 0; i < 1000; ++i) {
+        const float v = ident.evaluateAsFloat(ctx);
+        CHECK(v == 5.0f);
+    }
+
+    const std::size_t registrySizeAfterEvals =
+        StateMachine::getParamNameRegistrySize();
+    CHECK(registrySizeAfterEvals == registrySizeAfterCtor);   // zero per-eval intern
+
+    // Reserved ident priority preserved (INV-51).
+    CondIdentifierExpr reserved(std::string("CurrentStateTime"));
+    ctx.currentStateTime = 1.25f;
+    CHECK(reserved.evaluateAsFloat(ctx) == 1.25f);   // uses ctx, not registry
+}
+
 TEST_SUITE_END

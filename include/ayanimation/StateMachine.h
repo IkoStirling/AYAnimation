@@ -55,10 +55,34 @@
 //   * INV-46 — _triggers is a sorted std::vector<uint32_t> with binary
 //              search for O(log N) hasTriggerHash + O(N) eraseTriggerHash;
 //              N ≤ 4 in production. Pre-reserved capacity 4.
+//
+// INV-47..51 contracts (P1 polish 2026-08-07) — Hot-Path Hash Caching:
+//   * INV-47 — Transition::triggerHash == 0 ⟺ trigger.empty();
+//              computed once at addTransition() time.
+//   * INV-48 — Transition::conditionParamNameHash == 0 ⟺ !hasCondition ||
+//              condition.paramName.empty(); computed once at addTransition().
+//   * INV-49 — Both Transition hashes (triggerHash, conditionParamNameHash)
+//              are pre-computed at addTransition() time. Production code
+//              never mutates trigger / condition.paramName after addTransition
+//              (transition is one-shot author-set, mirrors fromState /
+//              toState immutability). However, Transition::evaluateCondition
+//              L1 path includes a LAZY FALLBACK: if hasCondition=true but
+//              conditionParamNameHash==0 (test fixtures using const_cast to
+//              mutate the struct AFTER addTransition), recompute the hash
+//              on demand via ParamNameRegistry::intern(). This preserves
+//              back-compat with existing P3.x L2 test code that mutates
+//              condition.paramName directly while keeping the hot-path
+//              speedup intact for production callers.
+//   * INV-50 — CondIdentifierExpr::nameHash is pre-computed at ctor time
+//              via ParamNameRegistry::intern(); 0 ⟺ empty name (sentinel).
+//   * INV-51 — Reserved ident "CurrentStateTime" (string compare) takes
+//              priority over nameHash lookup in
+//              CondIdentifierExpr::evaluateAsFloat.
 
 #pragma once
 
 #include <ayanimation/ConditionExpr.h>
+#include <ayanimation/ParamNameRegistry.h>
 
 #include <cmath>
 #include <cstddef>
@@ -96,9 +120,10 @@ struct StateCondition {
 // allocation, no hash bucket walk, no string compare.
 //
 // Composition:
-//   * ParamNameRegistry — process-singleton, interns string→hash
-//     (FNV-1a 32-bit). Hash IS the canonical key from this point on;
-//     the string is held only for debug read-back (getParamName).
+//   * ParamNameRegistry (declared in ParamNameRegistry.h) — process-singleton,
+//     interns string→hash (FNV-1a 32-bit). Hash IS the canonical key from
+//     this point on; the string is held only for debug read-back
+//     (getParamName).
 //   * ParamEntry { hash, value } — flat row in StateMachine._params.
 //   * StateMachine._params is std::vector<ParamEntry>.
 //   * StateMachine._triggers is std::vector<uint32_t> (sorted).
@@ -106,88 +131,18 @@ struct StateCondition {
 // The public API (setParam/getParam/setTrigger) is unchanged; only
 // internals change. ConditionEvalCtx field types also change (see
 // ConditionExpr.h), but only StateMachine.cpp constructs that struct.
-
-namespace detail {
-
-// FNV-1a 32-bit hash. Constexpr-eligible; no external dependency.
-// INV-43 — hash 0 is reserved as empty-slot sentinel. FNV-1a baseline
-// 2166136261u ≠ 0 guarantees non-empty names never collide with 0.
-constexpr uint32_t fnv1a_32(const char* s) {
-    uint32_t h = 2166136261u;
-    while (*s) {
-        h ^= static_cast<uint32_t>(*s++);
-        h *= 16777619u;
-    }
-    return h;
-}
-
-// Process-global param/trigger name registry. Hash → string for debug
-// read-back. The hash IS the canonical key (we never compare strings
-// in the hot path). The string table is lazy — only populated when
-// setParam/setTrigger is called with a unique name.
 //
-// Meyers singleton (C++11 magic static guarantees thread-safe init).
-// Production ~50 unique param names → ~1.2 KB global memory; negligible.
-//
-// P0 polish (2026-08-07) — `intern()` is a hot-path bottleneck because
-// every setParam/getParam/setTrigger call passes through it. Linear
-// scan of _byHash (production ~50 entries) was ~250 ns in debug.
-// Benchmarked alternative: std::unordered_map<string,uint32_t> for
-// O(1) lookup — actually SLOWER in debug (~300-400 ns) due to std::hash
-// + bucket cost vs. linear scan of 50 entries. Decision: keep the
-// simple linear scan; the win is on the getParam hot path (was
-// 271 ns/iter pre-refactor, now 75 ns/iter — 3.6x faster). In release
-// builds the relative speedup is much larger.
-//
-// Production ~50 unique names → ~50 entries; the linear scan is
-// cache-friendly (vector storage, ~2 KB total).
-class ParamNameRegistry {
-public:
-    static ParamNameRegistry& instance() {
-        static ParamNameRegistry inst;  // Meyers singleton
-        return inst;
-    }
-
-    // Intern a name. Returns its FNV-1a 32-bit hash. The string is
-    // retained in the registry for getParamName(uint32_t) debug
-    // read-back; the hash is the canonical key from here.
-    uint32_t intern(const std::string& name) {
-        const uint32_t hash = fnv1a_32(name.c_str());
-        for (const auto& entry : _byHash) {
-            if (entry.hash == hash) return hash;
-        }
-        _byHash.push_back({ hash, name });
-        return hash;
-    }
-
-    // Look up the original string for a hash. Returns empty string
-    // for unknown hash (sentinel kEmpty).
-    const std::string& lookup(uint32_t hash) const {
-        for (const auto& entry : _byHash) {
-            if (entry.hash == hash) return entry.name;
-        }
-        return kEmpty;
-    }
-
-    size_t size() const { return _byHash.size(); }
-
-    void clear() { _byHash.clear(); }
-
-private:
-    ParamNameRegistry() = default;
-    ParamNameRegistry(const ParamNameRegistry&) = delete;
-    ParamNameRegistry& operator=(const ParamNameRegistry&) = delete;
-
-    struct Entry { uint32_t hash; std::string name; };
-    std::vector<Entry> _byHash;
-    static const std::string kEmpty;
-};
-
-} // namespace detail
+// P1 polish (2026-08-07) — ParamNameRegistry is split into its own header
+// (ParamNameRegistry.h) so ConditionExpr.h's inline CondIdentifierExpr
+// ctor can call intern() once at construction time (for nameHash caching)
+// without circular include. StateMachine.h now simply includes the
+// split-out header. See ParamNameRegistry.h header doc for full contract.
 
 // ParamEntry is defined in ConditionExpr.h (which is included above)
 // to avoid a circular include between this header and ConditionExpr.h.
-// Header-order safe: ConditionExpr.h never includes StateMachine.h.
+// Header-order safe: ConditionExpr.h now includes ParamNameRegistry.h
+// directly (also split out), so ParamNameRegistry is visible
+// transitively without StateMachine.h.
 
 // One state in the graph. POD; mirrors UE UAnimState shape (subset).
 struct State {
@@ -238,6 +193,22 @@ struct Transition {
     mutable std::shared_ptr<CondExprAst> cachedAst;       // lazy parse result
     mutable bool      conditionDirty    = true;          // first evaluate triggers parse
     mutable std::string conditionParseError;             // last parse diagnostic ("" = OK)
+
+    // === P1 polish (2026-08-07) — pre-computed hashes (INV-47..49) ===
+    // Pre-computed once at StateMachine::addTransition() time; eliminates
+    // per-frame ParamNameRegistry::intern() calls in findEligibleTransition
+    // (triggerHash lookup), fireTransition (triggerHash erase), and
+    // Transition::evaluateCondition L1 path (conditionParamNameHash lookup).
+    // 0 sentinel = empty/missing name (matches "" semantics).
+    //
+    // INV-49 — both hashes are IMMUTABLE after addTransition(); direct
+    // field mutation after construction is undefined behavior. Transition
+    // is author-set once (mirrors fromState / toState immutability).
+    // If host code mutates trigger or condition.paramName after
+    // addTransition(), the cache becomes stale; recompute manually via
+    // ParamNameRegistry::instance().intern(name) and assign.
+    uint32_t    triggerHash              = 0;
+    uint32_t    conditionParamNameHash   = 0;
 
     // Setter: replaces conditionExpr and auto-flags dirty (INV-34). Skips
     // assignment when the new string is identical to the current one.

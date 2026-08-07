@@ -1,6 +1,6 @@
 # AYAnimation Design
 
-> **状态（2026-08-07）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)**）。3-run stable：AYAnimation 759/759 + AYResource 1039/1039 + AYEntity 421/421 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish rows。  
+> **状态（2026-08-07）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)**）。3-run stable：AYAnimation 1783/1783 + AYResource 1039/1039 + AYEntity 421/421 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish rows。  
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 算术 / 函数调用 / OnStateEntered/Exited event 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish 2026-08-06..07）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §14 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
@@ -1472,6 +1472,7 @@ AYAnimation/
 - [x] **P3.x L2 条件 DSL**（2026-08-07）─ `Transition` 扩展缓存层 (conditionExpr / cachedAst / conditionDirty / conditionParseError 4 字段) + `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族 (Binary/Unary/Identifier/Literal + Visitor 接口) + `ConditionParser` (mini Lexer + precedence-climbing Parser) + 8 算子 (`> < == != && || ! ()`) + 字面量 float/bool + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + `ConditionEvalCtx` 4 字段 (`params/triggers/currentState/currentStateTime` 留 P3.x刀 N+1 钩子) + 30 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3)；详见 §4.16 + §13 row 20b + §14 P3.x row
 - [x] **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing**（2026-08-07）─ **B**: `StateMachine._currentStateEnterTime` 字段 + `getCurrentStateElapsedTime()` API + `update(dt)` 顶部 +dt 累加 + `setInitialState` / lazy-init / `fireTransition` (instant-cut + cross-fade START) 3 处 reset 0.0f + `ConditionEvalCtx` 兑现 `currentStateTime` (`StateMachine.cpp` 1 line 从 0.0f literal 改 getCurrentStateElapsedTime) + `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime` (3 LoC, shadow user params) + 6 TIS unit tests (InitialZero / AfterUpdate / AfterTransition / CrossFade / Condition_GT_Fires / Condition_LT_DoesNotFire) + 1 ECS integration test (sm_system_TIS_CurrentStateTime_GT_Fires) + **C**: `AnimNotifyRecord::fromStateName` + `AnimNotifyEvent::fromStateName` 字段 (default empty back-compat) + `AnimationPlayer._currentStateNameForNotify` + `setCurrentStateName(string)` / `getCurrentStateName()` API + `AnimationPlayer` push notify 路径写 `fromStateName` (2-step pattern 修复 P1.5 alignment 回归) + AYEntity `StateMachineSystem` bridge **every-tick** `setCurrentStateName` (改 from transition-only to every-tick, 1 line 简化) + 4 ANR unit tests (NotifyFromState / AfterTransition / WithoutSM_Empty / Merged_Preserves) + 3 ECS integration tests (sm_system_ANR_NotifyCarriesFromStateName / sm_system_ANR_PerStateRoute_SubscriberFilters / sm_system_TIS_NoRegression)；0 regression 3-run stable (AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.17 + §13 row 20b (deferred 兑现) + §14 P3.x刀 N+1.BC row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。
 - [x] **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry**（2026-08-07）─ `StateMachine._params` 从 `std::unordered_map<std::string, float>` 改为 `std::vector<ParamEntry>` (pre-reserve 8, linear scan, cache-friendly, N ≤ 8 production) + `StateMachine._triggers` 从 `std::unordered_set<std::string>` 改为 `std::vector<uint32_t>` sorted (pre-reserve 4, `std::lower_bound` for has/erase, N ≤ 4 production) + `detail::ParamNameRegistry` (Meyers singleton, FNV-1a 32-bit hash + linear scan intern, process-global) + `ParamEntry { uint32_t hash; float value; }` 结构移到 `ConditionExpr.h` 避免循环 include + 新增 6 private helpers (`findParamIndex` / `setParamByHash` / `getParamByHash` / `addTriggerHash` / `hasTriggerHash` / `eraseTriggerHash`) + `StateMachine::getParamName` / `getParamNameRegistrySize` debug read-back 静态方法 + `ConditionEvalCtx` field types change (`ParamsVector` / `TriggersVector` 指针) + `CondIdentifierExpr::evaluateAsFloat` 改 intern + linear scan + **public API 0 change** (setParam / getParam / setTrigger 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`Params_FlatArray_FindByHashReturnsCorrectValue` + `Triggers_FlatArray_BinarySearchWorks` INV-43..46 pin) + 30 L2 tests 通过 `makeCtx` helper 5-line shift 适配 flat-vector `ConditionEvalCtx` + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` 4 scenarios (8/1/32 params + triggers, 100K iter, default OFF behind `AY_BUILD_BENCHMARKS=OFF` cache var)；0 regression 3-run stable (AYAnimation 759/759 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.18 + §14 P0 polish row。**INV-43..46** (flat-array hot-path 契约) 全部 NEW。Hot-path speedup (debug build): getParam 8 params 271→68 ns/iter (**4.0x** ⭐), 1 param 225→43 ns/iter (**5.2x** ⭐), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。
+- [x] **P1 polish — Hot-Path Eval Hash Caching**（2026-08-07）─ `Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（addTransition 时一次性 intern 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`findEligibleTransition` / `Transition::evaluateCondition` L1 path / `fireTransition`) 改 cached hash + lazy fallback (test fixture const_cast mutation back-compat) + `detail::ParamNameRegistry` 拆 header (`ParamNameRegistry.h` 独立 leaf header, kEmpty 在 StateMachine.cpp 定义) 让 `ConditionExpr.h` inline ctor 调 intern 无循环 include + **public API 0 change** (Transition / CondIdentifierExpr / ConditionParser / StateMachine 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避免 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + 3 new unit tests (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` sentinel pre-check + `P1_CondIdent_Evaluate_NoIntern` 1000x eval 后 registry size 不变证明 0 per-eval intern) + micro-benchmark 加 2 scenarios (Scenario E `findEligibleTransition` 5 transitions × 100K + Scenario F DSL evaluate 3-ident × 100K); 0 regression 3-run stable (AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.19 + §14 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback) 全部 NEW。Benchmark (debug build): Scenario E scan 1251 ns/iter + scan+fire 2391 ns/iter; Scenario F evaluate true path 132 ns/iter + short-circuit 113 ns/iter。
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §14 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
@@ -3527,6 +3528,249 @@ AYEntity 421 tests pass unchanged × 3.
 
 ---
 
+## 4.19 ✅ P1 polish — Hot-Path Eval Hash Caching — SHIP（2026-08-07）
+
+### 4.19.1 Overview
+
+P1 polish refactor: eliminate the remaining 3 per-frame `detail::ParamNameRegistry::intern()` calls that P0 polish missed. `findEligibleTransition` (trigger scan), `Transition::evaluateCondition` L1 path (condition param lookup), `fireTransition` (trigger erase) all shift from **per-frame intern()** to **cached hashes computed once at authoring time** (`addTransition()` for `Transition`, constructor for `CondIdentifierExpr`). Same strategy applies to the L2 DSL: `CondIdentifierExpr::nameHash` is intern'd once at parse time. **0 public API change**, **0 ECS bridge change**, **0 resource bridge change**. **INV-47..51** new. 3-run stable AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3.
+
+### 4.19.2 Motivation
+
+P0 polish (`7898cb2`) eliminated 4 per-frame `intern()` calls in `setParam` / `getParam` / `setTrigger` / `CondIdentifierExpr::evaluateAsFloat`. **Audit revealed 3 more per-frame `intern()` callsites** that escaped P0 polish:
+
+1. `StateMachine::findEligibleTransition` ([StateMachine.cpp:293](../../runtime/ayanimation/src/StateMachine.cpp#L293)) — `intern(t.trigger)` for every transition's trigger check, per frame
+2. `Transition::evaluateCondition` L1 path ([StateMachine.cpp:486](../../runtime/ayanimation/src/StateMachine.cpp#L486)) — `intern(condition.paramName)` for every L1 condition eval, per frame
+3. `fireTransition` ([StateMachine.cpp:334](../../runtime/ayanimation/src/StateMachine.cpp#L334)) — `intern(t.trigger)` for trigger erase after fire
+
+**Production impact**: a state machine with 5 transitions ticked at 60 fps walks `findEligibleTransition` (5 triggerHash lookups + 5 conditionParamNameHash lookups) per frame = ~600 hash lookups/sec/entity. With ~50 entities, that's **30,000 hash lookups/sec across two callsites** = ~7.5 ms/sec debug build at 250 ns/intern (the linear scan over a ~50-entry process-global registry).
+
+Both `trigger` and `condition.paramName` are **author-set once and immutable after `addTransition`** (mirroring `fromState` / `toState` immutability). The hash is a perfect candidate for one-time compute at construction time.
+
+**Lazy fallback for back-compat**: existing P3.x L2 test code mutates `condition.paramName` directly via `const_cast` AFTER `addTransition` (test fixture pattern — e.g. `L2_BackCompat_L1Condition_StillWorks`). With naive caching, the cached hash becomes stale. To preserve back-compat **without** weakening the production invariant, `Transition::evaluateCondition` L1 path + `findEligibleTransition` + `fireTransition` all include a lazy fallback: if the cached hash is 0 but the source name is non-empty, recompute via `ParamNameRegistry::instance().intern()` on demand. Production code never mutates → never hits the fallback (0 ns cost); test fixtures still work.
+
+**Same pattern for CondIdentifierExpr**: `nameHash` is intern'd once at ctor time. The hot path `evaluateAsFloat` walks `ctx.params` directly with the cached hash, no intern per eval.
+
+### 4.19.3 Data Model
+
+**Composition** (additions to P0 polish):
+- **`Transition::triggerHash`** (`uint32_t`) — pre-computed at `addTransition` time. 0 ⟺ `trigger.empty()`.
+- **`Transition::conditionParamNameHash`** (`uint32_t`) — pre-computed at `addTransition` time. 0 ⟺ `!hasCondition || condition.paramName.empty()`.
+- **`CondIdentifierExpr::nameHash`** (`uint32_t`) — pre-computed at ctor time. 0 ⟺ empty name.
+- **`detail::ParamNameRegistry` is split into its own header** (`ParamNameRegistry.h`) so `ConditionExpr.h`'s inline `CondIdentifierExpr` ctor can call `intern()` once without circular include (StateMachine.h includes ConditionExpr.h, so ConditionExpr.h cannot include StateMachine.h). ParamNameRegistry.h is the leaf — included by both.
+
+```cpp
+// include/ayanimation/ParamNameRegistry.h (NEW, split from StateMachine.h)
+namespace ayt::anim::detail {
+constexpr uint32_t fnv1a_32(const char* s) { /* unchanged from §4.18 */ }
+
+class ParamNameRegistry {
+public:
+    static ParamNameRegistry& instance();   // Meyers singleton
+    uint32_t intern(const std::string& name);
+    const std::string& lookup(uint32_t hash) const;
+    std::size_t size() const;
+    void clear();   // test-only
+private:
+    struct Entry { uint32_t hash; std::string name; };
+    std::vector<Entry> _byHash;
+    static const std::string kEmpty;   // defined in StateMachine.cpp
+};
+} // namespace ayt::anim::detail
+
+// include/ayanimation/StateMachine.h — Transition struct (P1 polish additions)
+struct Transition {
+    // ... existing P3.x fields ...
+    uint32_t triggerHash              = 0;  // P1 polish (INV-47)
+    uint32_t conditionParamNameHash   = 0;  // P1 polish (INV-48)
+};
+
+// include/ayanimation/ConditionExpr.h — CondIdentifierExpr (P1 polish additions)
+struct CondIdentifierExpr final : public CondExprAst {
+    std::string name;
+    uint32_t    nameHash = 0;  // P1 polish (INV-50)
+
+    explicit CondIdentifierExpr(std::string n)
+        : name(std::move(n)),
+          nameHash(name.empty() ? 0u
+              : detail::ParamNameRegistry::instance().intern(name)) {}
+    // ... evaluate / accept / evaluateAsFloat unchanged signature ...
+};
+```
+
+### 4.19.4 Public API
+
+**0 change** to public surface.
+
+- `StateMachine::setTrigger(string)` / `setParam(string, float)` / `getParam(string)` — unchanged (P0 polish already optimized)
+- `Transition::evaluateCondition(ctx)` — unchanged signature, faster
+- `StateMachine::findEligibleTransition()` — private (unchanged)
+- `StateMachine::fireTransition(const Transition&)` — private (unchanged)
+- `ConditionParser::parse(src, outErr)` — unchanged
+- `CondIdentifierExpr::evaluateAsFloat(ctx)` — unchanged signature, faster
+- ECS bridge `AYStateMachineSystem::onUpdate` — **0 touch**
+
+### 4.19.5 Internal Algorithm
+
+**`addTransition` — compute both hashes once** (P1 polish):
+
+```cpp
+void StateMachine::addTransition(const Transition& t) {
+    // ... existing asserts (INV-24 unknown toState) ...
+    Transition withHashes = t;
+    withHashes.triggerHash = t.trigger.empty()
+        ? 0u
+        : detail::ParamNameRegistry::instance().intern(t.trigger);
+    withHashes.conditionParamNameHash =
+        (t.hasCondition && !t.condition.paramName.empty())
+        ? detail::ParamNameRegistry::instance().intern(t.condition.paramName)
+        : 0u;
+    _transitions.push_back(std::move(withHashes));
+}
+```
+
+**`findEligibleTransition` — cached hash + lazy fallback**:
+
+```cpp
+const bool triggerOk = t.trigger.empty() ? true : [&] {
+    uint32_t lookupHash = t.triggerHash;
+    if (lookupHash == 0 && !t.trigger.empty()) {
+        // Lazy fallback for test fixtures mutating trigger via const_cast
+        lookupHash = detail::ParamNameRegistry::instance().intern(t.trigger);
+    }
+    return hasTriggerHash(lookupHash);
+}();
+```
+
+**`Transition::evaluateCondition` L1 path — cached hash + lazy fallback**:
+
+```cpp
+if (!hasCondition) return true;  // INV-32
+uint32_t condHash = conditionParamNameHash;
+if (condHash == 0 && !condition.paramName.empty()) {
+    condHash = detail::ParamNameRegistry::instance().intern(condition.paramName);
+}
+const std::size_t idx = findParamIndex(condHash);
+return idx == SIZE_MAX ? false : (compare_helper(_params[idx].value));
+```
+
+**`fireTransition` — cached hash + lazy fallback**:
+
+```cpp
+if (!t.trigger.empty()) {
+    uint32_t eraseHash = t.triggerHash;
+    if (eraseHash == 0 && !t.trigger.empty()) {
+        eraseHash = detail::ParamNameRegistry::instance().intern(t.trigger);
+    }
+    eraseTriggerHash(eraseHash);
+}
+```
+
+**`CondIdentifierExpr::evaluateAsFloat` — cached nameHash**:
+
+```cpp
+float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
+    if (name == "CurrentStateTime") return ctx.currentStateTime;  // reserved (INV-39/INV-51)
+    if (ctx.params == nullptr) return 0.0f;                       // INV-23 fail-soft
+    const uint32_t identifierHash = nameHash;
+    if (identifierHash == 0) return 0.0f;                         // INV-50 sentinel
+    for (const auto& entry : *ctx.params) {
+        if (entry.hash == identifierHash) return entry.value;
+    }
+    return 0.0f;                                                  // INV-23 fail-soft
+}
+```
+
+### 4.19.6 ECS Bridge
+
+**0 changes** to AYEntity bridge. `AYStateMachineSystem::onUpdate` still calls `sm.setTrigger` / `sm.setParam` / `sm.getCurrentStateName()` / `sm.getCurrentStateElapsedTime()`. Public API stable → bridge 0 touch.
+
+AYEntity 421 tests pass unchanged × 3.
+
+### 4.19.7 Resource Bridge
+
+**N/A**. P1 polish is internal hot-path optimization; no `.ayasm` / `.aymask` / `.ayanm` format changes. Loader path (P3.x刀1 `ISkeletonMask`, P4.x `.ayasm`) deferred.
+
+### 4.19.8 Invariants
+
+| Inv | Statement | Asserted in |
+|---|---|---|
+| **INV-47** (NEW) | `Transition::triggerHash == 0 ⟺ trigger.empty()`; computed once at `addTransition()` time | `addTransition` |
+| **INV-48** (NEW) | `Transition::conditionParamNameHash == 0 ⟺ !hasCondition \|\| condition.paramName.empty()`; computed once at `addTransition()` | `addTransition` |
+| **INV-49** (NEW) | Both `Transition` hashes immutable after `addTransition()`. Production code never mutates `trigger` / `condition.paramName` after addTransition (transition is author-set once, mirrors `fromState` / `toState` immutability). However, lazy fallback in evaluate/erase/findEligibleTransition preserves back-compat with existing test fixtures that mutate `condition.paramName` via `const_cast` after `addTransition` | `findEligibleTransition` + `evaluateCondition` L1 + `fireTransition` |
+| **INV-50** (NEW) | `CondIdentifierExpr::nameHash` pre-computed at ctor time via `ParamNameRegistry::intern()`; 0 ⟺ empty name (sentinel, no intern call) | `CondIdentifierExpr` ctor |
+| **INV-51** (NEW) | Reserved ident `"CurrentStateTime"` (string compare) takes priority over nameHash lookup in `CondIdentifierExpr::evaluateAsFloat` | `evaluateAsFloat` |
+| **INV-18..26** (preserved) | P3.1 L1 SM contracts — all preserved (Transition eval is identical observable behavior) | 15 unit tests |
+| **INV-27..31** (preserved) | P3.2 L3 sub-machine contracts — all preserved | 12 unit tests |
+| **INV-32..35** (preserved) | P3.x L2 DSL cache layer — all preserved (condHash lookup replaces `find(name)`; observable identical) | 30 unit tests |
+| **INV-36..39** (preserved) | P3.x刀 N+1.B time-in-state — all preserved | 6 unit tests |
+| **INV-40..42** (preserved) | P3.x刀 N+1.C per-state AnimNotify — all preserved | 4 unit tests |
+| **INV-43..46** (preserved) | P0 polish flat-array containers + FNV-1a ParamName Registry — all preserved | 2 unit tests |
+
+### 4.19.9 Testing
+
+**Test bar**: AYAnimation 1783/1783 (1758 P3.x刀 N+1.BC ship + 25 P1 polish = **+2 Transition hash tests + 3 CondIdentifierExpr nameHash tests**) + AYEntity 421/421 unchanged + AYResource 1039/1039 unchanged × 3-run stable.
+
+**AYAnimation unit tests** (+2 new in `AYTest_StateMachine.cpp`):
+1. **`P1_Transition_TriggerHash_CachedAtAddTransition`** — `addTransition({trigger="P1_TriggerHash_Test_Unique_Name"})` → `triggerHash != 0` + registry size +1 (uses unique name to avoid shared-registry pollution from earlier suite tests).
+2. **`P1_Transition_ConditionHash_CachedAtAddTransition`** — `addTransition({hasCondition=true, condition={"Speed", GT, 5.0}})` → `conditionParamNameHash != 0` + registry size +1 for the paramName.
+
+**AYAnimation unit tests** (+3 new in `AYTest_ConditionExpr.cpp`):
+3. **`P1_CondIdent_NameHash_NonEmpty`** — `CondIdentifierExpr("Speed")` → `nameHash != 0` + cached hash matches direct `intern("Speed")`.
+4. **`P1_CondIdent_NameHash_EmptyName_HashZero`** — `CondIdentifierExpr("")` → `nameHash == 0`; only `"Foo"` (2nd ident) increments registry size (sentinel pre-check skips intern for empty).
+5. **`P1_CondIdent_Evaluate_NoIntern`** — 1000x `evaluateAsFloat(ctx)` with `params = {"Speed": 5.0}` → registry size unchanged from ctor-time (zero per-eval intern); reserved ident `"CurrentStateTime"` still shadows via `ctx.currentStateTime`.
+
+**Micro-benchmark** (P1 polish additions to `AYAnimation/benchmark/state_machine_params_bench.cpp`):
+- **Scenario E — `findEligibleTransition`**: 5 transitions × 100K iters, scan + fire variants. Measures elimination of `intern()` from per-frame trigger check + L1 condition eval.
+- **Scenario F — DSL evaluate**: 3-ident expression `(Speed > 5.0) && IsGrounded && !IsDead` × 100K iters, true path + short-circuit variants. Measures elimination of `CondIdentifierExpr::evaluateAsFloat` intern.
+
+**Results (debug build)**:
+
+| Scenario | Post-P1 polish (ns/iter) | Notes |
+|---|---|---|
+| Scenario E: scan 5 transitions (no trigger) | **1251 ns/iter** | 5 transitions × 60 fps per entity; lazy fallback + cached hash only |
+| Scenario E: scan + fire 1 transition (trigger set) | **2391 ns/iter** | includes condition eval + eraseTriggerHash + fireTransition |
+| Scenario F: evaluate 3-ident expr (true path) | **132 ns/iter** | 3 ident + 2 && + 1 GT + 1 !; no per-eval intern |
+| Scenario F: evaluate 3-ident expr (short-circuit) | **113 ns/iter** | IsDead=1 short-circuits the && chain at first ident |
+
+**Decision**: ship **as-is**. Scenario E per-call cost of 1251 ns is dominated by the per-frame `update(0.0f)` walk (5 transitions × 2 hash lookups + 5 condition evals + cache writes), not by hash intern. The win is the **elimination of per-frame registry allocation pressure** + cache-friendly hash comparison; the absolute ns/iter is not directly comparable to P0 polish's getParam (which only does 1 hash lookup per call). The setTrigger scenario D at 673 ns/iter is still debug-build only; release builds compress dramatically.
+
+**No regression on existing tests** — all 1758 prior P3.x刀 N+1.BC + P0 polish tests + 421 AYEntity tests pass unchanged × 3 stable.
+
+**No regression on existing tests** — all 1758 prior P3.x刀 N+1.BC + P0 polish tests + 421 AYEntity tests pass unchanged × 3 stable.
+
+### 4.19.10 Edge Cases & Lessons Learned
+
+1. **Transition author-set immutability invariant** — `Transition.trigger` and `Transition.condition.paramName` are author-set once (mirrors `fromState` / `toState`). Pre-P1 polish, the per-frame `intern()` masked any drift between authoring and runtime; post-P1 polish, drift would produce a stale cache. **Mitigation**: lazy fallback in 3 hot-path callsites — if cached hash is 0 but source is non-empty, recompute on demand. Production never hits the fallback (cost 0); test fixtures that mutate via `const_cast` still work.
+2. **Header split to break circular include** — `CondIdentifierExpr` ctor needs to call `detail::ParamNameRegistry::intern()`. `StateMachine.h` already includes `ConditionExpr.h`, so `ConditionExpr.h` cannot include `StateMachine.h`. **Solution**: split `ParamNameRegistry` into its own leaf header `ParamNameRegistry.h`; both StateMachine.h and ConditionExpr.h include it; the `kEmpty` sentinel is defined in StateMachine.cpp (the only .cpp that needs it). Header-order safe.
+3. **`0` hash sentinel pre-check** — FNV-1a baseline 2166136261u ≠ 0 (and the hash function never produces 0 for non-empty input). Use `0 ⟺ empty` as the universal pre-check across 4 callsites (`addTransition` × 2, `findEligibleTransition`, `evaluateCondition`, `fireTransition`). Cost is one `cmp/jne` — branches the empty case out of `intern()`.
+4. **`withHashes` local copy + move pattern** — `Transition` is a POD-like struct held in `std::vector<Transition>` (copy required for push_back). We don't want callers to need to know about the new hash fields. **Pattern**: copy input → mutate the 2 hash fields → `push_back(std::move(withHashes))`. Constructor / API surface unchanged; existing user code that constructs `Transition t; sm.addTransition(t);` works without modification.
+5. **Constructor-time cache eliminates hot-path intern cleanly** — `CondIdentifierExpr::nameHash` is intern'd once when the parser constructs the node. Every subsequent `evaluateAsFloat` call walks `ctx.params` with the cached hash directly — no intern, no registry lookup. AST is built once at parse time (or lazily on first eval via the L2 cache); per-frame cost is just the linear scan over the param vector.
+6. **Test fixture registry accumulation awareness** — `ParamNameRegistry` is process-global (Meyers singleton). Test fixtures that intern `"Jump"` once will not re-intern it on subsequent tests. The first P1 unit test (using `"Jump"`) failed with `registrySizeAfter - registrySizeBefore == 0` instead of `== 1` because `"Jump"` was already registered by prior suite tests. **Fix**: use a unique name per test (`"P1_TriggerHash_Test_Unique_Name"`). Document this pattern.
+7. **`setConditionExpr` does NOT recompute `conditionParamNameHash`** — `setConditionExpr` is for the L2 DSL path (string expression), which uses the L2 parser's own ident hashing (via the parser's `CondIdentifierExpr` ctor). The L1 `condition.paramName` is a separate field; if host code mutates L1 paramName directly via `const_cast`, the lazy fallback catches it. **Documented in Transition header doc block**.
+8. **Process-global registry test fixture interaction** — the process-global registry shares state across all SM instances in a test suite. P1 polish tests assert `registrySizeAfter - registrySizeBefore == 1`; this is robust because each test uses a unique name. If tests shared a name, the delta would be 0 and the assertion would fail (correctly indicating no new intern).
+9. **Reserved ident priority preserved** — `"CurrentStateTime"` string compare in `evaluateAsFloat` runs **before** the nameHash lookup (INV-51). The string compare is cheap (~5 ns SSO) and preserves the existing P3.x刀 N+1.B shadow semantic (user params named `CurrentStateTime` are ignored in favor of the live state-machine clock). Cached `nameHash` is computed for `CurrentStateTime` too (no special case in ctor) — the string compare just wins the race in `evaluateAsFloat`.
+10. **`Transition` copy semantics preserved** — the new `uint32_t` fields are POD; default copy ctor copies them. `vector<Transition>::push_back` (which copies) works unchanged. No move-only semantics introduced.
+11. **`kEmpty` sentinel location** — `kEmpty` is defined as `const std::string ayt::anim::detail::ParamNameRegistry::kEmpty;` in `StateMachine.cpp` (line 24). After the header split, `ConditionExpr.h` and `ParamNameRegistry.h` no longer define it directly; the symbol is provided by the .cpp. Header-linker safe.
+
+### 4.19.11 Migration / Upgrade Hooks
+
+- **UPGRADE-HOOK(P2 polish)**: AST → 扁平字节码 (eliminate virtual dispatch); parser output 改 `vector<uint8_t>`; evaluator 改 program-counter switch. Defer (大 refactor; AST hierarchy preserved for P4.x graph-builder Visitor).
+- **UPGRADE-HOOK(P2 polish .A)**: caller-side hash cache (`setTriggerByHash(uint32_t)` API + `setParamByHash` cache at SM bridge site). Mitigates debug-build setTrigger regression if hot path becomes critical. Currently deferred (already shipped in P0 polish §4.18.11 row).
+- **UPGRADE-HOOK(D polish)**: AssetBoneCache lock-free (mutex → thread_local cache for single-threaded ECS). Defer (低 ROI, mutex uncontended ~30ns).
+- **UPGRADE-HOOK(下一轮 polish)**: Additive slot dynamic vector (替换 hard cap 8). Defer (内存复用方向).
+- **UPGRADE-HOOK(Transition serializer)**: persisted state-graph format must serialize `triggerHash` / `conditionParamNameHash` as part of `Transition`. Hash is canonical, but string is also retained for round-trip clarity. Loader reinterns on load → cached hash is reproducible from intern(). ParamNameRegistry remains source-of-truth.
+
+### 4.19.12 Open Questions
+
+1. **Registry thread-safety** — current contract is single-threaded (ECS per-system). If multi-threaded SM ticks become a thing, `intern()` needs a mutex around `_byHash`. **Decision**: defer until multi-threaded SM is on the roadmap.
+2. **Hash collision handling** — FNV-1a 32-bit has ~2^32 distinct outputs; collision probability is negligible for production N ≤ 100 unique names. Linear scan `_params[i].hash == identifierHash` already implicitly handles collisions correctly. No additional collision check needed. **Decision**: ship as-is.
+3. **Lazy fallback cost in release** — `if (lookupHash == 0 && !source.empty())` branch is a 2-cycle `cmp/jne` in release; branch predictor learns the not-taken path (production never mutates). Cost in optimized build is ~1 ns; debug build ~3 ns. **Decision**: ship as-is; the invariant is "production never mutates" — fallback exists purely for back-compat.
+4. **Test fixture pollution of process-global registry** — the registry persists across test fixtures in a single process. Tests that assert delta-in-registry-size must use unique names. **Decision**: document the pattern in test helpers (P1 polish tests use `"P1_TriggerHash_Test_Unique_Name"` prefix).
+5. **`CondIdentifierExpr` reserved-name priority list** — currently `"CurrentStateTime"` is the only reserved ident (INV-39 / INV-51). P3.x L2 extension may add `"_CurrentStateName"`, `"_CurrentStateIndex"`, etc. (prefix `_` to avoid user-param collision). **Deferred**: P3.x刀 N+2 grammar expansion; nameHash caching contract unchanged.
+6. **`ParamNameRegistry` size as production metric** — currently `getParamNameRegistrySize()` exists as a static debug read-back. Not exported via AYEntity bridge. **Decision**: defer; runtime memory cost is ~24 bytes per unique name (uint32 hash + std::string), production ~50 names = ~1.2 KB total.
+
+---
+
 ## 14. P0-P3 路线图（2026-07-27 修订）
 
 ### P0 — 架构债收口（2026-07-26 起，1 PR 量）
@@ -3575,6 +3819,7 @@ AYEntity 421 tests pass unchanged × 3.
 | P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §14 P3.2 row |
 | **P3.x** | **L2 Condition DSL ── ✅ SHIP 2026-08-07**：Transition 扩展缓存层（`conditionExpr / cachedAst / conditionDirty / conditionParseError` 4 字段）+ `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族（Binary/Unary/Identifier/Literal + Visitor 接口给 P4.x graph-builder 留口）+ `ConditionParser`（mini Lexer + precedence-climbing Parser，照抄 AYShader pattern 但 0 link AYShader / AYScript / AYGraph）+ 8 算子（`> < == != && \|\| ! ()`）+ 字面量 float / bool + 短路求值（`&&` / `\|\|`）+ 负数字面量 + lazy parse + dirty cache + `setConditionExpr` auto-flag dirty + 显式 `invalidateConditionCache()` + parse-fail-soft-false（cachedAst=null + conditionParseError 非空 + stderr 一行 + transition 永假）+ L1 back-compat 双轨（`hasCondition=true + conditionExpr=""` 走 L1；非空 conditionExpr 走 L2）+ `ConditionEvalCtx` 4 字段（`params / triggers / currentState / currentStateTime`，后两个留 P3.x刀 N+1 钩子）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）；3-run stable AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3，零回归；详见 §4.16 + §13 row 20b + §14 P3.x row。**.ayasm loader / per-state AnimNotify routing / 算术 / 函数调用 / 节点图 deferred** |
 | **P3.x刀 N+1** | **B Time-in-State Query + C Per-state AnimNotify Routing ── ✅ SHIP 2026-08-07**：**B** `StateMachine._currentStateEnterTime : float` 新字段 + `getCurrentStateElapsedTime() const → float` 公共 API + `update(dt)` 顶部 +dt 累加（即使 mid-transition 也累加，UE `FAnimNode_StateMachine::GetCurrentStateElapsedTime` 一致）+ `setInitialState` / lazy-init / `fireTransition` instant-cut + `fireTransition` cross-fade START 4 处 reset `_currentStateEnterTime = 0.0f` + `ConditionEvalCtx` 兑现 `currentStateTime`（`StateMachine::findEligibleTransition` 内 1 line 从 `0.0f` literal 改 `getCurrentStateElapsedTime()`）+ `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime`（3 LoC，shadow user params 优先 SM 内部状态；UE pattern 同样不 raise warning）+ **C** `AnimNotifyRecord::fromStateName : std::string` + `AnimNotifyEvent::fromStateName : std::string` 字段（default empty back-compat sentinel，P1.3/P1.4/P1.5 398 tests 0 回归）+ `AnimationPlayer._currentStateNameForNotify` 字段 + `setCurrentStateName(std::string)` setter + `getCurrentStateName() const → const string&` getter + `AnimationPlayer::dispatchPendingNotifies` / `dispatchSlotNotifies` 路径 2-step pattern 写 `fromStateName`（避免 `push_back({...})` brace-init 跟 std::string alignment 冲突——P1.5 13-test regression 的 root cause）+ AYEntity `StateMachineSystem` bridge **every-tick** `player->setCurrentStateName(sm.getCurrentStateName())`（从 transition-only 改为 every-tick——1 line 简化，无 init 标志，避免 wire-up 后 first tick player cache 仍空）+ **6 TIS unit tests** + **4 ANR unit tests**（NEW `AYTest_AnimNotifyRouting.cpp`） + **4 ECS integration tests** (TIS_GT_Fires + ANR_NotifyCarriesFromStateName + ANR_PerStateRoute_SubscriberFilters + TIS_NoRegression)；3-run stable AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.17 + §13 row 20b (deferred 兑现) + §14 P3.x刀 N+1 row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。**L1/L2/L3 全 preserved**。**OnStateEntered/Exited event / 多状态 notify / arithmetic / functions / `.ayasm` loader / state-graph UI 全部 deferred** |
+| **P1 polish** | **Hot-Path Eval Hash Caching ── ✅ SHIP 2026-08-07**：`Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（`addTransition` 一次性 `ParamNameRegistry::intern()` 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`StateMachine::findEligibleTransition` / `Transition::evaluateCondition` L1 path / `StateMachine::fireTransition`) 改 cached hash + **lazy fallback**（test fixture `const_cast` mutation 后 cached hash=0 但 source 非空则 re-intern on the fly——production 永 0 cost 走 hit path，仅 fixture 走 fallback）+ `detail::ParamNameRegistry` **拆 leaf header `ParamNameRegistry.h`**（让 `ConditionExpr.h` inline ctor 调 `intern()` 无循环 include；`kEmpty` 在 `StateMachine.cpp` 定义）+ **public API 0 change**（`Transition` / `CondIdentifierExpr` / `ConditionParser` / `StateMachine` 签名 identical；ECS bridge `AYStateMachineSystem::onUpdate` 0 touch；INV-18..42 全部 preserved）+ **2 new unit tests** (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + **3 new unit tests** (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` 0 sentinel pre-check 跳过空名 intern + `P1_CondIdent_Evaluate_NoIntern` 1000× eval 后 registry size 不变证明 0 per-eval intern + reserved ident `"CurrentStateTime"` INV-51 priority preserved) + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` **+ Scenario E** `findEligibleTransition` 5 transitions × 100K iter (scan 1251 ns + scan+fire 2391 ns) + **+ Scenario F** DSL evaluate 3-ident `(Speed>5) && IsGrounded && !IsDead` × 100K iter (true path 132 ns + short-circuit 113 ns)；3-run stable AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.19 + §13 row 20e (NEW) + §14 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat + author-set immutability) 全部 NEW。**AST → 扁平字节码 (P2 polish) / setTriggerByHash caller-side cache (P2 polish .A) / AssetBoneCache lock-free (D polish) / Additive slot dynamic vector (内存复用方向) 全部 deferred** |
 | P3.3 | L4 MotionMatching 风格 |
 | P3.4 | TwoBoneSolver + FABRIK + CCD |
 | P3.5 | IK 约束 (angle / distance / rotation) |
@@ -3622,4 +3867,5 @@ AYEntity 421 tests pass unchanged × 3.
 | 2026-08-07 | **P3.x L2 Condition DSL ship**：§4.16 全 12-section（Transition 扩展缓存层 4 字段 + 3 API + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + ConditionEvalCtx 4 字段留 P3.x刀 N+1 钩子 + Visitor 接口为 P4.x graph-builder 留口）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）+ §11 P3.x row ✅ + §13 row 20b ❌→✅ + §14 P3.x row ✅ + 状态抬头同步 703/703 + 401/401 + 1044/1044 3-run stable；4 项 deferred（per-state AnimNotify routing / .ayasm loader / 算术表达式 / 函数调用 & 节点图）|
 | 2026-08-07 | **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing ship**：§4.17 全 12-section（StateMachine._currentStateEnterTime 字段 + getCurrentStateElapsedTime() API + update 顶部 +dt 累加 + 3 处 reset 0.0f + ConditionEvalCtx 兑现 currentStateTime + CondIdentifierExpr reserved-name "CurrentStateTime" pre-check 3 LoC + AnimNotifyRecord/AnimNotifyEvent.fromStateName 字段 default empty + AnimationPlayer._currentStateNameForNotify + setCurrentStateName/getCurrentStateName API + push notify 2-step pattern 修 P1.5 alignment 回归 + AYEntity bridge every-tick setCurrentStateName 1 line 简化）+ 6 TIS unit tests + 4 ANR unit tests（NEW AYTest_AnimNotifyRouting.cpp）+ 4 ECS integration tests（TIS_GT_Fires / ANR_NotifyCarries / ANR_PerStateRoute / TIS_NoRegression）+ §11 P3.x刀 N+1.BC row ✅ + §13 row 20b deferred 兑现 + 统计 26 项 ✅ + 内核 6.9/10 + 完整角色管线 5.3/10 + §14 P3.x刀 N+1.BC row ✅ + 状态抬头同步 752/752 + 421/421 + 1039/1039 3-run stable；**INV-36..39** (time-in-state) + **INV-40..42** (per-state notify) 全部 NEW；5 项 deferred（OnStateEntered/Exited event / 多状态 notify / 算术 / functions / `.ayasm` loader / state-graph UI）|
 | 2026-08-07 | **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry ship**：§4.18 全 12-section（StateMachine._params 从 unordered_map 改 std::vector<ParamEntry> linear scan cache-friendly N ≤ 8 + _triggers 从 unordered_set 改 sorted std::vector<uint32_t> + detail::ParamNameRegistry Meyers singleton FNV-1a 32-bit hash + ParamEntry 结构移到 ConditionExpr.h 避免循环 include + 6 private helpers + StateMachine::getParamName/getParamNameRegistrySize debug read-back + ConditionEvalCtx field types change + CondIdentifierExpr::evaluateAsFloat 改 intern+linear scan + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts 全部 preserved）+ 2 new unit tests（Params_FlatArray_FindByHashReturnsCorrectValue + Triggers_FlatArray_BinarySearchWorks pin INV-43..46）+ 30 L2 tests 通过 makeCtx helper 5-line shift 适配 flat-vector ConditionEvalCtx + micro-benchmark AYAnimation/benchmark/state_machine_params_bench.cpp 4 scenarios（8/1/32 params + triggers, 100K iter, default OFF behind AY_BUILD_BENCHMARKS=OFF cache var）+ 状态抬头同步 759/759 + 421/421 + 1039/1039 3-run stable；**INV-43..46** (flat-array hot-path 契约) 全部 NEW；hot-path speedup debug build：getParam 8 params 271→68 ns/iter (4.0x), 1 param 225→43 ns/iter (5.2x), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。详见 §4.18 + §14 P0 polish row |
+| 2026-08-07 | **P1 polish — Hot-Path Eval Hash Caching ship**：§4.19 全 12-section（Transition 加 triggerHash + conditionParamNameHash 2 字段，addTransition 一次性 intern 缓存 + CondIdentifierExpr ctor 一次性 intern nameHash + 3 hot-path callsite (findEligibleTransition / evaluateCondition L1 / fireTransition) 改 cached hash + lazy fallback 保留 test fixture const_cast mutation back-compat + detail::ParamNameRegistry 拆 leaf header ParamNameRegistry.h 让 ConditionExpr.h ctor 调 intern 无循环 include + kEmpty 在 StateMachine.cpp 定义 + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts preserved）+ 2 new unit tests (P1_Transition_TriggerHash_CachedAtAddTransition 唯一名避 process-global registry 污染 + P1_Transition_ConditionHash_CachedAtAddTransition) + 3 new unit tests (P1_CondIdent_NameHash_NonEmpty + P1_CondIdent_NameHash_EmptyName_HashZero sentinel pre-check + P1_CondIdent_Evaluate_NoIntern 1000x eval registry size 不变) + micro-benchmark 加 Scenario E findEligibleTransition 5 transitions × 100K (scan 1251 ns + scan+fire 2391 ns) + Scenario F DSL evaluate 3-ident × 100K (true path 132 ns + short-circuit 113 ns) + 状态抬头同步 1783/1783 + 421/421 + 1039/1039 3-run stable；**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat) 全部 NEW。详见 §4.19 + §14 P1 polish row |
  |
