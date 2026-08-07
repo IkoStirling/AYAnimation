@@ -704,7 +704,16 @@ void AnimationPlayer::dispatchPendingNotifies(float prev,
         if (wantSink) {
             _animNotifySink(nm, tm, pl);
         }
-        _pendingNotifies.push_back({nm, tm, pl, AnimNotifySourceTag::Base});
+        // P3.x刀 N+1.C — Per-state AnimNotify routing. Pushed record
+        // carries the active state name (set by AYEntity SM bridge via
+        // setCurrentStateName). fromStateName defaults to empty when
+        // not driven by an SM (legacy / direct clip playback path).
+        // 2-step: brace-init the 4 trivial fields, then patch the
+        // std::string. Avoids potential issues with std::move on a
+        // struct whose std::string was just default-constructed.
+        AnimNotifyRecord rec{nm, tm, pl, AnimNotifySourceTag::Base};
+        rec.fromStateName = _currentStateNameForNotify;
+        _pendingNotifies.push_back(std::move(rec));
     };
 
     const float dur = _baseClip->getDuration();
@@ -770,7 +779,13 @@ void AnimationPlayer::dispatchSlotNotifies(AdditiveSlot& slot,
         // sourceTag is set in rebuildMergedNotifies (we don't know our
         // slot index here — the per-slot queue is consumed by the merger
         // which owns the slot → tag mapping).
-        slot.pendingNotifies.push_back({nm, tm, pl, AnimNotifySourceTag::Base});
+        // P3.x刀 N+1.C — Per-state AnimNotify routing. Per-slot records
+        // also carry fromStateName from the player-level cached value
+        // (set by AYEntity SM bridge on transition). Default empty
+        // when not driven by an SM.
+        AnimNotifyRecord rec{nm, tm, pl, AnimNotifySourceTag::Base};
+        rec.fromStateName = _currentStateNameForNotify;
+        slot.pendingNotifies.push_back(std::move(rec));
     };
 
     const float dur = slot.clip->getDuration();

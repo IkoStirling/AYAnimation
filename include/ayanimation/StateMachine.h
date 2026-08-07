@@ -1,6 +1,7 @@
 // StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机
 //                  + P3.x  (2026-08-07) L2 Condition DSL (string expr + lazy parse +
-//                  dirty cache).
+//                  dirty cache) + P3.x刀 N+1.B (2026-08-07) Time-in-State Query
+//                  (getCurrentStateElapsedTime + reserved ident "CurrentStateTime").
 //
 // Mirrors UE UAnimStateMachine shape (subset — L1 + L3; L4 MotionMatching /
 // multi-graph / BlendTree inside SM / parallel states deferred). Standalone
@@ -164,6 +165,15 @@ public:
     std::size_t getStateCount() const { return _states.size(); }
     std::size_t getTransitionCount() const { return _transitions.size(); }
 
+    // === P3.x刀 N+1.B NEW — Time-in-state query ===
+    // Seconds elapsed since the current state was entered. Resets to 0
+    // when fireTransition advances to a new state (instant-cut OR
+    // cross-fade START — matches UE FAnimNode_StateMachine::
+    // GetCurrentStateElapsedTime semantics). Returns 0.0f when the SM
+    // has not been initialized (setInitialState not called AND no
+    // update tick). Accumulates even during cross-fade window.
+    float getCurrentStateElapsedTime() const { return _currentStateEnterTime; }
+
     // === Internal hooks ===
     bool didTransitionThisFrame() const { return _transitionedThisFrame; }
 
@@ -232,6 +242,13 @@ private:
     // === P3.2 NEW fields ===
     std::vector<std::unique_ptr<StateMachine>> _children;
     int  _currentChildIndex = -1;          // -1 = no active child
+
+    // === P3.x刀 N+1.B NEW — Time-in-state accumulator ===
+    // Updated by update(dt) top-of-frame (+= dt). Reset to 0 by
+    // setInitialState / lazy-init / fireTransition (both instant-cut
+    // and cross-fade START paths). Mirrors UE
+    // FAnimNode_StateMachine::GetCurrentStateElapsedTime semantics.
+    float _currentStateEnterTime = 0.0f;
 };
 
 } // namespace ayt::anim

@@ -1,4 +1,5 @@
-// ConditionExpr.h — P3.x (2026-08-07) L2 Condition DSL AST.
+// ConditionExpr.h — P3.x (2026-08-07) L2 Condition DSL AST +
+//                    P3.x刀 N+1.B (2026-08-07) Time-in-State Query.
 //
 // Standalone mini AST for transition condition expressions. Patterned after
 // AYShader's AYAst.h (Visitor mode for P4.x graph-builder hook) and AYScript
@@ -21,14 +22,23 @@
 //              cachedAst=null + conditionDirty=false ⇒ condition is
 //              permanently false (INV-33 honored).
 //
+// INV-36..39 contracts (P3.x刀 N+1.B — Time-in-State Query):
+//   * INV-36 — getCurrentStateElapsedTime() returns 0.0f when _initialized=false
+//   * INV-37 — fireTransition (instant-cut AND cross-fade START) reset
+//              _currentStateEnterTime to 0.0f
+//   * INV-38 — _currentStateEnterTime accumulates dt in update() top-of-frame
+//              (even during cross-fade window, matches UE semantics)
+//   * INV-39 — reserved ident "CurrentStateTime" in CondIdentifierExpr routes
+//              to ctx.currentStateTime (SHADOWS any user param of same name)
+//
 // Operators supported (8): > < == != && || ! ( )
 // Literals: float / bool (true / false)
-// Identifiers: bare param names looked up in ConditionEvalCtx::params
+// Identifiers: bare param names looked up in ConditionEvalCtx::params;
+//              "CurrentStateTime" is a reserved ident (INV-39).
 //
-// Out of scope (defer to P3.x刀 N+1 / P4.x):
+// Out of scope (defer to P3.x刀 N+2 / P4.x):
 //   * arithmetic ( + - * / )
 //   * function calls / member access
-//   * time-in-state query (ctx.currentStateTime — field exists but unused)
 //   * string / int param types
 
 #pragma once
@@ -144,6 +154,9 @@ struct CondIdentifierExpr final : public CondExprAst {
     // from ctx.params, or 0.0f when missing (INV-23 fail-soft). Coerces
     // bool-style usage: ident alone in a bool context reads as
     // (value != 0.0f).
+    //
+    // P3.x刀 N+1.B — reserved ident "CurrentStateTime" (INV-39) takes
+    // priority over user params lookup; same name user param is shadowed.
     float evaluateAsFloat(const ConditionEvalCtx& ctx) const;
 };
 

@@ -36,6 +36,13 @@
 // P1.5 (2026-07-27): `sourceTag` field added so subscribers can route
 // per-source (Base vs Additive_0..7). kTypeId unchanged (0x000A'0001) so
 // existing P1.3 subscribers keep their subscriptions.
+//
+// P3.x刀 N+1.C (2026-08-07): `fromStateName` field added so subscribers
+// can route per-state (Locomotion vs Attack vs Idle, etc.). Default-
+// empty keeps the P1.5 record source-compatible — subscribers without
+// fromStateName awareness still receive and process events normally.
+// kTypeId unchanged (0x000A'0001) so existing P1.5 subscribers keep
+// their subscriptions.
 
 #pragma once
 
@@ -71,6 +78,12 @@ struct AnimNotifyEvent
     float                notifyTime = 0.0f;     // seconds on AYAnimation timeline
     float                payload    = 0.0f;     // optional marker payload
     AnimNotifySourceTag  sourceTag  = AnimNotifySourceTag::Base;   // P1.5 NEW
+
+    // P3.x刀 N+1.C NEW — Per-state AnimNotify routing. State name active
+    // when the notify fired. Empty string when not driven by a state
+    // machine (legacy / direct clip playback). Subscribers filter on
+    // this to per-state route (footstep → Locomotion, sword_hit → Attack).
+    std::string          fromStateName;                            // P3.x刀 N+1.C NEW
 };
 
 } // namespace ayt::anim

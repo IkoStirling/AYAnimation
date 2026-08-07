@@ -246,6 +246,15 @@ struct AnimNotifyRecord {
     float                 time      = 0.0f;
     float                 payload   = 0.0f;
     AnimNotifySourceTag   sourceTag = AnimNotifySourceTag::Base;
+
+    // P3.x刀 N+1.C NEW — Per-state AnimNotify routing. The state
+    // name active when this notify fired. Empty string when the
+    // player is not driven by a state machine (legacy / direct
+    // clip playback). Default-empty keeps P1.3/P1.4/P1.5 records
+    // source-compatible (subscriber code that does not know about
+    // the new field continues to work — it just never sees a
+    // non-empty fromStateName).
+    std::string           fromStateName;
 };
 
 // P1.5 — per-layer state container. Default-constructed represents
@@ -573,6 +582,14 @@ public:
     const std::vector<AnimNotifyRecord>& consumePendingNotifiesMerged();
     size_t getPendingNotifyCountMerged() const { return _pendingNotifiesMerged.size(); }
 
+    // === P3.x刀 N+1.C NEW — Per-state AnimNotify routing ===
+    // Set the active state name (called by AYEntity StateMachineSystem
+    // bridge after SM fires a transition). Recorded into every
+    // AnimNotifyRecord::fromStateName (PUSH path) until the next call.
+    // Default empty string = no state routing (legacy / direct clip).
+    void setCurrentStateName(std::string name) { _currentStateNameForNotify = std::move(name); }
+    const std::string& getCurrentStateName() const { return _currentStateNameForNotify; }
+
     // === P2.2 — Resource-level bone mask ===
     //
     // Bind a skeleton-bone-name → weight mask. Per-bone weight in [0, 1]
@@ -788,6 +805,13 @@ private:
     std::vector<AnimNotifyRecord>  _pendingNotifies;
     std::vector<AnimNotifyRecord>  _pendingNotifiesMerged;   // P1.5 NEW
     float                           _prevTickTime = 0.0f;
+
+    // P3.x刀 N+1.C — Per-state AnimNotify routing. Recorded into
+    // AnimNotifyRecord::fromStateName on push. Setter is called by
+    // AYEntity StateMachineSystem bridge on transition. Default empty
+    // = no state routing (legacy / direct clip playback — back-compat
+    // sentinel for P1.3/P1.4/P1.5 records).
+    std::string                     _currentStateNameForNotify;
 };
 
 } // namespace ayt::anim

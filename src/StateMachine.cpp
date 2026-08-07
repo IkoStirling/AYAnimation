@@ -3,7 +3,8 @@
 // setTrigger/setParam + child-first transition fallback + active child
 // resolution) + P3.x (2026-08-07) L2 Condition DSL cache layer
 // (setConditionExpr / invalidateConditionCache / evaluateCondition with
-//  lazy parse + dirty flag).
+//  lazy parse + dirty flag) + P3.x刀 N+1.B (2026-08-07) Time-in-State
+// Query (update top +dt + fireTransition reset + ctx plumbing).
 
 #include <ayanimation/ConditionParser.h>
 #include <ayanimation/StateMachine.h>
@@ -49,6 +50,8 @@ void StateMachine::setInitialState(const std::string& name) {
     _currentState = name;
     _prevStateName = name;
     _initialized = true;
+    // P3.x刀 N+1.B NEW — reset time-in-state when initial state set.
+    _currentStateEnterTime = 0.0f;
 
     // P3.2 NEW — if the initial state is a sub-machine entry, activate the
     // child immediately so the first update() ticks it.
@@ -70,6 +73,8 @@ void StateMachine::clear() {
     _transitionDuration = 0.0f;
     _transitionedThisFrame = false;
     _initialized = false;
+    // P3.x刀 N+1.B NEW — clear time-in-state accumulator on clear().
+    _currentStateEnterTime = 0.0f;
 
     // P3.2 NEW — recursively destroy sub-machines (unique_ptr dtor handles).
     _children.clear();
@@ -107,12 +112,23 @@ void StateMachine::update(float dt) {
     // INV-18 — empty state machine is a no-op.
     if (_states.empty()) return;
 
+    // P3.x刀 N+1.B NEW — accumulate time-in-state at top of frame,
+    // BEFORE any transition / lazy-init logic. Matches UE
+    // FAnimNode_StateMachine::UpdateAnimation semantics — even during
+    // cross-fade window the accumulator keeps advancing.
+    _currentStateEnterTime += dt;
+
     // Lazy-init: if user never called setInitialState, take the first
     // added state as the initial. Mirrors UE Entry Node behavior.
     if (!_initialized) {
         _currentState = _states.front().name;
         _prevStateName = _currentState;
         _initialized = true;
+        // P3.x刀 N+1.B NEW — reset on lazy-init (we just "entered" this
+        // state for the first time). The += dt above this point will
+        // already have advanced the clock by 1 frame, but for a brand-
+        // new SM that's the right model: "elapsed since first update".
+        _currentStateEnterTime = 0.0f;
         // P3.2 NEW — activate child if the lazily-initialized initial
         // state is a sub-machine entry.
         _currentChildIndex = findSubMachineIndex(_currentState);
@@ -175,13 +191,14 @@ bool StateMachine::evaluateCondition(const StateCondition& c) const {
 const Transition* StateMachine::findEligibleTransition() const {
     // P3.x L2 — evaluation context built here so Transition::evaluateCondition
     // can read SM internals via ConditionEvalCtx (params / triggers) without
-    // exposing them to callers. currentState + currentStateTime are reserved
-    // fields (P3.x刀 N+1).
+    // exposing them to callers. currentState + currentStateTime were reserved
+    // fields in P3.x; P3.x刀 N+1.B plumbs the live time-in-state value here
+    // so CondIdentifierExpr's "CurrentStateTime" reserved ident can read it.
     const ConditionEvalCtx ctx{
         &_params,
         &_triggers,
         _currentState,
-        0.0f,
+        getCurrentStateElapsedTime(),
     };
 
     // Author order matters — first match wins.
@@ -213,12 +230,18 @@ void StateMachine::fireTransition(const Transition& t) {
         _transitioning = false;
         _transitionDuration = 0.0f;
         _transitionElapsed = 0.0f;
+        // P3.x刀 N+1.B NEW — reset time-in-state on new state entry.
+        _currentStateEnterTime = 0.0f;
         // P3.2 NEW (INV-31) — instant cut also updates _currentChildIndex
         // since the new state may be a sub-machine entry (or non).
         _currentChildIndex = findSubMachineIndex(_currentState);
     } else {
         // INV-22 — cross-fade: latch pendingToState; currentState updates
         // only when duration elapses (StateMachine::update step 1).
+        // P3.x刀 N+1.B NEW — reset on transition START, not on
+        // cross-fade COMPLETE. Matches UE GetCurrentStateElapsedTime:
+        // user reads "time since fire", not "time since blend complete".
+        _currentStateEnterTime = 0.0f;
         _pendingToState = t.toState;
         _transitioning = true;
         _transitionDuration = t.duration;

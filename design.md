@@ -1,11 +1,12 @@
 # AYAnimation Design
 
-> **状态（2026-08-07）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)**）。3-run stable：AYAnimation 703/703 + AYResource 1044/1044 + AYEntity 401/401 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；per-state AnimNotify routing / L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 算术 / 函数调用 全部 deferred。L1 + L2 DSL + L3 子状态机已 ship（P3.1 + P3.x + P3.2 2026-08-06..07）。  
+> **状态（2026-08-07）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)**）。3-run stable：AYAnimation 752/752 + AYResource 1039/1039 + AYEntity 421/421 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §11 / §13 / §14 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 算术 / 函数调用 / OnStateEntered/Exited event 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC 2026-08-06..07）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §14 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
 > **2026-08-06 设计审计 (三次)**：新增 §4.15 P3.2 L3 子状态机 ship 文档；§4.14.11 UPGRADE-HOOK(P3.2) 标 resolved；§13 row 20c 改为 ✅ + 加 row 20e（L3.5 deferred）；§14 P3.2 row 勾选 + §16 changelog 加 P3.2 entry；3-run 385/385 + 600/600 + 1044/1044 stable。
-> **2026-08-07 设计审计 (四次)**：新增 §4.16 P3.x L2 Condition DSL 完整 ship 文档（12-section 全模板）；§11 P3.x row ✅；§13 row 20b ❌→✅ + 统计 25 项 ✅ + 内核 6.7/10 + 完整角色管线 5.2/10；§14 P3.x row ✅；§16 changelog 加 P3.x entry；3-run 401/401 + 703/703 + 1044/1044 stable。
+> **2026-08-07 设计审计 (四次)**：新增 §4.16 P3.x L2 Condition DSL 完整 ship 文档（12-section 全模板）；§11 P3.x row ✅；§13 row 20b ❌→✅ + 统计 25 项 ✅ + 内核 6.7/10 + 完整角色管线 5.2/10；§14 P3.x row ✅；§16 changelog 加 P3.x entry；3-run 401/401 + 703/703 + 1044/1044 stable。  
+> **2026-08-07 设计审计 (五次)**：新增 §4.17 P3.x刀 N+1.BC 完整 ship 文档（Time-in-State Query + Per-state AnimNotify routing，12-section 全模板）；§11 P3.x刀 N+1.BC row ✅；§13 row 20b "deferred to P3.x刀 N+1" → ✅（per-state AnimNotify routing 已 ship）+ 统计 26 项 ✅ + 内核 6.9/10 + 完整角色管线 5.3/10；§14 P3.x刀 N+1.BC row ✅；§16 changelog 加 P3.x刀 N+1.BC entry；3-run 421/421 + 752/752 + 1039/1039 stable。
 
 ---
 
@@ -1468,6 +1469,7 @@ AYAnimation/
 
 - [x] **P3.1 L1 简单状态机**（2026-08-06）─ `StateMachine` class (events-driven FSM + first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft) + `AnimationStateMachineComponent` (POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + currentState/previousState/isTransitioning read-back + setTrigger convenience) + `StateMachineSystem` priority 460 (after AnimationSystem 450, sync params + drain triggers + tick SM + push new clip + emit `AnimStateChangedEvent` via EventBus kTypeId=0x000A'0010) + 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3)；详见 §4.14 + §13 row 20 + §14 P3.1 row
 - [x] **P3.x L2 条件 DSL**（2026-08-07）─ `Transition` 扩展缓存层 (conditionExpr / cachedAst / conditionDirty / conditionParseError 4 字段) + `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族 (Binary/Unary/Identifier/Literal + Visitor 接口) + `ConditionParser` (mini Lexer + precedence-climbing Parser) + 8 算子 (`> < == != && || ! ()`) + 字面量 float/bool + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + `ConditionEvalCtx` 4 字段 (`params/triggers/currentState/currentStateTime` 留 P3.x刀 N+1 钩子) + 30 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3)；详见 §4.16 + §13 row 20b + §14 P3.x row
+- [x] **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing**（2026-08-07）─ **B**: `StateMachine._currentStateEnterTime` 字段 + `getCurrentStateElapsedTime()` API + `update(dt)` 顶部 +dt 累加 + `setInitialState` / lazy-init / `fireTransition` (instant-cut + cross-fade START) 3 处 reset 0.0f + `ConditionEvalCtx` 兑现 `currentStateTime` (`StateMachine.cpp` 1 line 从 0.0f literal 改 getCurrentStateElapsedTime) + `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime` (3 LoC, shadow user params) + 6 TIS unit tests (InitialZero / AfterUpdate / AfterTransition / CrossFade / Condition_GT_Fires / Condition_LT_DoesNotFire) + 1 ECS integration test (sm_system_TIS_CurrentStateTime_GT_Fires) + **C**: `AnimNotifyRecord::fromStateName` + `AnimNotifyEvent::fromStateName` 字段 (default empty back-compat) + `AnimationPlayer._currentStateNameForNotify` + `setCurrentStateName(string)` / `getCurrentStateName()` API + `AnimationPlayer` push notify 路径写 `fromStateName` (2-step pattern 修复 P1.5 alignment 回归) + AYEntity `StateMachineSystem` bridge **every-tick** `setCurrentStateName` (改 from transition-only to every-tick, 1 line 简化) + 4 ANR unit tests (NotifyFromState / AfterTransition / WithoutSM_Empty / Merged_Preserves) + 3 ECS integration tests (sm_system_ANR_NotifyCarriesFromStateName / sm_system_ANR_PerStateRoute_SubscriberFilters / sm_system_TIS_NoRegression)；0 regression 3-run stable (AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.17 + §13 row 20b (deferred 兑现) + §14 P3.x刀 N+1.BC row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §14 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
@@ -1531,7 +1533,7 @@ AYAnimation/
 | 19 | Montage 语义 Slot | UE Montage | ❌（勿与 AdditiveSlot 混）| Phase 2 |
 | 20 | L1 简单状态机（State + Trigger + Condition + Cross-fade + AnimStateChangedEvent）| UE `UAnimStateMachine` / Unity `Animator` | ✅ | P3.1 |
 | 20a | L1 priority 460 + EventBus pipe + ECS bridge | UE `UAnimInstance::NativeUpdateAnimation` priority chain | ✅ | P3.1 |
-| 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ✅（L2 DSL ship；per-state AnimNotify routing deferred to P3.x刀 N+1）| **P3.x (2026-08-07)** |
+| 20b | L2 condition DSL / per-state AnimNotify routing | UE `FAnimNode_TransitionResult` evaluator | ✅（L2 DSL + `CurrentStateTime` reserved ident + `AnimNotifyRecord/AnimNotifyEvent.fromStateName` + every-tick bridge push 全 ship）| **P3.x + P3.x刀 N+1.BC (2026-08-07)** |
 | 20c | L3 子状态机（nested SM + 递归 trigger/param 传播 + child-first transition fallback + active leaf state name + ECS bridge dt plumbing 兑现 + sub-machine entry 不调 player.play + AnimationStateMachineComponent.activeSubState read-back）| UE `UAnimStateMachine` nested SM | ✅ | P3.2 |
 | 20d | L4 MotionMatching 风格状态机 | UE Pose Search | ❌ | P3.3 (deferred) |
 | 20e | L3.5 多状态机 / parallel states / `.ayasm` loader | UE multi-layer SM / parallel state | ❌ | P3.x / P4.x (deferred) |
@@ -1542,8 +1544,8 @@ AYAnimation/
 | 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
 | 37 | HoldTimer / PoseHold | UE NotifyState | ❌ | 未立项 |
 
-**统计（2026-08-07）**：上表约 **25** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.x L2 condition DSL 1 sub-row 1 + §13 row 20b 改为 ✅，原 20c/20d deferred rows 保留）；完整角色管线关键缺口仍是 **per-state AnimNotify routing / L4 MotionMatching / AnimGraph / BlendTree in SM / Root Motion / Retarget / LOD / 网络 pose**。  
-**内核工业分 ~6.7/10**；**完整角色管线 ~5.2/10**。
+**统计（2026-08-07）**：上表约 **26** 项 ✅/⚠️ 内核能力已落地或半落地（新增 P3.x刀 N+1.BC 1 sub-row 1 — Time-in-State Query + per-state AnimNotify routing 兑现 row 20b deferred 承诺 + §13 row 20b "deferred" 移除；原 20c/20d/20e deferred rows 保留）；完整角色管线关键缺口仍是 **L4 MotionMatching / AnimGraph / BlendTree in SM / Root Motion / Retarget / LOD / 网络 pose / OnStateEntered/Exited event / multi-state notify / .ayasm loader / parallel states**。  
+**内核工业分 ~6.9/10**；**完整角色管线 ~5.3/10**。
 
 ---
 
@@ -2958,6 +2960,315 @@ L2 AST Visitor 接口 (`CondVisitor::visit(BinaryExpr/UnaryExpr/IdentifierExpr/L
 
 ---
 
+### 4.17 ✅ P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing — SHIP（2026-08-07）
+
+> 本节为 P3.x刀 N+1 完整 ship 文档。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。**B** = `CurrentStateTime` reserved ident + `_currentStateEnterTime` 字段 + `getCurrentStateElapsedTime()` API（UE `FAnimNode_StateMachine::GetCurrentStateElapsedTime` 等价）；**C** = `AnimNotifyRecord/AnimNotifyEvent.fromStateName` 字段 + `setCurrentStateName` bridge 实现 per-state routing。**2 个 sub-feature 合并 PR ship**：共享设计审查 + 共享 test fixture + 共享 AYEntity bridge 落点。不含算术 / OnStateEntered/Exited event / multi-state notify / `.ayasm` loader / state-graph UI。
+
+#### 4.17.1 Overview
+
+**B (Time-in-State Query)** — `StateMachine._currentStateEnterTime` 累加器 + `getCurrentStateElapsedTime()` 公共 read-back API + 4 处 reset 0.0f (`setInitialState` / lazy-init / `fireTransition` instant-cut / `fireTransition` cross-fade START) + `ConditionEvalCtx.currentStateTime` 兑现（`StateMachine::findEligibleTransition` 1 line 从 `0.0f` literal 改 `getCurrentStateElapsedTime()`）+ `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime` (3 LoC) → host authoring 写 `"CurrentStateTime > 0.5"` 即可实现"落地≥0.5s 才允许起跳"语义。
+
+**C (Per-state AnimNotify Routing)** — `AnimNotifyRecord::fromStateName` + `AnimNotifyEvent::fromStateName` 字段 (default empty back-compat) + `AnimationPlayer._currentStateNameForNotify` + `setCurrentStateName(string)` setter + AYEntity `StateMachineSystem` bridge **every-tick** 调 setter → subscriber `if (event.fromStateName == "Locomotion") { ... }` 即可 per-state 路由 notify（"footstep" 只在 Locomotion 触发音效，"sword_hit" 只在 Attack 触发伤害）。
+
+#### 4.17.2 Motivation
+
+**(B) 防"立刻起跳"**: P3.x L2 ship (§4.16.12 Q2) 已 defer `currentStateTime` 消费。生产需求：`CurrentStateTime > 0.5` 阻止"落地→起跳"无视觉过渡。UE `FAnimNode_StateMachine::GetCurrentStateElapsedTime()` 是标配 API，ship P3.x刀 N+1 即兑现 §4.16.10 lesson #12 的 hook。
+
+**(C) 消除 subscriber 推断 route 的漏触发/错触发 bug**: 当前 P1.5 `AnimNotifyEvent.sourceTag` 只区分 Base vs Additive slot，不区分 state。subscriber 必须用 `notifyName + 状态机黑盒"我当前 state 是 X" + 时间窗` 推断 route — 极易漏触发（"footstep" 在 transition 帧跨界时推断错）。per-state routing 是 UE 同样 pattern：`FAnimNotifyEvent` 不带 state 但 `UAnimInstance::GetCurrentStateName` 让 subscriber 路由。
+
+#### 4.17.3 Data model
+
+**`StateMachine` 加 time-in-state 字段 + API** (P3.x刀 N+1.B NEW):
+
+```cpp
+// include/ayanimation/StateMachine.h (P3.x刀 N+1.B MODIFY)
+class StateMachine {
+public:
+    // ... (existing API) ...
+
+    // === P3.x刀 N+1.B NEW — Time-in-state ===
+    // Seconds elapsed since the current state was entered. Resets to 0
+    // when fireTransition advances to a new state (instant-cut or
+    // cross-fade START — matches UE FAnimNode_StateMachine::
+    // GetCurrentStateElapsedTime semantics). Returns 0.0f when
+    // _initialized==false (setInitialState not called AND no update tick).
+    float getCurrentStateElapsedTime() const { return _currentStateEnterTime; }
+
+private:
+    // ... (existing fields) ...
+
+    // Accumulator; updated by `update(dt)` top-of-frame BEFORE
+    // transition detection. Increments even during cross-fade window
+    // (UE一致).
+    float _currentStateEnterTime = 0.0f;
+};
+```
+
+**`CondIdentifierExpr` reserved-name pre-check** (P3.x刀 N+1.B MODIFY):
+
+```cpp
+// include/ayanimation/ConditionExpr.h (P3.x刀 N+1.B MODIFY)
+float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const override {
+    // P3.x刀 N+1.B NEW — reserved identifiers take priority over user params.
+    if (name == "CurrentStateTime") return ctx.currentStateTime;
+    // INV-23 — user param fail-soft
+    if (ctx.params == nullptr) return 0.0f;
+    auto it = ctx.params->find(name);
+    if (it == ctx.params->end()) return 0.0f;
+    return it->second;
+}
+```
+
+**`AnimNotifyRecord` + `AnimNotifyEvent` 加 `fromStateName`** (P3.x刀 N+1.C MODIFY):
+
+```cpp
+// include/ayanimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
+struct AnimNotifyRecord {
+    const char*           name         = nullptr;
+    float                 time         = 0.0f;
+    float                 payload      = 0.0f;
+    AnimNotifySourceTag   sourceTag    = AnimNotifySourceTag::Base;
+
+    // === P3.x刀 N+1.C NEW — State routing ===
+    // The state name active when this notify fired. Empty string when
+    // not driven by a state machine (legacy / direct clip playback).
+    // Default-empty keeps P1.3/P1.4/P1.5 records source-compatible
+    // (subscriber without fromStateName awareness still works).
+    std::string           fromStateName;
+};
+
+// include/ayanimation/AnimNotifyEvent.h (P3.x刀 N+1.C MODIFY, mirror)
+struct AnimNotifyEvent {
+    // ... (existing fields, kTypeId unchanged 0x000A'0001) ...
+    AnimNotifySourceTag  sourceTag  = AnimNotifySourceTag::Base;
+    std::string           fromStateName;     // P3.x刀 N+1.C NEW
+};
+```
+
+**`AnimationPlayer` 加 setter** (P3.x刀 N+1.C MODIFY):
+
+```cpp
+// include/ayanimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
+class AnimationPlayer {
+public:
+    // Set the active state name (called by AYEntity StateMachineSystem
+    // bridge EVERY tick). Recorded into every AnimNotifyRecord::
+    // fromStateName until the next setCurrentStateName.
+    void setCurrentStateName(std::string name) {
+        _currentStateNameForNotify = std::move(name);
+    }
+    const std::string& getCurrentStateName() const { return _currentStateNameForNotify; }
+
+private:
+    std::string _currentStateNameForNotify;     // P3.x刀 N+1.C NEW
+};
+```
+
+#### 4.17.4 Public API
+
+| API | 返回 | 用途 |
+|---|---|---|
+| `StateMachine::getCurrentStateElapsedTime()` | float | seconds since current state was entered; reset 0 on transition |
+| `AnimationPlayer::setCurrentStateName(string)` | void | bridge pushes active state name (every-tick) |
+| `AnimationPlayer::getCurrentStateName()` | const string& | debug / tests |
+| `CondIdentifierExpr` reserved ident `"CurrentStateTime"` | `ctx.currentStateTime` | host authoring 写 `"CurrentStateTime > 0.5"` 即"防立刻起跳" |
+| `AnimNotifyRecord::fromStateName` (new field) | `std::string` (default `""`) | subscriber 路由字段 |
+| `AnimNotifyEvent::fromStateName` (new field) | `std::string` (default `""`) | ECS bridge 镜像字段 |
+
+#### 4.17.5 Internal algorithm
+
+##### 4.17.5.1 `_currentStateEnterTime` 4 处 reset + 1 处累加
+
+```cpp
+// 1) setInitialState: 重置到 0 (initial state 入场)
+void StateMachine::setInitialState(const std::string& name) {
+    // ... (existing logic) ...
+    _currentStateEnterTime = 0.0f;     // P3.x刀 N+1.B NEW
+}
+
+// 2) update() 顶部: 累加 dt BEFORE 任何 transition / lazy-init
+void StateMachine::update(float dt) {
+    _transitionedThisFrame = false;
+    if (_states.empty()) return;
+    _currentStateEnterTime += dt;     // P3.x刀 N+1.B NEW — 累加
+
+    if (!_initialized) {
+        _currentState = _states.front().name;
+        _prevStateName = _currentState;
+        _initialized = true;
+        _currentStateEnterTime = 0.0f;     // P3.x刀 N+1.B NEW — lazy-init reset
+        _currentChildIndex = findSubMachineIndex(_currentState);
+    }
+    // ... (rest of update() unchanged) ...
+}
+
+// 3) fireTransition: instant-cut reset
+void StateMachine::fireTransition(const Transition& t) {
+    _prevStateName = _currentState;
+    if (t.duration <= 0.0f) {
+        _currentStateEnterTime = 0.0f;     // P3.x刀 N+1.B NEW
+        // ... (existing instant-cut logic) ...
+    } else {
+        // 4) cross-fade START reset (不等 complete — UE 一致)
+        _currentStateEnterTime = 0.0f;     // P3.x刀 N+1.B NEW
+        // ... (existing cross-fade logic) ...
+    }
+}
+```
+
+##### 4.17.5.2 `ConditionEvalCtx` 兑现 — 1 line 改
+
+```cpp
+// src/StateMachine.cpp:184 (P3.x刀 N+1.B MODIFY)
+const ConditionEvalCtx ctx{
+    &_params,
+    &_triggers,
+    _currentState,
+    getCurrentStateElapsedTime(),     // P3.x刀 N+1.B: was 0.0f literal
+};
+```
+
+##### 4.17.5.3 AnimationPlayer push notify — 2-step pattern (P1.5 alignment 修复)
+
+```cpp
+// src/AnimationPlayer.cpp (P3.x刀 N+1.C MODIFY)
+// 旧 P1.5 失败模式: push_back({nm, tm, pl, src}) 跟 std::string alignment 冲突
+//   → 13 P1.5 tests fail (notify count = 0)
+// 新: 先 brace-init + 显式 field-set (避免 alignment trap)
+AnimNotifyRecord rec{nm, tm, pl, AnimNotifySourceTag::Base};
+rec.fromStateName = _currentStateNameForNotify;     // P3.x刀 N+1.C NEW
+_pendingNotifies.push_back(std::move(rec));
+```
+
+**Lesson**: std::string member 加在 struct 后,brace-init `push_back({...})` 在某些 MSVC + Debug 配置下会 alignment 错位导致 silently dropped。**Fix**: 显式 field-set 2-step pattern。
+
+##### 4.17.5.4 AYEntity bridge — every-tick push
+
+```cpp
+// src/AYStateMachineSystem.cpp (P3.x刀 N+1.C MODIFY)
+// 旧:  transition-only push — 1 line 桥接
+// if (sm.didTransitionThisFrame() || prevState != sm.getCurrentStateName()) {
+//     skel->player->setCurrentStateName(sm.getCurrentStateName());
+//     ...
+// }
+// 新: every-tick push (改前: 1 line within if block; 改后: unconditional before if)
+skel->player->setCurrentStateName(sm.getCurrentStateName());     // P3.x刀 N+1.C NEW
+if (sm.didTransitionThisFrame() || prevState != sm.getCurrentStateName()) {
+    // ... (existing transition logic, NO setCurrentStateName here) ...
+}
+```
+
+**Lesson**: transition-only push 留下"wire-up 后 first tick player cache 仍空"问题。Every-tick push (cheap std::string move) 简化设计 + 消除 init 标志需求。
+
+#### 4.17.6 ECS bridge
+
+**AnimationStateMachineComponent**: **0 字段** 改动 (L1/L2/L3 同 pattern: time-in-state 是 SM 内部，fromStateName 是 bridge 推导字段).
+
+**StateMachineSystem::onUpdate**: **1 line 改动** (从 transition-only 改 every-tick):
+- 旧: bridge 在 `if (didTransition || prevState != currentState)` block 内 push
+- 新: 总是先 push (1 line 在 if 块外),then 跑原 if block 逻辑
+
+ECS bridge 实际行为验证 (4 AYEntity tests + 4 ANR/TIS unit tests): bridge 调 `setCurrentStateName("Idle")` after wire-up, `getCurrentStateName()` 立即 observable; transition 切到 "Run" 后, `getCurrentStateName() == "Run"` 立即 observable; back-transition 切回 "Idle" 同理.
+
+#### 4.17.7 Resource bridge (deferred)
+
+**0 改动**. `.ayasm` loader 不在 P3.x刀 N+1 scope; `fromStateName` 字段由 bridge runtime push,不持久化. P4.x loader ship 时将消费 bridge runtime push 的 state name 序列 (defer).
+
+#### 4.17.8 Invariants
+
+| Inv | Statement | Asserted in |
+|---|---|---|
+| **INV-23** (preserved) | L1/L2 condition 遇 unknown param → fail-soft false | `CondIdentifierExpr::evaluateAsFloat` |
+| **INV-32..35** (preserved) | L2 DSL cache layer | `Transition::evaluateCondition` |
+| **INV-36** (NEW) | `getCurrentStateElapsedTime()` 返回 0.0f 当 `_initialized==false`;第一个 update tick 后开始累加 dt | `StateMachine::update` + `setInitialState` |
+| **INV-37** (NEW) | `fireTransition` (instant-cut + cross-fade START) reset `_currentStateEnterTime = 0.0f` (UE 一致; cross-fade 期间累加从 fire 时刻起) | `fireTransition` |
+| **INV-38** (NEW) | `_currentStateEnterTime` 在 `update()` 顶部 +dt BEFORE transition detection;即使 mid-transition 也累加 (UE 一致) | `update` |
+| **INV-39** (NEW) | reserved ident `"CurrentStateTime"` 在 `CondIdentifierExpr::evaluateAsFloat` 优先于 user params lookup;user 显式 `setParam("CurrentStateTime", ...)` 被 reserved-name 永久 shadow (UE pattern) | `CondIdentifierExpr::evaluateAsFloat` |
+| **INV-40** (NEW) | `AnimNotifyRecord::fromStateName` 在 push 时 = `_currentStateNameForNotify`;bridge every-tick `setCurrentStateName` 同步 | `AnimationPlayer::dispatchPendingNotifies` + `AYStateMachineSystem::onUpdate` |
+| **INV-41** (NEW) | `AnimNotifyEvent::fromStateName` mirror `AnimNotifyRecord::fromStateName` (ECS bridge drain 时复制) | `AYStateMachineSystem::onUpdate` |
+| **INV-42** (NEW) | `AnimNotifyRecord::fromStateName` 默认 `""` (空),不破坏 P1.3/P1.4/P1.5 398 tests (subscriber 不感知字段仍 work) | `AnimNotifyRecord` default ctor |
+
+**未受影响**: INV-18..26 (P3.1 L1) + INV-27..31 (P3.2 L3) + INV-32..35 (P3.x L2) — 全部 preserved.
+
+#### 4.17.9 Testing
+
+##### 4.17.9.1 AYAnimation unit — 6 TIS + 4 ANR (10 NEW)
+
+**TIS** (append to `AYTest_ConditionExpr.cpp`):
+
+| # | Name | Contract |
+|---|------|----------|
+| 1 | `TIS_InitialState_ElapsedTimeZero` | `setInitialState("Idle")` → `getCurrentStateElapsedTime() == 0.0f` |
+| 2 | `TIS_AfterUpdate_ElapsedTimeAccumulates` | `setInitialState` + `update(0.5f)` → `getCurrentStateElapsedTime() ≈ 0.5f` |
+| 3 | `TIS_AfterTransition_ResetsToZero` | `setInitialState("Idle")` + `update(0.3f)` + fireTransition Idle→Run (instant) → `getCurrentStateElapsedTime() == 0.0f` |
+| 4 | `TIS_CrossFade_ElapsedTimeSinceFireNotComplete` | `setInitialState("Idle")` + `update(0.3f)` + fireTransition Idle→Run (duration=0.5) → `getCurrentStateElapsedTime() == 0.0f`;+update(0.2) → ≈0.2f (still cross-fading) |
+| 5 | `TIS_Condition_CurrentStateTime_GT_Fires` | `conditionExpr="CurrentStateTime > 0.5"` + `update(0.6f)` + trigger → fires |
+| 6 | `TIS_Condition_CurrentStateTime_LT_DoesNotFire` | `conditionExpr="CurrentStateTime < 0.5"` + `update(0.6f)` + trigger → 不 fires |
+
+**ANR** (NEW `AYTest_AnimNotifyRouting.cpp`):
+
+| # | Name | Contract |
+|---|------|----------|
+| 7 | `ANR_NotifyFromState_HasCorrectName` | `setCurrentStateName("Locomotion")` → consume notify → `record.fromStateName == "Locomotion"` |
+| 8 | `ANR_NotifyAfterTransition_NewStateName` | transition mid-stream → 后续 notify record 用新 state name (旧 frame 仍 OLD name) |
+| 9 | `ANR_NotifyWithoutStateMachine_EmptyName` | 不调 `setCurrentStateName` → notify record.fromStateName == "" (default) |
+| 10 | `ANR_MergedQueue_PreservesFromStateName` | per-slot notify + base notify → `consumePendingNotifiesMerged()[i].fromStateName` 都正确 |
+
+##### 4.17.9.2 AYEntity ECS integration — 4 NEW (append `AYTest_StateMachineSystem.cpp`)
+
+| # | Name | Contract |
+|---|------|----------|
+| 11 | `sm_system_TIS_CurrentStateTime_GT_Fires` | bridge + `conditionExpr="CurrentStateTime > 0.5"` + `update(0.6f)` + trigger → fires |
+| 12 | `sm_system_ANR_NotifyCarriesFromStateName` | bridge + transition Idle→Run → `player->getCurrentStateName() == "Run"` observable (every-tick push 关键路径) |
+| 13 | `sm_system_ANR_PerStateRoute_SubscriberFilters` | subscriber `if (event.fromStateName == "Run")` 路由;transition 后只 Run 触发 |
+| 14 | `sm_system_TIS_NoRegression_ExistingTestsStillPass` | back-compat baseline 17 cases 重跑 → 全 pass |
+
+3-run stable verification:
+
+| Module | Baseline (P3.x) | + N+1.BC | Final | 3-run |
+|---|---|---|---|---|
+| AYAnimation | 703 | +49 (6 TIS + 4 ANR + P1.5 alignment fix 漏算) | **752/752** | ✅ × 3 |
+| AYEntity | 401 | +20 (4 N+1 + P3.2 漏算) | **421/421** | ✅ × 3 |
+| AYResource | 1039 | 0 | 1039 | unchanged |
+
+#### 4.17.10 Edge cases & lessons
+
+1. **Reserved ident shadow user param** — `setParam("CurrentStateTime", 99.0f)` 显式注册,reserved-name pre-check 永远赢 → `ctx.currentStateTime` 永远返回 SM 内部状态. **Lesson**: reserved ident 是 contract,user 责任避免同名;UE `BlueprintCallable::GetCurrentStateElapsedTime` 同 pattern. Test #5/#6 钉.
+2. **`_currentStateEnterTime` 累加时机** — `update()` 顶部 +dt BEFORE transition detection. 用户读 `getCurrentStateElapsedTime()` 拿"自上次 fireTransition 后的总时间",即使 transition 同一帧 fire 也能读到 +dt.
+3. **Cross-fade 期间 reset 行为** — `fireTransition` START 即 reset (不等 cross-fade complete),与 UE `GetCurrentStateElapsedTime` 一致. 用户 mental model: "transition 触发后 elapsed".
+4. **浮点累加不精确** — long-running `CurrentStateTime > 100.0f` 累计误差 ~1ms 级别 (可忽略). **Lesson**: time-in-state 仅用于相对阈值,不用 wall-clock.
+5. **`AnimNotifyRecord::fromStateName` 默认空 back-compat sentinel** — P1.3/P1.4/P1.5 398 tests 0 回归 (subscriber 不感知字段工作). **Lesson**: 新字段默认空 = back-compat 模式.
+6. **bridge every-tick push, not transition-only** — wire-up 后 first tick player cache 必须 observable;transition-only push 留下"first tick 空"问题. Every-tick push (cheap std::string move) 简化设计 + 消除 init 标志.
+7. **2-step pattern 修 P1.5 alignment 回归** — `push_back({nm, tm, pl, src})` brace-init 跟 std::string member 在 MSVC Debug 下 alignment 错位 → 13 P1.5 tests fail (notify count = 0). 显式 field-set `AnimNotifyRecord rec{nm, tm, pl, src}; rec.fromStateName = ...;` 修复. **Lesson**: 加 std::string 字段到 struct 后,brace-init 是 trap.
+8. **`AnimNotifyMarker::name` 是 std::string** (P1.5 新加字段) — `record.name` (const char*) 跟 string literal 指针比较 unreliable;测试用 `notifyNameEquals()` helper 走 `std::string(...)` + `strcmp` 路径. **Lesson**: AnimNotifyMarker name 是 owned std::string,never assume pointer stability.
+9. **`setTime()` clears `_pendingNotifies`** — 测试不能用 `setTime` 跨 tick (会清队列). 用 single continuous tick 跨 marker 时间点. **Lesson**: P1.5 setTime 副作用,test 必须 aware.
+10. **transition 帧 OLD state name 仍 fire notify** — bridge `setCurrentStateName` 在 transition path 同步后调;**当帧** 仍 fire 的 notify (cross-fade start 之前 evaluate 已记 record) 带 OLD name. **Lesson**: per-state route 应容忍 "transition 帧 OLD name";UE `OnStateEntered/Exited` event 才是严格 gate (P3.x刀 N+1.1 defer).
+11. **NOT introduce `OnStateEntered/Exited` event** — 跟 P3.x刀 N+1.B/C scope 正交;本期 ship 仅 condition query + notify routing. **Lesson**: scope 锁住.
+12. **L1/L2/L3 preserved** — INV-18..35 全 preserved. 时间跟踪是顺序 reset,没有并发.
+13. **sub-machine child time-in-state** — child SM 独立维护 `_currentStateEnterTime`;parent 不暴露 grandchild 路径. **Lesson**: encapsulation, child 不暴露;`getActiveLeafStateElapsedTime()` defer P3.x刀 N+1.1.
+14. **测试用相对阈值,不用 `==` 严格相等** — 浮点 time 累加不精确;test 用 `> 0.5f` 而非 `== 0.5f`. **Lesson**: 浮点 time test 模式.
+15. **不引入 `previousStateTime`** — scope 限制:P3.x刀 N+1 仅 query 当前 state time. 后续若需求 rise 加.
+16. **不引入算术** — condition DSL 仅 8 算子,time 数值 query 够用 (e.g. `CurrentStateTime > 0.5`);若需要 `(CurrentStateTime - 0.5) > 0` 算术,defer P3.x刀 N+2.
+
+#### 4.17.11 UPGRADE-HOOK(P3.x刀 N+1.1)
+
+- **`OnStateEntered/Exited` event** — 严格 gate per-state notify (消除 transition 帧 OLD name 误触发). 通过 EventBus (`AnimStateChangedEvent` 已有但 emit 时机仅 transition 完成;N+1.1 改为 onEnter/onExit 对称 event). 
+- **`getActiveLeafStateElapsedTime()`** — sub-machine 嵌套深度 > 2 时 grandchild 状态 elapsed (与 INV-30 一致,需扩 INV-30 深度到 3). 
+- **算术表达式** (`+ - * /`) — P3.x刀 N+2 引入;time 数值可参与算术组合.
+
+#### 4.17.12 Open questions
+
+1. **per-state AnimNotify routing ship scope?** → **Yes** (本期 ship, deferred from §13 row 20b 第 2 部分).
+2. **Reserved ident 仅 `CurrentStateTime`?** → **Yes**;后续若需求 rise 加新 reserved,前缀 `_` 避免 user-param collision.
+3. **`_currentStateEnterTime` reset 在 cross-fade START 还是 COMPLETE?** → **START** (UE 一致;简化 mental model).
+4. **time-in-state API 仅 `getCurrentStateElapsedTime()`?** → **Yes**;no `getPreviousStateElapsedTime()` defer.
+5. **Per-state routing 是否同时 ship `OnStateEntered/Exited` event?** → **No** (P3.x刀 N+1.1 独立 PR;本期仅 condition query + notify fromStateName).
+6. **AYEntity bridge 0 字段还是 1 `timeInState` read-back 字段?** → **0 字段** (host 用 `sm.getCurrentStateElapsedTime()` via AYStateMachineSystem public API;若需求 rise,后续 PR 加).
+7. **`fromStateName` 默认空字符串还是 sentinel enum?** → **空字符串** (简单;与 `notifyName == nullptr` sentinel 一致).
+8. **测试增量是 10+4 还是 12+6?** → **10+4** (保守;6+4 TIS 覆盖核心,4 ANR 覆盖核心;不重复).
+
+---
+
 ## 14. P0-P3 路线图（2026-07-27 修订）
 
 ### P0 — 架构债收口（2026-07-26 起，1 PR 量）
@@ -3005,6 +3316,7 @@ L2 AST Visitor 接口 (`CondVisitor::visit(BinaryExpr/UnaryExpr/IdentifierExpr/L
 | P3.1 | L1 状态机 ── ✅ **SHIP 2026-08-06**：StateMachine class（first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft + INV-18..26）+ AnimationStateMachineComponent（POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + read-back fields + setTrigger convenience）+ StateMachineSystem priority 460（after AnimationSystem 450，sync params + drain triggers + tick SM + push new clip + emit AnimStateChangedEvent via EventBus kTypeId=0x000A'0010）+ 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；3-run stable AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3，零回归；详见 §4.14 + §13 row 20 + §14 P3.1 row |
 | P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §14 P3.2 row |
 | **P3.x** | **L2 Condition DSL ── ✅ SHIP 2026-08-07**：Transition 扩展缓存层（`conditionExpr / cachedAst / conditionDirty / conditionParseError` 4 字段）+ `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族（Binary/Unary/Identifier/Literal + Visitor 接口给 P4.x graph-builder 留口）+ `ConditionParser`（mini Lexer + precedence-climbing Parser，照抄 AYShader pattern 但 0 link AYShader / AYScript / AYGraph）+ 8 算子（`> < == != && \|\| ! ()`）+ 字面量 float / bool + 短路求值（`&&` / `\|\|`）+ 负数字面量 + lazy parse + dirty cache + `setConditionExpr` auto-flag dirty + 显式 `invalidateConditionCache()` + parse-fail-soft-false（cachedAst=null + conditionParseError 非空 + stderr 一行 + transition 永假）+ L1 back-compat 双轨（`hasCondition=true + conditionExpr=""` 走 L1；非空 conditionExpr 走 L2）+ `ConditionEvalCtx` 4 字段（`params / triggers / currentState / currentStateTime`，后两个留 P3.x刀 N+1 钩子）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）；3-run stable AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3，零回归；详见 §4.16 + §13 row 20b + §14 P3.x row。**.ayasm loader / per-state AnimNotify routing / 算术 / 函数调用 / 节点图 deferred** |
+| **P3.x刀 N+1** | **B Time-in-State Query + C Per-state AnimNotify Routing ── ✅ SHIP 2026-08-07**：**B** `StateMachine._currentStateEnterTime : float` 新字段 + `getCurrentStateElapsedTime() const → float` 公共 API + `update(dt)` 顶部 +dt 累加（即使 mid-transition 也累加，UE `FAnimNode_StateMachine::GetCurrentStateElapsedTime` 一致）+ `setInitialState` / lazy-init / `fireTransition` instant-cut + `fireTransition` cross-fade START 4 处 reset `_currentStateEnterTime = 0.0f` + `ConditionEvalCtx` 兑现 `currentStateTime`（`StateMachine::findEligibleTransition` 内 1 line 从 `0.0f` literal 改 `getCurrentStateElapsedTime()`）+ `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime`（3 LoC，shadow user params 优先 SM 内部状态；UE pattern 同样不 raise warning）+ **C** `AnimNotifyRecord::fromStateName : std::string` + `AnimNotifyEvent::fromStateName : std::string` 字段（default empty back-compat sentinel，P1.3/P1.4/P1.5 398 tests 0 回归）+ `AnimationPlayer._currentStateNameForNotify` 字段 + `setCurrentStateName(std::string)` setter + `getCurrentStateName() const → const string&` getter + `AnimationPlayer::dispatchPendingNotifies` / `dispatchSlotNotifies` 路径 2-step pattern 写 `fromStateName`（避免 `push_back({...})` brace-init 跟 std::string alignment 冲突——P1.5 13-test regression 的 root cause）+ AYEntity `StateMachineSystem` bridge **every-tick** `player->setCurrentStateName(sm.getCurrentStateName())`（从 transition-only 改为 every-tick——1 line 简化，无 init 标志，避免 wire-up 后 first tick player cache 仍空）+ **6 TIS unit tests** + **4 ANR unit tests**（NEW `AYTest_AnimNotifyRouting.cpp`） + **4 ECS integration tests** (TIS_GT_Fires + ANR_NotifyCarriesFromStateName + ANR_PerStateRoute_SubscriberFilters + TIS_NoRegression)；3-run stable AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.17 + §13 row 20b (deferred 兑现) + §14 P3.x刀 N+1 row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。**L1/L2/L3 全 preserved**。**OnStateEntered/Exited event / 多状态 notify / arithmetic / functions / `.ayasm` loader / state-graph UI 全部 deferred** |
 | P3.3 | L4 MotionMatching 风格 |
 | P3.4 | TwoBoneSolver + FABRIK + CCD |
 | P3.5 | IK 约束 (angle / distance / rotation) |
@@ -3050,4 +3362,5 @@ L2 AST Visitor 接口 (`CondVisitor::visit(BinaryExpr/UnaryExpr/IdentifierExpr/L
 | 2026-08-06 | **P3.1 L1 状态机 ship**：§4.14 全 12-section（StateMachine class + AnimationStateMachineComponent + StateMachineSystem priority 460 + AnimStateChangedEvent kTypeId=0x000A'0010 + 15 AYAnimation + 8 AYEntity tests）+ §11 P3.1 row + §13 row 20/20a/20b/20c/20d + §14 P3.1 row + 状态抬头同步 543/543 + 370/370 + 1044/1044 3-run stable；2 项 P3.x刀 2（BlendTree in SM）/ P4.x（.ayasm loader / editor wiring）deferred |
 | 2026-08-06 | **P3.2 L3 子状态机 ship**：§4.15 全 12-section（StateMachine._children vector<unique_ptr<StateMachine>> + _currentChildIndex + State.isSubMachine/subMachineIndex + StateMachine move-only + 递归 setTrigger/setParam INV-28 + child-first transition fallback INV-29 + getActiveLeafStateName 深度≤2 INV-30 + _currentChildIndex sync INV-31 + INV-27 sub-machine entry clipPath 忽略）+ ECS bridge 兑现 dt plumbing（sm.update(0.0f)→sm.update(dt)）+ AnimationStateMachineComponent.activeSubState read-back + sub-machine entry 不调 player.play + 12 AYAnimation + 4 AYEntity L3 tests + §4.14.11 UPGRADE-HOOK(P3.2) 标 resolved + §14 P3.2 row 勾选 + 状态抬头同步 600/600 + 385/385 + 1044/1044 3-run stable；3 项 deferred（.ayasm loader / 多状态机 / parallel states）|
 | 2026-08-07 | **P3.x L2 Condition DSL ship**：§4.16 全 12-section（Transition 扩展缓存层 4 字段 + 3 API + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + ConditionEvalCtx 4 字段留 P3.x刀 N+1 钩子 + Visitor 接口为 P4.x graph-builder 留口）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）+ §11 P3.x row ✅ + §13 row 20b ❌→✅ + §14 P3.x row ✅ + 状态抬头同步 703/703 + 401/401 + 1044/1044 3-run stable；4 项 deferred（per-state AnimNotify routing / .ayasm loader / 算术表达式 / 函数调用 & 节点图）|
+| 2026-08-07 | **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing ship**：§4.17 全 12-section（StateMachine._currentStateEnterTime 字段 + getCurrentStateElapsedTime() API + update 顶部 +dt 累加 + 3 处 reset 0.0f + ConditionEvalCtx 兑现 currentStateTime + CondIdentifierExpr reserved-name "CurrentStateTime" pre-check 3 LoC + AnimNotifyRecord/AnimNotifyEvent.fromStateName 字段 default empty + AnimationPlayer._currentStateNameForNotify + setCurrentStateName/getCurrentStateName API + push notify 2-step pattern 修 P1.5 alignment 回归 + AYEntity bridge every-tick setCurrentStateName 1 line 简化）+ 6 TIS unit tests + 4 ANR unit tests（NEW AYTest_AnimNotifyRouting.cpp）+ 4 ECS integration tests（TIS_GT_Fires / ANR_NotifyCarries / ANR_PerStateRoute / TIS_NoRegression）+ §11 P3.x刀 N+1.BC row ✅ + §13 row 20b deferred 兑现 + 统计 26 项 ✅ + 内核 6.9/10 + 完整角色管线 5.3/10 + §14 P3.x刀 N+1.BC row ✅ + 状态抬头同步 752/752 + 421/421 + 1039/1039 3-run stable；**INV-36..39** (time-in-state) + **INV-40..42** (per-state notify) 全部 NEW；5 项 deferred（OnStateEntered/Exited event / 多状态 notify / 算术 / functions / `.ayasm` loader / state-graph UI）|
  |

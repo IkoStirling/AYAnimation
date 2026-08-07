@@ -40,6 +40,14 @@ bool CondIdentifierExpr::evaluate(const ConditionEvalCtx& ctx) const {
 }
 
 float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
+    // P3.x刀 N+1.B — INV-39 reserved ident. "CurrentStateTime" is a
+    // hard-coded SM-internal state variable; it shadows any user
+    // param registered with setParam("CurrentStateTime", ...).
+    // Mirrors UE FAnimNode_StateMachine::GetCurrentStateElapsedTime
+    // access pattern (state-machine internal state, not a free param).
+    if (name == "CurrentStateTime") {
+        return ctx.currentStateTime;
+    }
     if (ctx.params == nullptr) return 0.0f;       // INV-23 fail-soft
     auto it = ctx.params->find(name);
     if (it == ctx.params->end()) return 0.0f;     // INV-23 fail-soft

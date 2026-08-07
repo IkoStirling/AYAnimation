@@ -19,6 +19,11 @@ set(SRC_FILES
     # P3.x (2026-08-07) — L2 Condition DSL unit tests. 30 cases pinning
     # INV-32..35 (parser + evaluator + cache + back-compat); standalone.
     AYTest_ConditionExpr.cpp
+    # P3.x刀 N+1.C (2026-08-07) — Per-state AnimNotify routing unit tests.
+    # 4 cases pinning INV-40..42 (fromStateName on AnimNotifyRecord +
+    # AnimNotifyEvent, default-empty back-compat, merged queue dedup);
+    # standalone (no AYEntity).
+    AYTest_AnimNotifyRouting.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

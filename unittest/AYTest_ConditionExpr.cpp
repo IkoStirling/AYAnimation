@@ -1,6 +1,7 @@
-// AYTest_ConditionExpr.cpp — P3.x (2026-08-07) L2 Condition DSL unit tests.
+// AYTest_ConditionExpr.cpp — P3.x (2026-08-07) L2 Condition DSL unit tests
+//                            + P3.x刀 N+1.B (2026-08-07) Time-in-State Query.
 //
-// 30+ cases pinning INV-32..35 contracts from design.md §4.16:
+// 30+6 cases pinning INV-32..35 + INV-36..39 contracts from design.md §4.16..4.17:
 //   INV-32 — empty conditionExpr means no condition (always true)
 //   INV-33 — parse failure ⇒ cachedAst=null + conditionParseError non-empty
 //            + stderr one-liner; transition evaluates false (no crash, no assert)
@@ -8,12 +9,20 @@
 //            alive until next evaluate (RAII swap)
 //   INV-35 — Cache semantics: conditionDirty=true ⇒ re-parse; dirty=false ⇒
 //            use cachedAst; cachedAst=null + dirty=false ⇒ permanently false
+//   INV-36 — getCurrentStateElapsedTime() returns 0.0f when _initialized=false
+//   INV-37 — fireTransition (instant-cut AND cross-fade START) reset
+//            _currentStateEnterTime to 0.0f
+//   INV-38 — _currentStateEnterTime accumulates dt in update() top-of-frame
+//            (even during cross-fade window, matches UE semantics)
+//   INV-39 — reserved ident "CurrentStateTime" in CondIdentifierExpr routes
+//            to ctx.currentStateTime (SHADOWS any user param of same name)
 //
 // Layout:
 //   §8.1.1 Parser unit (8 cases)
 //   §8.1.2 Evaluator unit (12 cases)
 //   §8.1.3 Cache / invalidate unit (6 cases)
 //   §8.1.4 Backward-compat (L1 zero regression) (4 cases)
+//   §8.1.5 Time-in-State Query (6 cases, NEW P3.x刀 N+1.B)
 //
 // Standalone — no AYEntity, no AnimationPlayer. Direct API calls.
 
@@ -70,6 +79,139 @@ ConditionEvalCtx makeCtx(std::initializer_list<std::pair<std::string, float>> pa
 } // namespace
 
 TEST_SUITE(ConditionExprTests)
+
+// =====================================================================
+// §8.1.5 Time-in-State Query (6 cases, NEW P3.x刀 N+1.B)
+// =====================================================================
+//
+// P3.x刀 N+1.B — reserved identifier "CurrentStateTime" routes to the
+// live state-machine time-in-state value. Mirrors UE's
+// FAnimNode_StateMachine::GetCurrentStateElapsedTime semantics:
+//   * 0.0f before any update tick
+//   * accumulates dt in update() top-of-frame (even during cross-fade)
+//   * reset to 0 on transition (instant-cut AND cross-fade START)
+
+TEST_CASE(TIS_InitialState_ElapsedTimeZero) {
+    // INV-36 — setInitialState without any update tick returns 0.0f.
+    StateMachine sm;
+    State s; s.name = "Idle"; s.clipPath = "idle.ayanm";
+    sm.addState(s);
+    sm.setInitialState("Idle");
+    CHECK(sm.getCurrentStateElapsedTime() == 0.0f);
+}
+
+TEST_CASE(TIS_AfterUpdate_ElapsedTimeAccumulates) {
+    // INV-38 — update(dt) accumulates dt into the elapsed clock.
+    StateMachine sm;
+    State s; s.name = "Idle"; s.clipPath = "idle.ayanm";
+    sm.addState(s);
+    sm.setInitialState("Idle");
+    sm.update(0.5f);
+    // Floating-point accumulation — exact value should hold for short windows.
+    CHECK(sm.getCurrentStateElapsedTime() == 0.5f);
+    sm.update(0.25f);
+    CHECK(sm.getCurrentStateElapsedTime() == 0.75f);
+}
+
+TEST_CASE(TIS_AfterTransition_ResetsToZero) {
+    // INV-37 — fireTransition instant-cut resets the clock to 0.
+    auto sm = makeIdleRunSM();
+    sm.update(0.3f);
+    CHECK(sm.getCurrentStateElapsedTime() == 0.3f);
+    sm.setTrigger("Go");
+    sm.update(0.0f);   // transition fires (no condition + trigger matches)
+    CHECK(sm.getCurrentStateName() == "Run");
+    CHECK(sm.getCurrentStateElapsedTime() == 0.0f);
+    // Next update starts accumulating from 0 again.
+    sm.update(0.1f);
+    CHECK(sm.getCurrentStateElapsedTime() == 0.1f);
+}
+
+TEST_CASE(TIS_CrossFade_ElapsedTimeSinceFireNotComplete) {
+    // INV-37 / INV-38 — cross-fade START resets to 0; the clock advances
+    // during the blend window (NOT frozen until blend complete).
+    StateMachine sm;
+    State sA; sA.name = "Idle"; sA.clipPath = "i.ayanm"; sm.addState(sA);
+    State sB; sB.name = "Run";  sB.clipPath  = "r.ayanm"; sm.addState(sB);
+    Transition t;
+    t.trigger   = "Go";
+    t.fromState = "Idle";
+    t.toState   = "Run";
+    t.duration  = 0.5f;       // cross-fade
+    sm.addTransition(t);
+    sm.setInitialState("Idle");
+
+    sm.update(0.3f);
+    CHECK(sm.getCurrentStateElapsedTime() == 0.3f);
+
+    sm.setTrigger("Go");
+    sm.update(0.0f);          // transition START (cross-fade begins)
+    CHECK(sm.getCurrentStateName() == "Idle");     // mid-transition; currentState still Idle
+    CHECK(sm.getCurrentStateElapsedTime() == 0.0f);
+
+    sm.update(0.2f);          // mid-blend
+    CHECK(sm.getCurrentStateElapsedTime() == 0.2f);
+
+    sm.update(0.5f);          // cross-fade complete
+    CHECK(sm.getCurrentStateName() == "Run");
+    // After cross-fade complete, accumulator was still running (0.2 + 0.5 = 0.7).
+    CHECK(sm.getCurrentStateElapsedTime() == 0.7f);
+}
+
+TEST_CASE(TIS_Condition_CurrentStateTime_GT_Fires) {
+    // INV-39 — reserved ident "CurrentStateTime" routes to ctx.currentStateTime.
+    // After accumulating past the threshold, the L2 condition evaluates true
+    // and the transition fires.
+    StateMachine sm;
+    State sA; sA.name = "Idle"; sA.clipPath = "i.ayanm"; sm.addState(sA);
+    State sB; sB.name = "Run";  sB.clipPath  = "r.ayanm"; sm.addState(sB);
+    Transition t;
+    t.trigger   = "Go";
+    t.fromState = "Idle";
+    t.toState   = "Run";
+    t.setConditionExpr("CurrentStateTime > 0.5");
+    sm.addTransition(t);
+    sm.setInitialState("Idle");
+
+    sm.update(0.3f);          // elapsed < 0.5
+    sm.setTrigger("Go");
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Idle");      // condition false → no fire
+
+    sm.update(0.3f);          // elapsed = 0.6 > 0.5
+    sm.setTrigger("Go");      // re-arm (auto-erased on first fire attempt)
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Run");       // fires now
+}
+
+TEST_CASE(TIS_Condition_CurrentStateTime_LT_DoesNotFire) {
+    // INV-39 — same reserved ident, opposite polarity. Verifies the
+    // comparison operator is honored and the value is the live elapsed
+    // time (not a stale 0.0f literal).
+    StateMachine sm;
+    State sA; sA.name = "Idle"; sA.clipPath = "i.ayanm"; sm.addState(sA);
+    State sB; sB.name = "Run";  sB.clipPath  = "r.ayanm"; sm.addState(sB);
+    Transition t;
+    t.trigger   = "Go";
+    t.fromState = "Idle";
+    t.toState   = "Run";
+    t.setConditionExpr("CurrentStateTime < 0.5");
+    sm.addTransition(t);
+    sm.setInitialState("Idle");
+
+    sm.update(0.6f);          // elapsed > 0.5
+    sm.setTrigger("Go");
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Idle");      // condition false → no fire
+
+    // Reset to a fresh initial state (resets _currentStateEnterTime to 0),
+    // then advance LESS than 0.5s so the condition becomes true.
+    sm.setInitialState("Idle");
+    sm.update(0.2f);          // elapsed = 0.2 < 0.5
+    sm.setTrigger("Go");
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Run");
+}
 
 // =====================================================================
 // §8.1.1 Parser unit (8 cases)
