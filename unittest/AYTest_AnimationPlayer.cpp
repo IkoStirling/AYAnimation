@@ -2987,4 +2987,61 @@ TEST_SUITE(AnimationPlayerTests)
         CHECK(player.getBoneCount() == 2u);
     }
 
+    // === P3 polish (2026-08-08) — lock-free mode contract (INV-59/60) ===
+
+    TEST_CASE(P3_AssetBoneCache_DefaultIsLockFree) {
+        // INV-59 — the cache defaults to single-threaded lock-free mode;
+        // no mutex is ever touched on the ECS main-tick path.
+        AssetBoneCache& cache = AssetBoneCache::instance();
+        CHECK_FALSE(cache.isThreadSafe());
+    }
+
+    TEST_CASE(P3_AssetBoneCache_ThreadSafeMode_BehaviorUnchanged) {
+        // INV-59/60 — setThreadSafe(true) re-engages the mutex on all
+        // access sites; observable behavior must be byte-identical to
+        // the lock-free default. Run the full P1.7 contract twice: once
+        // in thread-safe mode, once back in lock-free mode.
+        AssetBoneCache& cache = AssetBoneCache::instance();
+
+        const auto runContract = [&]() {
+            cache.clear();
+            auto skelA = makeTwoBoneSkeletonShared();
+            auto skelB = makeTwoBoneSkeletonShared();
+            const auto* pA = skelA.get();
+            const auto* pB = skelB.get();
+            CHECK(pA != pB);
+
+            // resolveAndCache → hit, per-skeleton independence.
+            CHECK(cache.resolveAndCache(pA, "Root") == 0);
+            CHECK(cache.lookup(pB, "Root") == AssetBoneCache::kCacheKeyAbsent);
+            CHECK(cache.resolveAndCache(pB, "Root") == 0);
+            CHECK(cache.lookup(pA, "Root") == 0);
+            CHECK(cache.lookup(pB, "Root") == 0);
+            CHECK(cache.skeletonEntryCount() == 2u);
+            CHECK(cache.boneNameEntryCount(pA) == 1u);
+
+            // invalidate one skeleton only.
+            cache.invalidate(pA);
+            CHECK(cache.lookup(pA, "Root") == AssetBoneCache::kCacheKeyAbsent);
+            CHECK(cache.lookup(pB, "Root") == 0);
+            CHECK(cache.skeletonEntryCount() == 1u);
+
+            // clear() drops everything.
+            cache.clear();
+            CHECK(cache.skeletonEntryCount() == 0u);
+        };
+
+        // Pass 1 — thread-safe mode.
+        cache.setThreadSafe(true);
+        CHECK(cache.isThreadSafe());
+        runContract();
+
+        // Pass 2 — back to lock-free default. INV-60 allows the flip
+        // while no other thread is inside the cache (single-threaded
+        // test context).
+        cache.setThreadSafe(false);
+        CHECK_FALSE(cache.isThreadSafe());
+        runContract();
+    }
+
     TEST_SUITE_END

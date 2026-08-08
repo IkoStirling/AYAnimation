@@ -23,10 +23,14 @@
 // (called from setSkeleton() on the new-pointer side, so the OLD
 // skeleton's entries survive for any other player still bound).
 //
-// Thread-safety: touches happen on the main-thread AnimationSystem
-// tick path (single-threaded by ECS convention; see ay-dev-rules.md);
-// the mutex exists to keep the API future-proof for authoring tools
-// and to satisfy thread-sanitizer.
+// Thread-safety (P3 polish, 2026-08-08): touches happen on the
+// main-thread AnimationSystem tick path (single-threaded by ECS
+// convention; see ay-dev-rules.md). Since P3 polish the DEFAULT mode
+// is lock-free (INV-59): no mutex is ever touched, the flag is a
+// plain bool read by the 7 access sites. Authoring tools /
+// multi-threaded hosts call setThreadSafe(true) BEFORE first
+// concurrent use to re-engage the mutex (INV-60: the flag is NOT
+// atomic — flip it only while no other thread is inside the cache).
 
 #include <assetsDefs/IAYSkeleton.h>
 
@@ -76,12 +80,28 @@ public:
     size_t skeletonEntryCount() const;
     size_t boneNameEntryCount(const ayt::resource::ISkeleton* skel) const;
 
+    // P3 polish (2026-08-08) — lock-free single-threaded mode.
+    // Default is false (INV-59): the cache NEVER touches the mutex —
+    // the ECS main-tick path is single-threaded, so every access is a
+    // plain unordered_map read/write. Call setThreadSafe(true) BEFORE
+    // the cache is first used from more than one thread (authoring
+    // tools / multi-threaded hosts); this re-engages the mutex on all
+    // 7 access sites. Behavior is identical in both modes.
+    //
+    // INV-60 — the flag is a plain bool, NOT atomic. Flipping it is
+    // only allowed from a single thread while no other thread is
+    // inside the cache (typically: once at startup, before threads
+    // spawn). Never flip it mid-flight in a multi-threaded host.
+    void setThreadSafe(bool enabled) noexcept;
+    bool isThreadSafe() const noexcept;
+
 private:
     AssetBoneCache() = default;
     AssetBoneCache(const AssetBoneCache&) = delete;
     AssetBoneCache& operator=(const AssetBoneCache&) = delete;
 
     mutable std::mutex _mu;
+    bool _threadSafe = false;   // INV-59/60 — plain bool, not atomic
     std::unordered_map<const ayt::resource::ISkeleton*,
                        std::unordered_map<std::string, int32_t>> _map;
 };
