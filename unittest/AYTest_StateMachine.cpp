@@ -570,4 +570,85 @@ TEST_SUITE(StateMachineTests)
         CHECK(sm.getCurrentStateName() == "Idle");   // condition false, no fire
     }
 
+// =====================================================================
+// P2 polish (2026-08-07) — Bytecode parallel cache integration tests
+// (INV-52..58). Hot-path evaluation now uses Transition::evaluateBytecode
+// (program-counter switch) instead of evaluateCondition (virtual-dispatch
+// AST path). Tests pin the wiring + lazy build + invalidation semantics.
+// =====================================================================
+
+// P2_Bytecode_Integration_FindTransitionUsesBytecode — after sm.update()
+// drives findEligibleTransition, the matched transition's cachedBytecode
+// is populated (proves hot-path switched from AST to bytecode).
+TEST_CASE(P2_Bytecode_Integration_FindTransitionUsesBytecode) {
+    using ayt::anim::StateMachine;
+    using ayt::anim::State;
+    using ayt::anim::Transition;
+
+    StateMachine sm;
+    State sIdle; sIdle.name = "Idle"; sIdle.clipPath = "idle.ayanm"; sm.addState(sIdle);
+    State sRun;  sRun.name  = "Run";  sRun.clipPath  = "run.ayanm";  sm.addState(sRun);
+    sm.setInitialState("Idle");
+
+    Transition t;
+    t.fromState = "Idle";
+    t.toState   = "Run";
+    t.conditionExpr = "Speed > 5.0";                 // L2 DSL bytecode path
+    sm.addTransition(t);
+
+    auto& transitions = const_cast<std::vector<Transition>&>(sm.getTransitions());
+    CHECK(transitions[0].cachedBytecode == nullptr); // INV-52 — null before first eval
+
+    sm.setParam("Speed", 7.0f);
+    sm.update(0.0f);                                  // drives evaluateBytecode
+
+    CHECK(transitions[0].cachedBytecode != nullptr); // INV-52 — built after first eval
+    CHECK(!transitions[0].cachedBytecode->program.empty());
+
+    // Subsequent update() reuses the cached bytecode (no re-compile).
+    sm.setParam("Speed", 3.0f);
+    sm.update(0.0f);
+    CHECK(transitions[0].cachedBytecode != nullptr); // still cached
+
+    sm.setParam("Speed", 7.0f);
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Run");        // fired via bytecode path
+}
+
+// P2_Bytecode_Integration_InvalidateCacheClearsBytecode — calling
+// setConditionExpr("A && B") after first eval drops cachedBytecode (lazy
+// re-compile); next evaluateBytecode rebuilds from the new AST.
+TEST_CASE(P2_Bytecode_Integration_InvalidateCacheClearsBytecode) {
+    using ayt::anim::StateMachine;
+    using ayt::anim::State;
+    using ayt::anim::Transition;
+
+    StateMachine sm;
+    State sA; sA.name = "A"; sA.clipPath = "a.ayanm"; sm.addState(sA);
+    State sB; sB.name = "B"; sB.clipPath = "b.ayanm"; sm.addState(sB);
+    sm.setInitialState("A");
+
+    Transition t;
+    t.fromState = "A";
+    t.toState   = "B";
+    t.conditionExpr = "Speed > 9.0";   // NOT satisfied at Speed=7 — builds
+    sm.addTransition(t);               // bytecode without firing (state stays A)
+
+    auto& transitions = const_cast<std::vector<Transition>&>(sm.getTransitions());
+
+    sm.setParam("Speed", 7.0f);
+    sm.update(0.0f);
+    CHECK(transitions[0].cachedBytecode != nullptr);  // built after first eval
+    CHECK(sm.getCurrentStateName() == "A");           // 7 > 9 false — no fire
+
+    // Mutate conditionExpr → invalidate cache → bytecode cleared.
+    transitions[0].setConditionExpr("Speed > 3.0");
+    CHECK(transitions[0].cachedBytecode == nullptr);  // cleared by invalidate
+
+    sm.setParam("Speed", 4.0f);
+    sm.update(0.0f);
+    CHECK(transitions[0].cachedBytecode != nullptr);  // rebuilt with new expr
+    CHECK(sm.getCurrentStateName() == "B");           // 4 > 3 fires
+}
+
 TEST_SUITE_END

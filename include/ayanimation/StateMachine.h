@@ -4,7 +4,13 @@
 //                  (getCurrentStateElapsedTime + reserved ident "CurrentStateTime")
 //                  + P0 polish (2026-08-07) Flat-array params/triggers + global
 //                  name registry (replace unordered_map/string with hash-based
-//                  vector lookup; cache-friendly hot path; see design §4.18).
+//                  vector lookup; cache-friendly hot path; see design §4.18)
+//                  + P1 polish (2026-08-07) Transition hash cache (eliminate
+//                  per-frame intern in findEligibleTransition / fireTransition /
+//                  L1 eval; see design §4.19)
+//                  + P2 polish (2026-08-07) Bytecode parallel cache (AST → flat
+//                  opcode stream; eliminate virtual dispatch on hot path; see
+//                  design §4.20).
 //
 // Mirrors UE UAnimStateMachine shape (subset — L1 + L3; L4 MotionMatching /
 // multi-graph / BlendTree inside SM / parallel states deferred). Standalone
@@ -78,9 +84,31 @@
 //   * INV-51 — Reserved ident "CurrentStateTime" (string compare) takes
 //              priority over nameHash lookup in
 //              CondIdentifierExpr::evaluateAsFloat.
+//
+// INV-52..58 contracts (P2 polish 2026-08-07) — AST → Bytecode cache:
+//   * INV-52 — Transition::cachedBytecode == null ⟺ AST parse failed OR
+//              not yet evaluated (lazy init; Transition::evaluateBytecode
+//              builds it on first call).
+//   * INV-53 — Bytecode is 1:1 semantically equivalent to AST — every
+//              parseable AST compiles to bytecode producing identical
+//              evaluate(ctx) return (4 parity unit tests).
+//   * INV-54 — Bytecode eval failure ≡ AST eval failure — return value
+//              identical for same ctx (4 parity unit tests).
+//   * INV-55 — Reserved ident "CurrentStateTime" encoded as
+//              OP_LOAD_RESERVED R_CURRENT_STATE_TIME opcode at compile
+//              time; 0 string compare at eval time (vs P1 polish ~5 ns
+//              SSO). Bytecode preserves INV-39/51 priority.
+//   * INV-56 — Bytecode program + literals are continuous std::vector
+//              for cache-friendly traversal; operands embedded in program
+//              stream (no separate operand array).
+//   * INV-57 — Bytecode lives in shared_ptr<CondBytecode> (not unique_ptr)
+//              — vector<Transition> push_back requires copyable Transition.
+//   * INV-58 — OP_AND / OP_OR short-circuit encoded as relative jump
+//              offset (±127 opcodes) — left false → skip right subtree.
 
 #pragma once
 
+#include <ayanimation/CondBytecode.h>
 #include <ayanimation/ConditionExpr.h>
 #include <ayanimation/ParamNameRegistry.h>
 
@@ -210,6 +238,20 @@ struct Transition {
     uint32_t    triggerHash              = 0;
     uint32_t    conditionParamNameHash   = 0;
 
+    // === P2 polish (2026-08-07) — Bytecode parallel cache (INV-52..58) ===
+    // AST → flat opcode stream. Built lazily on first evaluateBytecode()
+    // call. AST is PRESERVED (cachedAst above) — bytecode is a parallel
+    // cache, not a replacement; the AST remains canonical for P4.x
+    // graph-builder Visitor consumption. Lives in shared_ptr (INV-57)
+    // because Transition itself lives in std::vector<Transition> via
+    // push_back (copy required). Lazy init: cachedBytecode == null ⟺
+    // AST parse failed OR not yet evaluated (INV-52).
+    //
+    // setConditionExpr() / invalidateConditionCache() clear this field too
+    // (cachedBytecode.reset()) so the next evaluateBytecode rebuilds from
+    // the new AST. See Transition::setConditionExpr for the full path.
+    mutable std::shared_ptr<CondBytecode> cachedBytecode;
+
     // Setter: replaces conditionExpr and auto-flags dirty (INV-34). Skips
     // assignment when the new string is identical to the current one.
     void setConditionExpr(std::string s);
@@ -223,6 +265,17 @@ struct Transition {
     // single-predicate semantics (or true if hasCondition is also false —
     // INV-32). Parse failures (INV-33) return false.
     bool evaluateCondition(const ConditionEvalCtx& ctx) const;
+
+    // P2 polish (2026-08-07) — fast-path bytecode evaluator. Hot callers
+    // (e.g. StateMachine::findEligibleTransition) use this instead of
+    // evaluateCondition() to avoid the virtual-dispatch AST path. Returns
+    // the same boolean as evaluateCondition() (INV-54). When the AST
+    // has not been parsed yet (or has parse-failed), this method drives
+    // the same lazy-init + INV-32..35 semantics as evaluateCondition().
+    // Bytecode is built from cachedAst on first call (INV-52); cached
+    // across subsequent calls until the next setConditionExpr or
+    // invalidateConditionCache.
+    bool evaluateBytecode(const ConditionEvalCtx& ctx) const;
 };
 
 class StateMachine {

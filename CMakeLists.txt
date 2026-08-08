@@ -25,6 +25,10 @@ set(SRC_FILES
     # parser. Independent of AYShader / AYScript / AYGraph (borrow precedence
     # pattern only, no link). Consumed by Transition::evaluateCondition.
     src/ConditionParser.cpp
+    # P2 polish (2026-08-07) — Flat opcode bytecode evaluator (program-
+    # counter switch over CondOpByte opcodes). Consumes the bytecode cache
+    # compiled from the AST by ConditionParser.cpp.
+    src/CondBytecode.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

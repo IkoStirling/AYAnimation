@@ -740,4 +740,178 @@ TEST_CASE(P1_CondIdent_Evaluate_NoIntern) {
     CHECK(reserved.evaluateAsFloat(ctx) == 1.25f);   // uses ctx, not registry
 }
 
+// =====================================================================
+// P2 polish (2026-08-07) — Bytecode parallel cache unit tests (INV-52..58)
+// =====================================================================
+
+// P2_Bytecode_Parity_3IdentExpr — compile `(Speed>5) && IsGrounded && !IsDead`
+// to bytecode; evaluate(ctx) must produce IDENTICAL boolean to the AST path
+// across 5 case scenarios. INV-53 + INV-54 contract.
+TEST_CASE(P2_Bytecode_Parity_3IdentExpr) {
+    // Build AST once.
+    auto speedGt5 = std::make_unique<ayt::anim::CondBinaryExpr>(
+        std::make_unique<ayt::anim::CondIdentifierExpr>(std::string("Speed")),
+        ayt::anim::CondOp::GT,
+        std::make_unique<ayt::anim::CondLiteralExpr>(5.0f));
+    auto speedGt5AndGrounded = std::make_unique<ayt::anim::CondBinaryExpr>(
+        std::move(speedGt5),
+        ayt::anim::CondOp::And,
+        std::make_unique<ayt::anim::CondIdentifierExpr>(std::string("IsGrounded")));
+    auto notDead = std::make_unique<ayt::anim::CondUnaryExpr>(
+        ayt::anim::CondOp::Not,
+        std::make_unique<ayt::anim::CondIdentifierExpr>(std::string("IsDead")));
+    auto full = std::make_unique<ayt::anim::CondBinaryExpr>(
+        std::move(speedGt5AndGrounded),
+        ayt::anim::CondOp::And,
+        std::move(notDead));
+
+    auto code = ayt::anim::compileToBytecode(full.get());
+    CHECK(code != nullptr);
+    CHECK(!code->program.empty());
+    CHECK(!code->literals.empty());
+
+    // Build params vector: Speed, IsGrounded, IsDead all present.
+    std::vector<ParamEntry> paramVec;
+    paramVec.push_back({ ayt::anim::detail::ParamNameRegistry::instance().intern("Speed"), 7.0f });
+    paramVec.push_back({ ayt::anim::detail::ParamNameRegistry::instance().intern("IsGrounded"), 1.0f });
+    paramVec.push_back({ ayt::anim::detail::ParamNameRegistry::instance().intern("IsDead"), 0.0f });
+    ConditionEvalCtx ctx;
+    ctx.params = &paramVec;
+    ctx.triggers = nullptr;
+    ctx.currentState = "Idle";
+    ctx.currentStateTime = 0.0f;
+
+    // Case 1 — all-true (true path).
+    const bool astTrue = full->evaluate(ctx);
+    const bool bcTrue  = code->evaluate(ctx);
+    CHECK(astTrue == true);
+    CHECK(bcTrue == true);
+    CHECK(astTrue == bcTrue);
+
+    // Case 2 — one-false (Speed=3 → false path).
+    paramVec[0].value = 3.0f;
+    CHECK(full->evaluate(ctx) == false);
+    CHECK(code->evaluate(ctx) == false);
+    paramVec[0].value = 7.0f;                  // restore
+
+    // Case 3 — short-circuit (IsDead=1 → false; only NOT branch matters).
+    paramVec[2].value = 1.0f;
+    CHECK(full->evaluate(ctx) == false);
+    CHECK(code->evaluate(ctx) == false);
+    paramVec[2].value = 0.0f;                  // restore
+
+    // Case 4 — unknown param (use a name not in paramVec) → fail-soft false
+    //          (INV-23 / bytecode fallback to 0.0f).
+    auto unknown = std::make_unique<ayt::anim::CondIdentifierExpr>(
+        std::string("P2_Parity_Unknown_Param_Name"));
+    CHECK(code != nullptr);                    // code is the compiled 3-ident expr
+    // For bytecode, we need a separate compile that uses the unknown ident.
+    auto unknownCode = ayt::anim::compileToBytecode(unknown.get());
+    CHECK(unknownCode != nullptr);
+    CHECK(unknownCode->evaluate(ctx) == false);  // INV-23 — fail-soft 0.0f → false
+
+    // Case 5 — reserved ident "CurrentStateTime" encoded as OP_LOAD_RESERVED.
+    auto reserved = std::make_unique<ayt::anim::CondIdentifierExpr>(
+        std::string("CurrentStateTime"));
+    auto reservedCode = ayt::anim::compileToBytecode(reserved.get());
+    CHECK(reservedCode != nullptr);
+    ctx.currentStateTime = 1.25f;
+    CHECK(reserved->evaluateAsFloat(ctx) == 1.25f);
+    // Bytecode path returns currentStateTime directly (push 1.25f onto stack;
+    // final coerce to bool = 1.25 != 0.0 = true).
+    CHECK(reservedCode->evaluate(ctx) == true);   // INV-55 — encoded as opcode
+    ctx.currentStateTime = 0.0f;
+    CHECK(reservedCode->evaluate(ctx) == false);  // 0.0f → false
+}
+
+// P2_Bytecode_LazyBuild_FirstEvalCompiles — `cachedBytecode == null` initially;
+// after evaluateBytecode(ctx), cachedBytecode != null + program.size() > 0.
+// INV-52 contract: parallel cache, lazy init.
+TEST_CASE(P2_Bytecode_LazyBuild_FirstEvalCompiles) {
+    using ayt::anim::StateMachine;
+    using ayt::anim::State;
+    using ayt::anim::Transition;
+
+    StateMachine sm;
+    State sA; sA.name = "Idle"; sA.clipPath = "i.ayanm"; sm.addState(sA);
+    State sB; sB.name = "Run";  sB.clipPath = "r.ayanm"; sm.addState(sB);
+    sm.setInitialState("Idle");
+
+    Transition t;
+    t.fromState = "Idle";
+    t.toState   = "Run";
+    t.conditionExpr = "Speed > 5.0";
+    sm.addTransition(t);
+
+    // Initial state — cachedBytecode is null (not yet evaluated).
+    auto& transitions = const_cast<std::vector<Transition>&>(sm.getTransitions());
+    CHECK(transitions[0].cachedBytecode == nullptr);   // INV-52 — null before first eval
+
+    // Drive evaluateBytecode via findEligibleTransition by calling sm.update().
+    sm.setParam("Speed", 7.0f);
+    sm.update(0.0f);
+
+    // After update(), the hot path evaluateBytecode fired.
+    CHECK(transitions[0].cachedBytecode != nullptr);  // INV-52 — built lazily
+    CHECK(!transitions[0].cachedBytecode->program.empty());
+    CHECK(!transitions[0].cachedBytecode->literals.empty());
+
+    // The compiled bytecode's first load uses Speed hash.
+    // OP_LOAD_PARAM = 7 (byte). The next 4 bytes are the hash.
+    CHECK(transitions[0].cachedBytecode->program[0] ==
+          static_cast<uint8_t>(ayt::anim::CondOpByte::OP_LOAD_PARAM));
+}
+
+// P2_Bytecode_ReservedIdent_CompiledAsOpcode — compileToBytecode of
+// CondIdentifierExpr("CurrentStateTime") emits OP_LOAD_RESERVED, NOT
+// OP_LOAD_PARAM. INV-55 contract.
+TEST_CASE(P2_Bytecode_ReservedIdent_CompiledAsOpcode) {
+    auto reserved = std::make_unique<ayt::anim::CondIdentifierExpr>(
+        std::string("CurrentStateTime"));
+    auto code = ayt::anim::compileToBytecode(reserved.get());
+    CHECK(code != nullptr);
+    CHECK(code->program.size() == 2);          // OP_LOAD_RESERVED + rid byte
+    CHECK(code->program[0] ==
+          static_cast<uint8_t>(ayt::anim::CondOpByte::OP_LOAD_RESERVED));
+    CHECK(code->program[1] ==
+          static_cast<uint8_t>(ayt::anim::CondReservedId::R_CURRENT_STATE_TIME));
+    // Sanity: NOT OP_LOAD_PARAM.
+    CHECK(code->program[0] !=
+          static_cast<uint8_t>(ayt::anim::CondOpByte::OP_LOAD_PARAM));
+}
+
+// P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse — invalid DSL produces
+// evaluateBytecode == false + cachedBytecode == null + conditionParseError
+// non-empty (INV-33 + INV-52).
+TEST_CASE(P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse) {
+    using ayt::anim::StateMachine;
+    using ayt::anim::State;
+    using ayt::anim::Transition;
+
+    StateMachine sm;
+    State sA; sA.name = "A"; sA.clipPath = "a.ayanm"; sm.addState(sA);
+    State sB; sB.name = "B"; sB.clipPath = "b.ayanm"; sm.addState(sB);
+    sm.setInitialState("A");
+
+    Transition t;
+    t.fromState = "A";
+    t.toState   = "B";
+    t.conditionExpr = "&&&";                   // invalid DSL
+    sm.addTransition(t);
+
+    auto& transitions = const_cast<std::vector<Transition>&>(sm.getTransitions());
+
+    // Drive evaluateBytecode via findEligibleTransition (private; use sm.update).
+    sm.update(0.0f);
+
+    // INV-33 — parse failed; cachedAst stays null; INV-52 — cachedBytecode
+    // never built because AST is null.
+    CHECK(transitions[0].cachedAst == nullptr);
+    CHECK(transitions[0].cachedBytecode == nullptr);
+    CHECK(!transitions[0].conditionParseError.empty());
+
+    // Stayed in A because evaluateBytecode returned false (no fire).
+    CHECK(sm.getCurrentStateName() == "A");
+}
+
 TEST_SUITE_END
