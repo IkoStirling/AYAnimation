@@ -23,6 +23,8 @@
 //   §8.1.3 Cache / invalidate unit (6 cases)
 //   §8.1.4 Backward-compat (L1 zero regression) (4 cases)
 //   §8.1.5 Time-in-State Query (6 cases, NEW P3.x刀 N+1.B)
+//   §8.1.6 Arithmetic + - * / (11 cases, NEW P5 polish 2026-08-10)
+//   §P5 polish — bytecode arith parity + opcode encoding (3 cases)
 //
 // Standalone — no AYEntity, no AnimationPlayer. Direct API calls.
 
@@ -912,6 +914,266 @@ TEST_CASE(P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse) {
 
     // Stayed in A because evaluateBytecode returned false (no fire).
     CHECK(sm.getCurrentStateName() == "A");
+}
+
+// =====================================================================
+// §8.1.6 Arithmetic + - * / (P5 polish 2026-08-10, INV-64..69)
+// =====================================================================
+//
+// DSL 四则运算. Grammar addition (low → high):
+//   ... Compare(4) < Add/Sub(5) < Mul/Div(6) < unary ! / - < Primary
+//   "A + B > C" parses as "(A + B) > C" (INV-69).
+//   "A-3" == "A - 3" (INV-65 lexer disambiguation).
+//   "-A * B" == "(-A) * B" (INV-66 unary minus binds tighter).
+//   "5 / 0" → 0.0f (INV-67 fail-soft, never inf/nan).
+
+TEST_CASE(P5_Arith_Add_Compare) {
+    // INV-69 — arithmetic binds tighter than comparison.
+    std::string err;
+    auto ast = ConditionParser::parse("Speed + 1 > 5", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 7.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 3.0f}})) == false);
+}
+
+TEST_CASE(P5_Arith_MulDiv_Precedence) {
+    // INV-69 — Mul/Div binds tighter than Add/Sub.
+    std::string err;
+    auto ast = ConditionParser::parse("A + B * 2 == 10", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    // B*2 first: 4 + 3*2 = 10 → true. If it parsed as (A+B)*2 = 14 → false.
+    CHECK(ast->evaluate(makeCtx({{"A", 4.0f}, {"B", 3.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"A", 5.0f}, {"B", 3.0f}})) == false);
+
+    auto ast2 = ConditionParser::parse("A * 2 + B == 10", err);
+    CHECK(ast2 != nullptr);
+    CHECK(ast2->evaluate(makeCtx({{"A", 3.0f}, {"B", 4.0f}})) == true);
+}
+
+TEST_CASE(P5_Arith_Parens_Override) {
+    // Parens still override arithmetic precedence.
+    std::string err;
+    auto ast = ConditionParser::parse("(A + B) * 2 == 10", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"A", 2.0f}, {"B", 3.0f}})) == true);
+    // (4+2)*2 = 12 ≠ 10 → false (if parens were ignored: 4+2*2 = 8 ≠ 10, also
+    // false — use B=2 so the parens actually matter for the false arm).
+    CHECK(ast->evaluate(makeCtx({{"A", 4.0f}, {"B", 2.0f}})) == false);
+}
+
+TEST_CASE(P5_Arith_NoSpace_Minus) {
+    // INV-65 — '-' after an expression-ending token is binary subtraction,
+    // even with no whitespace: "A-3" == "A - 3" (not [A][-3] parse error).
+    std::string err;
+    auto ast = ConditionParser::parse("A-3 > 0", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"A", 5.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"A", 2.0f}})) == false);
+
+    // "1-2 == -1": left '-' is binary, right "-1" is a negative literal.
+    auto ast2 = ConditionParser::parse("1-2 == -1", err);
+    CHECK(ast2 != nullptr);
+    CHECK(ast2->evaluate(makeCtx({})) == true);
+}
+
+TEST_CASE(P5_Arith_Div_Ok) {
+    std::string err;
+    auto ast = ConditionParser::parse("Speed / 2 > 3", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 8.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 6.0f}})) == false);
+}
+
+TEST_CASE(P5_Arith_DivByZero_FailsSoft) {
+    // INV-67 — division by zero yields 0.0f (fail-soft; never inf/nan
+    // which would poison the downstream fabs-epsilon comparisons).
+    std::string err;
+    auto ast = ConditionParser::parse("5 / 0 == 0", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({})) == true);
+
+    // Zero via a runtime expression, not just a literal.
+    auto ast2 = ConditionParser::parse("5 / (A - A) == 0", err);
+    CHECK(ast2 != nullptr);
+    CHECK(ast2->evaluate(makeCtx({{"A", 7.0f}})) == true);
+
+    // 0.0f > 0 is false — the coercion stays sane.
+    auto ast3 = ConditionParser::parse("5 / 0 > 0", err);
+    CHECK(ast3 != nullptr);
+    CHECK(ast3->evaluate(makeCtx({})) == false);
+}
+
+TEST_CASE(P5_Arith_UnaryNeg) {
+    // INV-66 — unary minus on identifiers / expressions.
+    std::string err;
+    auto ast = ConditionParser::parse("-Speed > 0", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"Speed", -3.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 3.0f}})) == false);
+
+    // Discriminator: Speed=-3 → (-Speed)-1 = 3-1 = 2 == 2 → true.
+    // If unary minus bound LOOSER than binary '-' it would parse as
+    // -(Speed-1) = -(-4) = 4 ≠ 2 → false. Proves unary binds tighter.
+    auto ast2 = ConditionParser::parse("-Speed - 1 == 2", err);
+    CHECK(ast2 != nullptr);
+    CHECK(ast2->evaluate(makeCtx({{"Speed", -3.0f}})) == true);
+
+    // Unary minus tighter than Mul: (-A)*B = (-3)*2 = -6.
+    auto ast3 = ConditionParser::parse("-A * B == -6", err);
+    CHECK(ast3 != nullptr);
+    CHECK(ast3->evaluate(makeCtx({{"A", 3.0f}, {"B", 2.0f}})) == true);
+}
+
+TEST_CASE(P5_Arith_Chain_LeftAssoc) {
+    // Same-precedence chains are left-associative.
+    std::string err;
+    auto ast = ConditionParser::parse("A + B + C == 6", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"A", 1.0f}, {"B", 2.0f}, {"C", 3.0f}})) == true);
+
+    // Left-assoc: (6-3)-1 = 2. Right-assoc would give 6-(3-1) = 4 ≠ 2.
+    auto ast2 = ConditionParser::parse("A - B - C == 2", err);
+    CHECK(ast2 != nullptr);
+    CHECK(ast2->evaluate(makeCtx({{"A", 6.0f}, {"B", 3.0f}, {"C", 1.0f}})) == true);
+}
+
+TEST_CASE(P5_Arith_BoolCoercion) {
+    // INV-64 — an arithmetic expression used directly as the condition
+    // coerces to bool via (value != 0.0f), same as bare identifiers.
+    std::string err;
+    auto ast = ConditionParser::parse("Speed * 2", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 3.0f}})) == true);
+    CHECK(ast->evaluate(makeCtx({{"Speed", 0.0f}})) == false);
+}
+
+TEST_CASE(P5_Arith_ParseErrors) {
+    // Truncated / misplaced arithmetic operators fail cleanly (INV-33).
+    const char* bad[] = {
+        "A +", "A *", "Speed > 5 +", "A ** B", "A && + B", "* A", "+ 5",
+    };
+    for (const char* e : bad) {
+        std::string err;
+        auto ast = ConditionParser::parse(e, err);
+        CHECK(ast == nullptr);
+        CHECK(!err.empty());
+    }
+}
+
+TEST_CASE(P5_Arith_Transition_Integration) {
+    // End-to-end: an arithmetic L2 condition drives a real SM transition
+    // through the bytecode hot path (findEligibleTransition).
+    auto sm = makeIdleRunSM();
+    auto& transitions = const_cast<std::vector<Transition>&>(sm.getTransitions());
+    transitions[0].setConditionExpr("Speed * 2 > 10");
+    sm.setParam("Speed", 6.0f);
+    sm.setTrigger("Go");
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Run");     // 12 > 10 fires
+
+    // Re-arm with a low Speed — condition false, no fire.
+    sm.setInitialState("Idle");
+    transitions[0].invalidateConditionCache();    // re-parse path too
+    sm.setParam("Speed", 4.0f);
+    sm.setTrigger("Go");
+    sm.update(0.0f);
+    CHECK(sm.getCurrentStateName() == "Idle");    // 8 > 10 stays
+}
+
+// =====================================================================
+// §P5 polish — Bytecode arith parity + opcode encoding (INV-64..68)
+// =====================================================================
+
+TEST_CASE(P5_Arith_Bytecode_Parity) {
+    // INV-68 — OP_ADD/SUB/MUL/DIV/NEG ≡ AST CondOp arith: parse → compile →
+    // evaluate both; bytecode result must match the AST exactly for the
+    // same ctx (and both match the expected outcome).
+    struct Case { const char* expr; float a; float b; float c; float cst; bool expected; };
+    const Case cases[] = {
+        { "Speed + 1 > 5",     7.0f, 0.0f, 0.0f, 0.0f,  true  },
+        { "Speed + 1 > 5",     3.0f, 0.0f, 0.0f, 0.0f,  false },
+        { "(A + B) * 2 == 10", 2.0f, 3.0f, 0.0f, 0.0f,  true  },
+        { "(A + B) * 2 == 10", 4.0f, 2.0f, 0.0f, 0.0f,  false },   // (4+2)*2 = 12
+        { "A + B * 2 == 10",   4.0f, 3.0f, 0.0f, 0.0f,  true  },
+        { "Speed / 2 > 3",     8.0f, 0.0f, 0.0f, 0.0f,  true  },
+        { "Speed / 2 > 3",     6.0f, 0.0f, 0.0f, 0.0f,  false },
+        { "-Speed > 0",       -3.0f, 0.0f, 0.0f, 0.0f,  true  },
+        { "-Speed > 0",        3.0f, 0.0f, 0.0f, 0.0f,  false },
+        { "A-3 == 2",          5.0f, 0.0f, 0.0f, 0.0f,  true  },   // INV-65 no-space
+        { "5 / (A - A) == 0",  7.0f, 0.0f, 0.0f, 0.0f,  true  },   // INV-67
+        { "CurrentStateTime * 2 > 1", 0.0f, 0.0f, 0.0f, 0.75f, true },  // INV-39 + arith
+        { "-3.14 < 0",         0.0f, 0.0f, 0.0f, 0.0f,  true  },   // negative literal
+    };
+    int checked = 0;
+    for (const auto& cs : cases) {
+        std::string err;
+        auto ast = ConditionParser::parse(cs.expr, err);
+        CHECK(ast != nullptr);
+        if (ast == nullptr) continue;
+        auto code = ayt::anim::compileToBytecode(ast.get());
+        CHECK(code != nullptr);
+        if (code == nullptr) continue;
+
+        auto ctx = makeCtx({{"Speed", cs.a}, {"A", cs.a}, {"B", cs.b}, {"C", cs.c}});
+        ctx.currentStateTime = cs.cst;
+        const bool astV = ast->evaluate(ctx);
+        const bool bcV  = code->evaluate(ctx);
+        CHECK(astV == cs.expected);
+        CHECK(bcV == cs.expected);
+        CHECK(astV == bcV);                 // INV-68 parity — the key assertion
+        ++checked;
+    }
+    CHECK(checked == static_cast<int>(sizeof(cases) / sizeof(cases[0])));
+}
+
+TEST_CASE(P5_Arith_Bytecode_Opcodes) {
+    // Encoding check (INV-68): the trailing opcode of the compiled program
+    // is the last emitted operator (post-order walk).
+    auto lastOp = [](const char* expr) -> uint8_t {
+        std::string err;
+        auto ast = ConditionParser::parse(expr, err);
+        CHECK(ast != nullptr);
+        auto code = ayt::anim::compileToBytecode(ast.get());
+        CHECK(code != nullptr);
+        return (code && !code->program.empty()) ? code->program.back() : 0xFF;
+    };
+    CHECK(lastOp("A + B") == static_cast<uint8_t>(CondOpByte::OP_ADD));
+    CHECK(lastOp("A - B") == static_cast<uint8_t>(CondOpByte::OP_SUB));
+    CHECK(lastOp("A * B") == static_cast<uint8_t>(CondOpByte::OP_MUL));
+    CHECK(lastOp("A / B") == static_cast<uint8_t>(CondOpByte::OP_DIV));
+    CHECK(lastOp("-A")    == static_cast<uint8_t>(CondOpByte::OP_NEG));
+    CHECK(lastOp("A - 3") == static_cast<uint8_t>(CondOpByte::OP_SUB));   // INV-65
+    // "-3.14 < 0" — negative literal is ONE LOAD_LITERAL, NOT unary neg
+    // (INV-65 shape preservation: pre-P5 AST shape kept).
+    CHECK(lastOp("-3.14 < 0") != static_cast<uint8_t>(CondOpByte::OP_NEG));
+}
+
+TEST_CASE(P5_Arith_Bytecode_ShortCircuit_SkipArith) {
+    // INV-58 still holds with arithmetic in the skipped right subtree:
+    // "A && (B + 1 > 5)" — when A is false the right subtree (incl. arith)
+    // is jumped over, and bytecode matches AST.
+    std::string err;
+    auto ast = ConditionParser::parse("A && (B + 1 > 5)", err);
+    CHECK(err.empty());
+    CHECK(ast != nullptr);
+    auto code = ayt::anim::compileToBytecode(ast.get());
+    CHECK(code != nullptr);
+
+    // A false → short-circuit; B value irrelevant.
+    CHECK(ast->evaluate(makeCtx({{"A", 0.0f}, {"B", 0.0f}})) == false);
+    CHECK(code->evaluate(makeCtx({{"A", 0.0f}, {"B", 0.0f}})) == false);
+    // A true → right subtree evaluates: B+1=6 > 5 → true.
+    CHECK(ast->evaluate(makeCtx({{"A", 1.0f}, {"B", 5.0f}})) == true);
+    CHECK(code->evaluate(makeCtx({{"A", 1.0f}, {"B", 5.0f}})) == true);
 }
 
 TEST_SUITE_END

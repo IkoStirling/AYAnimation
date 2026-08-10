@@ -1,4 +1,5 @@
 // CondBytecode.cpp — P2 polish (2026-08-07) Program-counter switch evaluator.
+//                    P5 polish (2026-08-10) arithmetic ops OP_ADD..OP_NEG.
 //
 // Walks the flat opcode stream emitted by compileToBytecode() (in
 // ConditionParser.cpp). Single switch dispatch (no virtual calls); operands
@@ -76,6 +77,44 @@ bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
             case CondOpByte::OP_NOT: {
                 if (sp == 0) return false;
                 stack[sp - 1] = (stack[sp - 1] != 0.0f) ? 0.0f : 1.0f;
+                break;
+            }
+
+            // === Arithmetic (P5 polish, INV-68) =========================
+            // Same stack shape as comparison: pops 2, pushes 1. Net -1
+            // per op — never risks the fixed-stack capacity.
+            case CondOpByte::OP_ADD: {
+                if (sp < 2) return false;
+                const float b = stack[--sp];
+                stack[sp - 1] += b;
+                break;
+            }
+            case CondOpByte::OP_SUB: {
+                if (sp < 2) return false;
+                const float b = stack[--sp];
+                stack[sp - 1] -= b;
+                break;
+            }
+            case CondOpByte::OP_MUL: {
+                if (sp < 2) return false;
+                const float b = stack[--sp];
+                stack[sp - 1] *= b;
+                break;
+            }
+            case CondOpByte::OP_DIV: {
+                if (sp < 2) return false;
+                const float b = stack[--sp];
+                // INV-67 — div-by-zero fail-soft (0.0f), mirrors AST arm.
+                // Never inf/nan (would poison downstream fabs-epsilon
+                // comparisons).
+                stack[sp - 1] = (b == 0.0f) ? 0.0f : stack[sp - 1] / b;
+                break;
+            }
+
+            // === Unary arithmetic (P5 polish, INV-66) ==================
+            case CondOpByte::OP_NEG: {
+                if (sp == 0) return false;
+                stack[sp - 1] = -stack[sp - 1];
                 break;
             }
 

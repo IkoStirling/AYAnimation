@@ -9,9 +9,11 @@
 // Grammar (low → high precedence):
 //   1. Or   (||)
 //   2. And  (&&)
-//   3. Not  (!)   unary
+//   3. Not / Neg  (! / -)   unary
 //   4. Compare (>, <, ==, !=)
-//   5. Primary (literal, ident, paren)
+//   5. Add / Sub  (+ / -)        (P5 polish, INV-69)
+//   6. Mul / Div  (* / /)        (P5 polish, INV-69)
+//   7. Primary (literal, ident, paren)
 //
 // Failure mode: lexer pushes Unknown token + records diagnostic; parser
 // records first error and returns nullptr. Caller (Transition::evaluate-
@@ -93,8 +95,21 @@ float CondLiteralExpr::evaluateAsFloat(const ConditionEvalCtx& /*ctx*/) const {
 }
 
 bool CondUnaryExpr::evaluate(const ConditionEvalCtx& ctx) const {
-    if (op != CondOp::Not) return false;
-    return !operand->evaluate(ctx);
+    switch (op) {
+        case CondOp::Not: return !operand->evaluate(ctx);
+        // P5 polish — unary minus coerces to bool like any float value:
+        // "-A" as a standalone condition reads as (-A != 0.0f).
+        case CondOp::Neg: return operand->evaluateAsFloat(ctx) != 0.0f;
+        default:          return false;
+    }
+}
+
+// P5 polish (2026-08-10) — Neg returns -operand as a float value (INV-66),
+// so "-Speed + 1" computes correctly. Not is bool-valued; falls through
+// to the 0.0f default (INV-64 type-mismatch contract).
+float CondUnaryExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
+    if (op == CondOp::Neg) return -operand->evaluateAsFloat(ctx);
+    return 0.0f;
 }
 
 bool CondBinaryExpr::evaluate(const ConditionEvalCtx& ctx) const {
@@ -110,11 +125,41 @@ bool CondBinaryExpr::evaluate(const ConditionEvalCtx& ctx) const {
         case CondOp::NE:
             return std::fabs(left->evaluateAsFloat(ctx) - right->evaluateAsFloat(ctx)) >= 1e-6f;
 
+        // P5 polish — arithmetic in bool context coerces (INV-64).
+        case CondOp::Add:
+        case CondOp::Sub:
+        case CondOp::Mul:
+        case CondOp::Div:
+            return evaluateAsFloat(ctx) != 0.0f;
+
         case CondOp::Not:
             // Not is unary only; binary Not in this arm is undefined.
             return false;
+        case CondOp::Neg:
+            // Neg is unary only; binary Neg in this arm is undefined.
+            return false;
     }
     return false;
+}
+
+// P5 polish (2026-08-10) — arithmetic float evaluation (INV-64). The
+// comparison/logical arms fall through to 0.0f — the documented
+// type-mismatch contract (bool sub-expressions are not float-valued),
+// identical to the base-class default.
+float CondBinaryExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
+    switch (op) {
+        case CondOp::Add: return left->evaluateAsFloat(ctx) + right->evaluateAsFloat(ctx);
+        case CondOp::Sub: return left->evaluateAsFloat(ctx) - right->evaluateAsFloat(ctx);
+        case CondOp::Mul: return left->evaluateAsFloat(ctx) * right->evaluateAsFloat(ctx);
+        case CondOp::Div: {
+            const float b = right->evaluateAsFloat(ctx);
+            if (b == 0.0f) return 0.0f;        // INV-67 — div-by-zero fail-soft
+            return left->evaluateAsFloat(ctx) / b;
+        }
+        default:
+            // Comparison / logical — not float-valued (INV-64).
+            return 0.0f;
+    }
 }
 
 // =====================================================================
@@ -135,6 +180,10 @@ enum class CondTokenKind : uint8_t {
     And,   // &&
     Or,    // ||
     Not,   // !
+    Plus,  // +   (P5 polish — arithmetic)
+    Minus, // -   (P5 polish — binary sub or unary neg)
+    Star,  // *   (P5 polish)
+    Slash, // /   (P5 polish)
     LParen,// (
     RParen,// )
     End,
@@ -183,9 +232,22 @@ public:
                 continue;
             }
 
+            // P5 polish (INV-65) — disambiguate '-' between signed number
+            // literal vs binary subtraction. A '-' followed by a digit is a
+            // negative literal ONLY when the previous token cannot end an
+            // expression (i.e. '-' can't be binary). So "A-3" lexes as
+            // [A][-][3] (binary Sub) while "-3" / "2 * -3" keep the signed
+            // literal (preserves pre-P5 AST shape for negative literals).
+            const bool prevEndsExpr = !outTokens.empty() &&
+                (outTokens.back().kind == CondTokenKind::Number ||
+                 outTokens.back().kind == CondTokenKind::True ||
+                 outTokens.back().kind == CondTokenKind::False ||
+                 outTokens.back().kind == CondTokenKind::Ident ||
+                 outTokens.back().kind == CondTokenKind::RParen);
+
             // Number literal (including leading '-' for negative literals).
             if (std::isdigit(static_cast<unsigned char>(c)) ||
-                (c == '-' && i + 1 < _src.size() &&
+                (c == '-' && !prevEndsExpr && i + 1 < _src.size() &&
                  std::isdigit(static_cast<unsigned char>(_src[i + 1])))) {
                 CondToken t;
                 t.line = line; t.col = col;
@@ -264,6 +326,22 @@ public:
             } else if (c1 == ')') {
                 t.kind = CondTokenKind::RParen; t.text = ")";
                 ++i; ++col;
+            } else if (c1 == '+') {
+                // P5 polish — arithmetic. Only binary '+' exists (no unary
+                // plus); parsePrimary will reject leading '+' cleanly.
+                t.kind = CondTokenKind::Plus; t.text = "+";
+                ++i; ++col;
+            } else if (c1 == '-') {
+                // P5 polish — binary subtraction, or unary minus when the
+                // lexer couldn't fold it into a negative literal (INV-65/66).
+                t.kind = CondTokenKind::Minus; t.text = "-";
+                ++i; ++col;
+            } else if (c1 == '*') {
+                t.kind = CondTokenKind::Star; t.text = "*";
+                ++i; ++col;
+            } else if (c1 == '/') {
+                t.kind = CondTokenKind::Slash; t.text = "/";
+                ++i; ++col;
             } else {
                 // Unknown char — tokenize but record.
                 t.kind = CondTokenKind::Unknown;
@@ -340,11 +418,21 @@ private:
     }
 
     std::unique_ptr<CondExprAst> parseUnary() {
-        if (_pos < _tokens.size() && _tokens[_pos].kind == Kind::Not) {
-            ++_pos;  // consume '!'
-            auto operand = parseUnary();   // right-associative
-            if (operand == nullptr) return nullptr;
-            return std::make_unique<CondUnaryExpr>(CondOp::Not, std::move(operand));
+        if (_pos < _tokens.size()) {
+            // P5 polish (INV-66) — unary minus. Prefix position means it
+            // binds tighter than ANY binary op ("-A * B" = "(-A) * B").
+            if (_tokens[_pos].kind == Kind::Minus) {
+                ++_pos;  // consume '-'
+                auto operand = parseUnary();   // right-associative
+                if (operand == nullptr) return nullptr;
+                return std::make_unique<CondUnaryExpr>(CondOp::Neg, std::move(operand));
+            }
+            if (_tokens[_pos].kind == Kind::Not) {
+                ++_pos;  // consume '!'
+                auto operand = parseUnary();   // right-associative
+                if (operand == nullptr) return nullptr;
+                return std::make_unique<CondUnaryExpr>(CondOp::Not, std::move(operand));
+            }
         }
         return parsePrimary();
     }
@@ -394,12 +482,20 @@ private:
         switch (k) {
             case Kind::Or:  return 1;
             case Kind::And: return 2;
-            // Unary Not is handled separately in parseUnary.
+            // Unary Not / Neg are handled separately in parseUnary.
             case Kind::GT:
             case Kind::LT:
             case Kind::EQ:
             case Kind::NE:
                 return 4;
+            // P5 polish (INV-69) — arithmetic binds tighter than comparison:
+            // "A + B > C" parses as "(A + B) > C".
+            case Kind::Plus:
+            case Kind::Minus:
+                return 5;
+            case Kind::Star:
+            case Kind::Slash:
+                return 6;
             default:
                 return 0;
         }
@@ -413,7 +509,12 @@ private:
             case Kind::NE:  return CondOp::NE;
             case Kind::And: return CondOp::And;
             case Kind::Or:  return CondOp::Or;
-            default:        return CondOp::Not;
+            // P5 polish — arithmetic (INV-64).
+            case Kind::Plus:  return CondOp::Add;
+            case Kind::Minus: return CondOp::Sub;
+            case Kind::Star:  return CondOp::Mul;
+            case Kind::Slash: return CondOp::Div;
+            default:          return CondOp::Not;   // invalid-binary sentinel
         }
     }
 
@@ -483,9 +584,11 @@ std::unique_ptr<CondExprAst> ConditionParser::parse(
 // Post-order walk. For each AST node:
 //   * Leaves: emit one LOAD_* opcode (LOAD_PARAM / LOAD_LITERAL /
 //     LOAD_RESERVED for "CurrentStateTime" — INV-55).
-//   * Unary Not: compile operand, then emit OP_NOT.
-//   * Binary GT/LT/EQ/NE: compile left, compile right, emit OP_*. Stack
-//     machine: 2 values on stack, 1 result pushed by opcode.
+//   * Unary Not / Neg: compile operand, then emit OP_NOT / OP_NEG
+//     (P5 polish — Neg is unary minus).
+//   * Binary GT/LT/EQ/NE + Add/Sub/Mul/Div (P5 polish): compile left,
+//     compile right, emit OP_*. Stack machine: 2 values on stack, 1
+//     result pushed by opcode.
 //   * Binary And/Or with short-circuit (INV-58): compile left; emit
 //     OP_AND/OR placeholder (with placeholder jump offset = 0); compile
 //     right; compute right-subtree byte count; patch placeholder jump.
@@ -561,6 +664,12 @@ void compileNode(const CondExprAst* node,
             case CondOp::LT: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_LT)); return;
             case CondOp::EQ: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_EQ)); return;
             case CondOp::NE: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_NE)); return;
+            // P5 polish — arithmetic (INV-68): same stack shape as
+            // comparison — 2 on stack, 1 result pushed.
+            case CondOp::Add: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_ADD)); return;
+            case CondOp::Sub: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_SUB)); return;
+            case CondOp::Mul: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_MUL)); return;
+            case CondOp::Div: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_DIV)); return;
             case CondOp::Not: /* should not be binary */ return;
             default: return;                    // And/Or handled above
         }
@@ -569,9 +678,11 @@ void compileNode(const CondExprAst* node,
     if (auto* un = dynamic_cast<const CondUnaryExpr*>(node)) {
         std::size_t innerJumpSite;
         compileNode(un->operand.get(), prog, lits, innerJumpSite);
-        // Only Not is a valid unary op (per AST contract).
+        // Not / Neg are the only valid unary ops (per AST contract).
         if (un->op == CondOp::Not) {
             prog.push_back(static_cast<uint8_t>(CondOpByte::OP_NOT));
+        } else if (un->op == CondOp::Neg) {
+            prog.push_back(static_cast<uint8_t>(CondOpByte::OP_NEG));
         }
         return;
     }

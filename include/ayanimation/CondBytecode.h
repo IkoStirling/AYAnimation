@@ -16,6 +16,12 @@
 //   * Lazy build: bytecode is compiled from AST on first evaluate, so the
 //     AST path stays the canonical "source of truth" for diagnostics.
 //
+// INV-68 contract (P5 polish 2026-08-10 — DSL 四则运算):
+//   * OP_ADD / OP_SUB / OP_MUL / OP_DIV / OP_NEG are 1:1 semantically
+//     equivalent to AST CondOp::Add/Sub/Mul/Div/Neg — identical evaluate
+//     results for the same ctx (parity tests, see design §4.23).
+//   * OP_DIV guards b == 0.0f → push 0.0f (INV-67, mirrors AST).
+//
 // INV-52..58 contract surface (P2 polish, see design §4.20):
 //   * INV-52 — Transition::cachedBytecode == null ⟺ AST parse failed OR not
 //              yet evaluated (lazy init; see Transition::evaluateBytecode).
@@ -56,6 +62,10 @@ struct ConditionEvalCtx;  // forward decl — note: tag is `struct` (matches
 //   OP_AND / OP_OR          : OP, int8_t relJump  (signed right-subtree byte count)
 //   OP_NOT                  : OP                   (no operand; takes 1 from stack)
 //   OP_GT / OP_LT / OP_EQ / OP_NE : OP             (no operand; pops 2 from stack)
+//   OP_ADD / OP_SUB / OP_MUL / OP_DIV : OP         (no operand; pops 2, pushes 1 —
+//                                                   P5 polish arithmetic, INV-68)
+//   OP_NEG                  : OP                   (no operand; takes 1, pushes -v —
+//                                                   P5 polish unary minus, INV-66)
 //   OP_LOAD_PARAM            : OP, uint32_t hash    (FNV-1a 32-bit, P1 polish)
 //   OP_LOAD_LITERAL          : OP, uint32_t idx    (index into literals[])
 //   OP_LOAD_RESERVED         : OP, uint8_t rid      (CondReservedId value)
@@ -70,6 +80,13 @@ enum class CondOpByte : uint8_t {
     OP_LOAD_PARAM   = 7,   // u32 hash operand → ctx.params linear scan
     OP_LOAD_LITERAL = 8,   // u32 idx operand  → literals[] (flat float table)
     OP_LOAD_RESERVED = 9,  // u8 rid operand   → ctx.currentStateTime (INV-55)
+    // P5 polish (2026-08-10) — arithmetic (INV-64/66/68). Appended so
+    // pre-P5 opcode values are stable.
+    OP_ADD          = 10,  // a + b
+    OP_SUB          = 11,  // a - b
+    OP_MUL          = 12,  // a * b
+    OP_DIV          = 13,  // b == 0.0f → 0.0f (INV-67); else a / b
+    OP_NEG          = 14,  // -a
 };
 
 // === Reserved ident IDs ================================================
