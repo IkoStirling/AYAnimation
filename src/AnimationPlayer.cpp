@@ -461,15 +461,15 @@ void AnimationPlayer::stop()
 
     // P1.5 — stop() disposes ALL slots. State machine contract: stop
     // is "playback halted + sources unbound". Each slot's clip is nulled
-    // and its tracks / pendingNotifies cleared; the AdditiveSlot vector
-    // itself is left at its current size (sparse slots remain sparse —
-    // a host that re-binds slot 4 still finds the slot[0..3] tail empty).
+    // and its heavy buffers released (P4 polish, INV-61); the AdditiveSlot
+    // vector itself is left at its current size (sparse slots remain
+    // sparse — a host that re-binds slot 4 still finds the slot[0..3]
+    // tail empty, INV-62).
     for (AdditiveSlot& s : _additiveSlots) {
         s.clip = nullptr;
         s.time = 0.0f;
         s.prevTickTime = 0.0f;
-        s.pendingNotifies.clear();
-        s.tracks.clear();
+        releaseSlotBuffers(s);
         // P1.4 cross-fade config also resets on unbound so a subsequent
         // re-bind via setAdditiveLayerSource() starts in fresh state.
         s.syncToBase     = false;
@@ -1436,6 +1436,27 @@ bool AnimationPlayer::setAdditiveLayerSource(uint32_t slotId,
     return true;
 }
 
+// P4 polish (2026-08-10) — INV-61. Release the slot's heavy buffers back
+// to the allocator. tracks (per-track boneIdx cache), pendingNotifies,
+// capturedLocal{Pos,Rot,Scl} (n*3 / n*4 / n*3 floats, sized at
+// setSkeleton) and trackWeights are the multi-KB members of AdditiveSlot;
+// swap-with-empty frees capacity while plain clear() keeps the
+// allocation. A host that clears an idle slot (or stop()s the player)
+// gets the memory back; a later re-bind reallocates once via
+// rebuildSlotTracks / capture — acceptable, bind is a low-frequency op.
+// The `_additiveSlots` vector itself is untouched (sparse semantics,
+// INV-62), and the slot's scalar fields are preserved so the re-bind
+// contract (fresh cross-fade state) is unchanged.
+void AnimationPlayer::releaseSlotBuffers(AdditiveSlot& slot)
+{
+    std::vector<TrackSlice>().swap(slot.tracks);
+    std::vector<AnimNotifyRecord>().swap(slot.pendingNotifies);
+    std::vector<float>().swap(slot.capturedLocalPos);
+    std::vector<float>().swap(slot.capturedLocalRot);
+    std::vector<float>().swap(slot.capturedLocalScl);
+    std::vector<float>().swap(slot.trackWeights);
+}
+
 void AnimationPlayer::clearAdditiveLayerSource(uint32_t slotId)
 {
     AdditiveSlot* s = getSlot(slotId);
@@ -1443,8 +1464,7 @@ void AnimationPlayer::clearAdditiveLayerSource(uint32_t slotId)
     s->clip = nullptr;
     s->time = 0.0f;
     s->prevTickTime = 0.0f;
-    s->pendingNotifies.clear();
-    s->tracks.clear();
+    releaseSlotBuffers(*s);
     // Note: playRate / loop are NOT reset — they describe the slot's
     // defaults, not its current state. _blendWeight is preserved for
     // re-bind without re-set.

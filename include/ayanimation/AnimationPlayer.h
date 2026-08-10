@@ -714,6 +714,14 @@ private:
     // multi-slot paths share the same TrackSlice-rebuild code.
     void rebuildSlotTracks(AdditiveSlot& slot, const ayt::resource::IAnimation* src);
 
+    // P4 polish (2026-08-10) — release a slot's heavy buffers back to
+    // the allocator (INV-61). Called from clearAdditiveLayerSource and
+    // stop(). swap-with-empty frees capacity; plain clear() would keep
+    // the allocation, and the per-slot buffers (tracks + capturedLocal*
+    // + trackWeights) are the multi-KB members of AdditiveSlot. Small
+    // scalar fields are untouched so a re-bind starts in fresh state.
+    void releaseSlotBuffers(AdditiveSlot& slot);
+
     // Per-slot P1.4 helpers.
     float sampleLayerBlendCurve(const AdditiveSlot& slot) const;
     void  captureRefPoseFromSlot(AdditiveSlot& slot);

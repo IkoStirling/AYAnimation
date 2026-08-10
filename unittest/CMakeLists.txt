@@ -24,6 +24,10 @@ set(SRC_FILES
     # AnimNotifyEvent, default-empty back-compat, merged queue dedup);
     # standalone (no AYEntity).
     AYTest_AnimNotifyRouting.cpp
+    # P4 polish (2026-08-10) — batch-tick stress + bind/clear cycles +
+    # AdditiveSlot memory release (INV-61/62) + AssetBoneCache
+    # heterogeneous lookup (INV-63). standalone (no AYEntity).
+    AYTest_P4Stress.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

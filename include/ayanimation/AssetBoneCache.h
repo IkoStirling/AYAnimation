@@ -35,12 +35,51 @@
 #include <assetsDefs/IAYSkeleton.h>
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace ayt::anim
 {
+
+namespace detail
+{
+
+// P4 polish (2026-08-10) — transparent hash for heterogeneous lookup.
+// The inner map is keyed by std::string, but the public API takes
+// `const char*` names; with the DEFAULT std::hash<std::string> every
+// find(name) constructs a temporary std::string (~900ns in debug builds
+// on the bind path — see design §4.21.12). `is_transparent` enables
+// C++14 heterogeneous lookup: the key is hashed and compared in place,
+// 0 temporary string, 0 allocation. std::equal_to<> matches the
+// const char* key against the stored std::string via the C++20
+// reverse operator== overloads.
+struct StringViewHash {
+    using is_transparent = void;
+
+    size_t operator()(std::string_view sv) const noexcept
+    {
+        return std::hash<std::string_view>{}(sv);
+    }
+
+    size_t operator()(const std::string& s) const noexcept
+    {
+        return std::hash<std::string_view>{}(s);
+    }
+
+    // Explicit const char* overload: without it, a const char* key is an
+    // equally-good user-defined conversion to BOTH string_view and
+    // std::string → C3066 ambiguous call at the heterogeneous lookup
+    // site (MSVC xhash _Uhash_compare).
+    size_t operator()(const char* c) const noexcept
+    {
+        return std::hash<std::string_view>{}(std::string_view(c));
+    }
+};
+
+} // namespace detail
 
 class AssetBoneCache {
 public:
@@ -102,8 +141,13 @@ private:
 
     mutable std::mutex _mu;
     bool _threadSafe = false;   // INV-59/60 — plain bool, not atomic
+    // P4 polish (2026-08-10) — StringViewHash + std::equal_to<> enable
+    // heterogeneous lookup: find(name) with const char* / string_view
+    // keys does NOT construct a temporary std::string (INV-63).
     std::unordered_map<const ayt::resource::ISkeleton*,
-                       std::unordered_map<std::string, int32_t>> _map;
+                       std::unordered_map<std::string, int32_t,
+                                          detail::StringViewHash,
+                                          std::equal_to<>>> _map;
 };
 
 } // namespace ayt::anim
