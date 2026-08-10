@@ -131,6 +131,10 @@ public:
     // only allowed from a single thread while no other thread is
     // inside the cache (typically: once at startup, before threads
     // spawn). Never flip it mid-flight in a multi-threaded host.
+    // P6 polish (2026-08-10) — setThreadSafe debug-asserts the
+    // dangerous half of INV-60 when LEAVING thread-safe mode: try_lock()
+    // proves no other thread is mid-access (see AssetBoneCache.cpp).
+    // Best-effort diagnostics, contract unchanged.
     void setThreadSafe(bool enabled) noexcept;
     bool isThreadSafe() const noexcept;
 

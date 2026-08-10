@@ -3044,4 +3044,45 @@ TEST_SUITE(AnimationPlayerTests)
         runContract();
     }
 
+    // === P6 polish (2026-08-10) — INV-60 flip debug assert (§4.21.12 Q2) ===
+    // setThreadSafe now probes the mutex when LEAVING thread-safe mode:
+    // try_lock() succeeds only while no other thread is mid-access.
+    // A single-threaded UT cannot construct the violation (the caller
+    // is by definition not inside the cache), so the assert itself is
+    // regression-guarded by the P3 test above — its true→false flip
+    // (line ~3042) runs the probe and would abort on a false positive.
+    // This test proves the probe does not disturb live cache state.
+
+    TEST_CASE(P6_AssetBoneCache_SetThreadSafe_FlipKeepsData) {
+        AssetBoneCache& cache = AssetBoneCache::instance();
+        cache.clear();
+        auto skel = makeTwoBoneSkeletonShared();
+        const auto* p = skel.get();
+
+        // Populate live entries, then flip lock-free → thread-safe →
+        // lock-free twice. Each true→false flip runs the try_lock probe
+        // (which must succeed and leave state untouched).
+        CHECK(cache.resolveAndCache(p, "Root") == 0);
+        CHECK(cache.resolveAndCache(p, "Child") == 1);
+        CHECK(cache.skeletonEntryCount() == 1u);
+        CHECK(cache.boneNameEntryCount(p) == 2u);
+
+        cache.setThreadSafe(true);
+        CHECK(cache.isThreadSafe());
+        cache.setThreadSafe(false);
+        CHECK_FALSE(cache.isThreadSafe());
+        cache.setThreadSafe(true);
+        CHECK(cache.isThreadSafe());
+        cache.setThreadSafe(false);
+        CHECK_FALSE(cache.isThreadSafe());
+
+        // Entries survive every flip — the probe locks and unlocks only.
+        CHECK(cache.boneNameEntryCount(p) == 2u);
+        CHECK(cache.lookup(p, "Child") == 1);
+        CHECK(cache.lookup(p, "Root") == 0);
+
+        cache.clear();
+        CHECK(cache.skeletonEntryCount() == 0u);
+    }
+
     TEST_SUITE_END

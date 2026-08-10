@@ -1,7 +1,7 @@
 # AYAnimation Design
 
-> **状态（2026-08-10）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)**）。3-run stable：AYAnimation 2831/2831 + AYResource 1039/1039 + AYEntity 421/421 × 3。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish 2026-08-06..10）。  
+> **状态（2026-08-10）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 2843/2843 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 2843/2843 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish 2026-08-06..10）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
 > **2026-08-06 设计审计 (三次)**：新增 §4.15 P3.2 L3 子状态机 ship 文档；§4.14.11 UPGRADE-HOOK(P3.2) 标 resolved；§13 row 20c 改为 ✅ + 加 row 20e（L3.5 deferred）；§11 P3.2 row 勾选 + §16 changelog 加 P3.2 entry；3-run 385/385 + 600/600 + 1044/1044 stable。
@@ -12,6 +12,7 @@
 > **2026-08-08 设计审计 (八次)**：新增 §4.21 P3 polish 完整 ship 文档（AssetBoneCache 默认无锁 + setThreadSafe opt-in 双轨，12-section 全模板）；§4.12.1 线程安全注释同步 P3 polish；§11 P3 polish row ✅；§11 P3 polish row ✅；§16 changelog 加 P3 polish entry；3-run 421/421 + 1851/1851 + 1039/1039 stable；INV-59/60 全部 NEW（默认零锁 + flag 非原子）；Scenario H 实测 1.04x（resolveAndCache hit 961 vs 1001）/ 1.08x（lookup hit 910 vs 980）debug build min-of-5；测量教训：顺序一次性测量噪声反转比值 → 交错 min-of-5，详见 §4.21.10。
 > **2026-08-10 设计审计 (九次)**：新增 §4.22 P4 polish 完整 ship 文档（Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试，12-section 全模板）；§4.21.11 UPGRADE-HOOK(transparent hash) + §4.21.12 Q3 标 resolved；§11 P4 polish row ✅；§11 P4 polish row ✅ + P1/P2/P3 polish rows deferred 列表同步（Additive slot dynamic vector 标 resolved）；§16 changelog 加 P4 polish entry；3-run 421/421 + 2673/2673 + 1039/1039 stable；INV-61/62/63 全部 NEW（闲置 slot 内存归还 + sparse 语义保留 + 异构查找 0 临时 string）；教训：tick≠evaluate（压力测试只 tick 断言全败）+ transparent hash C3066 模糊重载需显式 const char* 重载，详见 §4.22.10。
 > **2026-08-10 设计审计 (十次)**：新增 §4.23 P5 polish 完整 ship 文档（DSL 四则运算 + - * /，12-section 全模板）；§14.3 算术 row 标 ✅ + §4.16/§4.17 历史决策标 RESOLVED；§11 P5 polish row ✅ + roadmap P3 表 P5 polish row；§16 changelog 加 P5 polish entry；3-run 421/421 + 2831/2831 + 1039/1039 stable；INV-64..69 全部 NEW（算术语义 + 负号消歧 + 一元减 + 除零 fail-soft + bytecode parity + 优先级）；教训：测试期望值手算避开恰好相等组合（(4+1)*2=10 两个 FAIL 是期望值错）+ 插测试块先 grep section 头位置（§8.1.5 头在文件顶部 → 误插 TEST_SUITE_END 落中间 → C2065），详见 §4.23.10。
+> **2026-08-10 设计审计 (十一次)**：新增 §4.24 P6 polish 完整 ship 文档（INV-60 flip debug assert + release 配置落地，12-section 全模板）；§4.21.12 Q2 + §4.20.12/§4.21.12/§4.22.12 Q1 标 resolved；§14.2 release-build row 标 ✅；§11 P6 polish row ✅ + roadmap 剩项同步（setTriggerByHash 永久挂起）；§16 changelog 加 P6 polish entry；debug 3-run 421/421 + 2843/2843 + 1039/1039 stable + release 2843/2843 × 3 全绿（release 配置首份证据）；INV-70 NEW（翻转离开 thread-safe 模式 debug assert）；Scenario G/H release 首测（G 18.3ns ~4.7x vs debug；H lock-free 1.40x~2.46x vs debug 1.06x/1.12x）；教训：try_lock probe vs _lockCount 计数权衡 + 单线程 UT 无法构造 assert 路径（由 P3 翻转测试回归兜底）+ run-to-run 噪声 ±2.5x 必须 min-of-5，详见 §4.24.10。
 
 ---
 
@@ -1481,6 +1482,7 @@ AYAnimation/
 - [x] **P3 polish — AssetBoneCache lock-free single-threaded mode**（2026-08-08）─ `AssetBoneCache` 默认改无锁：`_threadSafe = false` (INV-59 — 7 访问点永不触碰 mutex, ECS 单线程主 tick 路径零同步可证明) + `setThreadSafe(true)` opt-in 重挂 mutex (authoring tools / 多线程 host, INV-60 — flag 非原子须并发前设) + anonymous ns `maybeLock(std::mutex&, bool)` RAII helper (enabled ? unique_lock(mu) : default ctor — 无锁路径零成本 + 锁路径异常安全) + 7 sites `lock_guard` → `unique_lock lk = maybeLock(_mu, _threadSafe)` + **+2 additive public API** (setThreadSafe / isThreadSafe; lookup / resolveAndCache / invalidate / clear / entry-count 签名 identical; AnimationPlayer 2 callsite 0 touch; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`P3_AssetBoneCache_DefaultIsLockFree` INV-59 pin + `P3_AssetBoneCache_ThreadSafeMode_BehaviorUnchanged` 双模式复跑完整 P1.7 contract) + micro-benchmark 加 Scenario H (真实 2-bone Skeleton, hit 路径, 交错 min-of-5); 0 regression 3-run stable (AYAnimation 1851/1851 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.21 + §11 P3 polish row。**INV-59/60** (默认零锁 + flag 非原子) 全部 NEW。Benchmark (debug build, min-of-5): resolveAndCache hit 961 vs 1001 ns/iter (**1.04x**) / lookup hit 910 vs 980 ns/iter (**1.08x**) — debug STL 主导绝对值 (临时 string + checked iterators), P3 收益结构性 (零同步); 测量教训: 顺序一次性测量噪声反转比值 → 交错 min-of-5。
 - [x] **P4 polish — Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试**（2026-08-10）─ `AnimationPlayer::releaseSlotBuffers(AdditiveSlot&)` 新私有 helper (swap-with-empty 归还 tracks / pendingNotifies / capturedLocal{Pos,Rot,Scl} / trackWeights; `clearAdditiveLayerSource` + `stop()` 两 callsite; 闲置 slot 此前持有 n*3+n*4+n*3 floats 到 player 析构) + `AssetBoneCache` inner map 改 `StringViewHash + std::equal_to<>` (is_transparent C++14 异构查找, `find(const char*)` 0 临时 string 构造 — 兑现 §4.21.12 Q3; 3 重载含显式 const char* 防 C3066 模糊) + **0 public API change** (AnimationPlayer / AssetBoneCache 签名 identical; ECS bridge 0 touch; L1/L2/L3 + INV-1..60 全部 preserved) + **3 new INV** (INV-61 闲置 slot heavy buffers 全释放 / INV-62 `_additiveSlots` size 保留 sparse 语义 + re-bind fresh state / INV-63 异构查找 0 临时 string 且三拼写单 entry) + **4 new unit tests** (`AYTest_P4Stress.cpp` 新 suite P4StressTests: p4_stress_400_players_share_one_skeleton 400×200 帧完整帧 tick+evaluate 逐位 memcmp 一致 + p4_stress_bind_clear_cycle_returns_cache_entries 5 轮 invalidate 回落 0 + P4_AssetBoneCache_HeterogeneousLookup_SingleEntry + P4_AdditiveSlot_ClearStop_RebindFreshState); 0 regression 3-run stable (AYAnimation 2673/2673 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.22 + §11 P4 polish row。**INV-61/62/63** (内存归还 + sparse 保留 + 异构查找) 全部 NEW。教训: tick() 只推进时钟不跑 evaluate (压力测试只 tick → resolve 未触发断言全败 → 每帧 tick+evaluate 完整帧) + transparent hash 必须显式 const char* 重载防 C3066。
 - [x] **P5 polish — DSL 四则运算 + - * /**（2026-08-10）─ 8 算子 → **13**（+ `+ - * /` 四则 + 一元 `-`）三层贯通（lexer → precedence-climbing parser → AST → bytecode）：`CondOp` 追加 Add/Sub/Mul/Div/Neg (7..11) + `CondOpByte` 追加 OP_ADD..OP_NEG (10..14)，**旧值全部不变**；lexer 负号消歧 INV-65（`A-3` == `A - 3`，负字面量形状保留）＋ precedence 5/6（Compare 4 < Add/Sub < Mul/Div）INV-69 ＋ parseUnary 一元减 INV-66（`-A * B` = `(-A) * B`）＋ `CondBinaryExpr::evaluateAsFloat` override 算 float（比较/逻辑臂 0.0f 类型不匹配契约 INV-64）＋ `CondUnaryExpr::evaluateAsFloat` Neg 取反 ＋ 除零 → 0.0f 双路径 fail-soft INV-67 ＋ bytecode evaluator 5 新分支（短跳转 ±127 机制不受影响）＋ **0 public API change**（Transition / StateMachine / ECS bridge 0 touch；L1/L2/L3 + INV-1..63 全部 preserved）＋ **14 new unit tests**（§8.1.6 11 + §P5 3：13-case parity 表 + 尾 opcode 编码 + short-circuit 与算术共存 + `CurrentStateTime * 2 > 1` reserved 组合 + SM 集成 `Speed * 2 > 10` bytecode hot path 真 fire）；3-run stable AYAnimation **2831/2831** + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.23 + §11 P5 polish row + §14.3（算术 ✅）+ §4.16/§4.17 决策标 RESOLVED。**INV-64..69** (算术语义 + 负号消歧 + 一元减绑定 + 除零 fail-soft + bytecode parity + 优先级) 全部 NEW。教训: 测试期望值手算避开恰好相等组合 ((4+1)*2=10 两个 FAIL) + 插测试块先 grep section 头位置 (误插 TEST_SUITE 中间 → C2065)。
+- [x] **P6 polish — INV-60 flip debug assert + release 配置落地**（2026-08-10）─ A) `setThreadSafe` 离开 thread-safe 模式时 try_lock probe + debug assert（INV-70；try_lock 非阻塞绝不锁死；true→false 可证明 / false→true 保持 startup 约定；NDEBUG 编译掉行为与 P3 一致）+ B) `out/build/x64-Release` 首次 configure（Ninja + MSVC /O2 + vcpkg toolchain + AY_BUILD_BENCHMARKS=ON）+ AYAnimation_UnitTests release 2843/2843 × 3 全绿 + Scenario G/H release 首测（G true 18.3ns ~4.7x / short 20.6ns ~3.7x vs debug；H lock-free 1.40x~2.46x vs debug 1.06x/1.12x，5 跑 min-of-5 区间口径）+ **0 public API change**（ECS bridge 0 touch；INV-1..69 全部 preserved）+ **1 new unit test**（`P6_AssetBoneCache_SetThreadSafe_FlipKeepsData`：2 entries × 2 轮双翻转存活 + lookup 值不变；单线程 UT 无法构造 assert 触发路径，由 P3 翻转测试回归兜底无 false positive）；debug 3-run stable AYAnimation **2843/2843**（2831 + 1 TEST_CASE / +12 断言）+ AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.24 + §14.2（release-build ✅）+ §4.20.12/§4.21.12/§4.22.12 Q1 + §4.21.12 Q2 标 RESOLVED。**INV-70** (翻转离开 thread-safe 模式 debug assert) NEW。roadmap 剩项同步：setTriggerByHash caller-side cache **永久挂起**（低频低 ROI，用户决策）。教训：try_lock probe vs _lockCount 计数（0 新成员 + 可证明方向正是危险翻转）+ run-to-run 噪声 ±2.5x 必须 min-of-5 报区间（单次 50.8ns 离群）。
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §11 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
@@ -1580,7 +1582,7 @@ AYAnimation/
 |---|---|---|
 | setTriggerByHash caller-side cache（P2 polish .A）| caller 侧 hash 缓存 API，修 debug setTrigger 0.4x | debug-only regression 已接受；§4.18.11 / §4.19.11 / §4.22.11 |
 | N > 32 params 容器 swap（P0 polish .B）| flat vector → unordered_map<uint32_t,float> | 生产 N ≤ 8 不触发；§4.18.11 |
-| release-build 验证 | Scenario G/H + transparent hash 的 release 收益未测 | 无 release config；§4.20.12 Q1 / §4.21.12 Q1 / §4.22.12 Q1 |
+| ~~release-build 验证~~ | **✅ P6 polish ship 2026-08-10**（§4.24）：x64-Release 落地 + Scenario G/H 首测（G release 18.3ns ~4.7x vs debug；H lock-free 1.40x~2.46x vs debug 1.06x/1.12x）；全项目其他模块 release 验证仍 open（§4.24.12）| §4.20.12 Q1 / §4.21.12 Q1 / §4.22.12 Q1 → RESOLVED |
 | cachedBytecode 内存池 | bytecode program / literals 复用 | 内存复用 polish；§4.20.12 Q4 |
 | 10K+ stress scale | 400×200 为合理量级非极限 | §4.22.12 Q2 |
 | setSkeleton 重分配 captured buffers | INV-61 释放后被一次 setSkeleton 反向打穿（~4KB/100-bone 暂时驻留，不泄漏）| accepted；§4.22.12 Q3 |
@@ -3977,7 +3979,7 @@ Key fix in this ship: comparisons must compile the **right subtree before emitti
 
 ### 4.20.12 Open Questions
 
-1. **Debug-build speedup is modest (1.34x)** — the interpreter's switch/bounds-check overhead is similar to virtual dispatch in debug; the real win is cache locality + no dynamic_cast, which scales with expression size. Verify in a release build when one exists.
+1. **Debug-build speedup is modest (1.34x)** — the interpreter's switch/bounds-check overhead is similar to virtual dispatch in debug; the real win is cache locality + no dynamic_cast, which scales with expression size. **→ RESOLVED 2026-08-10（P6 polish）**：release 首测 bytecode true 18.3ns / short-circuit 20.6ns（vs debug 86.2/75.9，~4.7x/~3.7x），详见 §4.24.10。
 2. **Fixed stack capacity 16** — production AST depth ≤ 5 (max stack ~6); 16 gives 2.6x headroom. Overflow fail-softs to false (never OOB write). If future grammar grows deeper trees, raise the constant.
 3. **Bytecode recompile cost** — compile is O(n) over the AST and happens once per transition (lazy); not measured in the benchmark (Scenario G compiles once). If transitions were rebuilt per frame (they aren't), this would matter.
 4. **`cachedBytecode` memory** — ~program bytes + literals per transition with a condition; a state machine with 50 transitions ≈ a few KB. No pooling yet; revisit under 内存复用 polish.
@@ -4090,7 +4092,7 @@ std::unique_lock<std::mutex> lk = maybeLock(_mu, _threadSafe);  // 之前: lock_
 ### 4.21.12 Open Questions
 
 1. **Release-build lock delta 未实测** — 本项目只有 x64-Debug 配置；1.04x/1.08x 是 debug 结构性收益下限。release 构建落地后补 Scenario H 复测。
-2. **`_threadSafe` 翻转时机** — 契约要求「无其他线程在 cache 内」；没有 runtime assert（无法低成本检测）。若未来需要，可加 `_lockCount` 计数 debug assert。
+2. **`_threadSafe` 翻转时机** — 契约要求「无其他线程在 cache 内」。**→ RESOLVED 2026-08-10（P6 polish）**：setThreadSafe 离开 thread-safe 模式时 try_lock probe + debug assert（INV-70）；进入方向（false→true）不可低成本证明，保持 startup 约定。详见 §4.24。
 3. **临时 string 优化是否值得单开** — `find(const char*)` 每次构造 `std::string`（~900ns debug 大头）；修法（transparent hash / uint32 key）改动 cache 内部类型，属未来独立 polish 项，不在 P3 范围。**→ P4 polish RESOLVED 2026-08-10**（transparent hash 异构查找落地，见 §4.22）。
 
 ---
@@ -4179,7 +4181,7 @@ std::unique_lock<std::mutex> lk = maybeLock(_mu, _threadSafe);  // 之前: lock_
 
 ### 4.22.12 Open Questions
 
-1. **release-build 收益未实测** — 全项目只有 x64-Debug 配置；transparent hash 的 release 收益 ~10ns/bind（debug 大头消失），内存回收是确定收益（allocator 级）。release 配置落地后复测（同 §4.21.12 Q1）。
+1. **release-build 收益未实测** — 全项目只有 x64-Debug 配置；transparent hash 的 release 收益 ~10ns/bind（debug 大头消失），内存回收是确定收益（allocator 级）。**→ RESOLVED 2026-08-10（P6 polish）**：x64-Release 落地 + Scenario G/H 首测（lock-free 收益 release 1.40x~2.46x vs debug 1.06x/1.12x；lookup release 14~18ns 接近裸 unordered_map 成本），详见 §4.24.10。
 2. **压力测试规模阈值未探索** — 400 player × 200 帧是「合理量级」而非「找到极限」；大批量（10K+ player）的缓存退化 / 内存峰值未压。后续 stress suite 扩展时可加。
 3. **captured buffer 的 setSkeleton 全量 assign 保留** — 闲置 slot 在 `setSkeleton` 时仍会被 assign `n*3/n*4/n*3`（P1.5 行为，为了 enable 时不 realloc）。与 INV-61 的「clear 时释放」构成「释放后 setSkeleton 再分配」循环——低频路径，接受。
 
@@ -4262,6 +4264,106 @@ Condition DSL 从 8 算子扩到 **13**（`> < == != && || !` + 新增 `+ - * /`
 ### 4.23.12 Open Questions
 
 无实质。`%` 取模 / `>=` `<=` / 一元 `+` 明确不在 scope（§14.3 纪律：string/int param 类型才是下一刀，算术已闭合）。
+
+---
+
+## 4.24 ✅ P6 polish — INV-60 flip debug assert + release 配置落地 — SHIP（2026-08-10）
+
+> 本节为 P6 polish 完整 ship 文档。模板遵循 §4.11 P1.5 Full Ship 的 12 段式。
+> 收口项：§4.21.12 Q2（`_threadSafe` 翻转 debug assert）+ §4.20.12 / §4.21.12 / §4.22.12 Q1（release 配置落地）。roadmap 剩三项中的两项；setTriggerByHash caller-side cache 明确永久挂起（用户决策，低频低 ROI）。
+
+### 4.24.1 Overview
+
+合并 PR，双刀：
+- **A) INV-60 翻转 debug assert**：`setThreadSafe` 在**离开** thread-safe 模式（true→false）时做 try_lock probe——若另一线程正持锁在 cache 内，debug build assert（INV-60 契约违反）。
+- **B) release 配置落地**：`out/build/x64-Release`（Ninja + MSVC /O2 + vcpkg toolchain + `AY_BUILD_BENCHMARKS=ON`）首次 configure + build；AYAnimation_UnitTests release 全绿 + Scenario G/H release 基准首测。
+
+**0 public API change**，ECS bridge 0 touch。
+
+### 4.24.2 Motivation
+
+- §4.21.12 Q2：INV-60 契约（flag 非原子，仅允许「无其他线程在 cache 内」时翻转）「没有 runtime assert（无法低成本检测）」——多线程 host 在另一线程访问 cache 中途 `setThreadSafe(false)` 是静默破坏，debug build 应尽早暴露。
+- §4.20.12 / §4.21.12 / §4.22.12 Q1：全项目只有 x64-Debug；Scenario G/H 的「release 收益」从未实测。release 配置是地基型基建——不改任何代码路径，只补验证维度，让 §4.21 的「lock delta 在 release 构建才显著」论断有实测证据。
+
+### 4.24.3 Data Model
+
+**0 新成员**。放弃 roadmap 预想的 `_lockCount` 计数方案，改用 mutex try_lock probe（权衡见 §4.24.10）：`_threadSafe` / `_mu` 不变；7 访问点 maybeLock 结构不变。
+
+### 4.24.4 Public API
+
+**0 change**（`setThreadSafe` / `isThreadSafe` 签名 identical；release 行为 identical——assert 编译掉后与 P3 完全一致）。
+
+### 4.24.5 Internal Algorithm
+
+`setThreadSafe(enabled)` 新逻辑（AssetBoneCache.cpp）：
+
+```cpp
+if (_threadSafe) {                      // 离开 thread-safe 模式才需要证明
+    const bool uncontended = _mu.try_lock();  // 非阻塞，绝不死锁
+    if (uncontended) _mu.unlock();
+    assert(uncontended && "AssetBoneCache::setThreadSafe: another thread "
+                          "is inside the cache — INV-60 flip contract violated");
+}
+_threadSafe = enabled;
+```
+
+检测边界（诚实口径）：
+- **可证明方向（被 assert 守护）**：true → false。try_lock 失败 ⟺ 另一线程持锁在 cache 内——正是危险翻转（去掉锁还有人在用）。
+- **不可证明方向**：false → true（进入 thread-safe 模式）。lock-free 模式 7 sites 从不碰 mutex，try_lock 必成功——该方向保持 startup 约定（INV-60 原文）。
+- NDEBUG：release 下 assert 编译掉、翻转照旧——probe 是 best-effort 诊断，非正确性机制，契约不变。
+
+### 4.24.6 ECS Bridge
+
+**0 touch**。
+
+### 4.24.7 Resource Bridge
+
+**0 touch**。
+
+### 4.24.8 Invariants
+
+**INV-70 NEW**：debug build 下 `setThreadSafe` 离开 thread-safe 模式（true→false）时，若另一线程持有 mutex（在 cache 内），assert 必须触发；release build assert 编译掉、行为与 P3 一致（probe 保留——setThreadSafe 是低频路径，try_lock 成本可忽略）。
+
+### 4.24.9 Testing
+
+**+1 new unit test**（`P6_AssetBoneCache_SetThreadSafe_FlipKeepsData`）：populate 2 entries → lock-free→thread-safe→lock-free × 2 翻转（每次 true→false 都走 try_lock probe；P3 既有翻转测试 line ~3042 同路径回归兜底）→ entries 完整存活 + lookup 值不变 + 无 false positive。
+
+单线程 UT **无法**构造 assert 触发路径（调用者定义上不在 cache 内）——assert 由真实多线程 host 触发；P3/P6 翻转测试保证 probe 无 false positive。
+
+- debug：AYAnimation **2843/2843** × 3 stable（2831 → 2843，+1 TEST_CASE / +12 断言）
+- release：AYAnimation **2843/2843** × 3（首跑 + 2 复跑全绿）——release 配置落地的第一份全绿证据
+- AYEntity 421/421 + AYResource 1039/1039 未跑（0 touch，基线不变）
+
+### 4.24.10 Benchmark（release 首测，§4.20.12/§4.21.12/§4.22.12 Q1 兑现）
+
+Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
+
+| 场景 | debug（实测） | release（5 跑取 min / 区间） |
+|---|---|---|
+| G bytecode 3-ident true | 86.2 ns/iter | **18.3 ns（~4.7x）** |
+| G bytecode short-circuit | 75.9 ns/iter | **20.6 ns（~3.7x）** |
+| H resolveAndCache hit | 724.6 vs 765.7（1.06x） | 16.6 vs 23.6（**1.40x**，5 跑区间 1.40~2.10x） |
+| H lookup hit | 697.2 vs 784.0（1.12x） | 14.1 vs 23.1（**1.44x**，5 跑区间 1.44~2.46x） |
+
+结论：
+- **lock-free 收益在 release 显著化**：debug 1.06x/1.12x（mutex delta 淹没在 debug STL 开销下）→ release **1.40x~2.46x**（中位 ~1.5x）——兑现 §4.21 的「lock delta 在 release 才显著」论断。
+- **hot path 绝对值已接近裸 unordered_map 成本**：P4 transparent hash 后 release lookup 14~18ns（debug ~900ns 的 debug 大头消失）——P4 收益在 release 同样显著化。
+- Scenario G release 18.3ns vs debug 86.2ns（~4.7x），与 P2 ship 的 debug 相对比（bytecode/AST 1.34x/1.28x）不冲突——那是 AST 相对比，这是 debug/release 绝对比。
+
+测量教训（重复 §4.21.10）：run-to-run 噪声 18~51ns（±2.5x），系统负载影响 >> 被测差异——必须 min-of-5 取 min + 报区间，单次测量会得到 50.8ns 离群值。
+
+### 4.24.11 Migration / Upgrade Hooks
+
+- §4.21.12 Q2（`_threadSafe` 翻转时机 debug assert）→ **RESOLVED（2026-08-10）**（try_lock probe，非 _lockCount）。
+- §4.20.12 Q1 / §4.21.12 Q1 / §4.22.12 Q1（release-build 验证）→ **RESOLVED（2026-08-10）**（x64-Release 落地 + Scenario G/H 首测）。
+- §14.2 release-build row → 标 ✅。
+- roadmap 剩项同步：setTriggerByHash caller-side cache 明确**永久挂起**（用户决策：低频低 ROI，省下时间开长线）。
+- UPGRADE-HOOK（多线程 host）：`setThreadSafe(true)` 仍须并发前调用；debug build 下错误时机会被 INV-70 assert 捕获。
+
+### 4.24.12 Open Questions
+
+- **release 制度化未完成**：root 无 CMakePresets.json（x64-Release 由 `do_cmake.bat` 手动命令配置，非 preset 固化）；其余 27 模块 release 构建/测试未验证（本次只构建 AYAnimation 两 target）。若未来做全项目 release CI，需先补 preset + 各模块 release 冒烟。
+- **INV-70 触发路径无真实 host 验证**：多线程 authoring host 尚不存在，assert 路径待真实 host 落地后自然暴露（P3/P6 测试只保证无 false positive，不保证真多线程场景必命中——契约本身未变）。
 
 ---
 
@@ -4370,4 +4472,5 @@ Condition DSL 从 8 算子扩到 **13**（`> < == != && || !` + 新增 `+ - * /`
 | 2026-08-10 | **文档收口（长线审核副产品）**：新增 **§14 Deferred / Open 项总表**（正确性级 5 项接受权衡 + 性能级 7 项 + 新功能级 12 项 = 单一审计线索）；全文 ~35 处 "§14 X row" 幽灵引用（§14 从未存在，ship row 实际位于 §11）批量归位改指 §11；**BlendSpace 状态登记**（§11 Phase 2 / §13 row 16 / §14.3 / P2.1 roadmap row：P2.1 Blend 1D/2D ship `68f4227` 2026-07-28 从未登记，两处 "仍缺/❌" stale 修正）；§5 AnimationStateMachine "未启动" → 已 ship（P3.1/P3.2/P3.x 2026-08-06/07）；状态头日期 2026-08-08 → 2026-08-10。纯文档改动，0 代码 0 测试影响 |
 | 2026-08-10 | **P4 polish — Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试 ship**：§4.22 全 12-section（`AnimationPlayer::releaseSlotBuffers` 私有 helper swap-with-empty 归还 tracks/pendingNotifies/capturedLocal{Pos,Rot,Scl}/trackWeights + `clearAdditiveLayerSource`/`stop()` 两 callsite + `AssetBoneCache` inner map 改 `detail::StringViewHash + std::equal_to<>` is_transparent 异构查找 0 临时 string + 显式 const char* 重载防 C3066 + 0 public API change + ECS bridge 0 touch）+ 4 new unit tests（AYTest_P4Stress.cpp 新 suite P4StressTests：400 player × 200 帧共享单 skeleton 逐位 memcmp + bind/clear 5 轮 invalidate 回落 + 异构查找单 entry + AdditiveSlot clear/stop/re-bind 行为）+ §4.21.11 UPGRADE-HOOK(transparent hash) + §4.21.12 Q3 标 resolved + §11 P4 polish row + §11 P1/P2/P3 polish rows deferred 同步（Additive slot dynamic vector → RESOLVED）+ 状态抬头同步 2673/2673 + 421/421 + 1039/1039 3-run stable；**INV-61/62/63** (闲置 slot 内存归还 + sparse 语义保留 + 异构查找 0 临时 string) 全部 NEW。教训：tick() 只推进时钟不跑渲染评估（压力测试首版只 tick → resolve 未触发断言全败）+ transparent hash 必须显式 const char* 重载（双重载等权转换 → C3066 模糊）。详见 §4.22 + §11 P4 polish row |
 | 2026-08-10 | **P5 polish — DSL 四则运算 + - * / ship**：§4.23 全 12-section（8 算子 → 13 三层贯通：`CondOp` + `CondOpByte` 各追加 5 值旧值不变 + lexer 负号消歧 INV-65 + precedence 5/6 INV-69 + parseUnary 一元减 INV-66 + `CondBinaryExpr::evaluateAsFloat` override + `CondUnaryExpr::evaluateAsFloat` Neg + 除零 0.0f 双路径 fail-soft INV-67 + bytecode evaluator 5 新分支 + 0 public API change + ECS bridge 0 touch）+ 14 new unit tests（§8.1.6 11 + §P5 3：13-case parity 表 INV-68 + 尾 opcode 编码 + short-circuit 与算术共存 + reserved `CurrentStateTime * 2 > 1` 组合 + SM 集成 bytecode hot path）+ §14.3 算术 row ✅ + §4.16/§4.17 历史决策标 RESOLVED + §11 P5 polish row + roadmap P3 表 P5 polish row + 状态抬头同步 2831/2831 + 421/421 + 1039/1039 3-run stable；**INV-64..69** (算术语义 + 负号消歧 + 一元减 + 除零 fail-soft + bytecode parity + 优先级) 全部 NEW。教训：测试期望值手算避开恰好相等组合（2 处 FAIL 为期望值算错）+ 插测试块先 grep section 头位置（§8.1.5 头在文件顶部，误插 TEST_SUITE_END 落中间 → C2065）。详见 §4.23 + §11 P5 polish row |
+| 2026-08-10 | **P6 polish — INV-60 flip debug assert + release 配置落地 ship**：§4.24 全 12-section（A: `setThreadSafe` 离开 thread-safe 模式 try_lock probe + debug assert——try_lock 失败 ⟺ 另一线程持锁在 cache 内，正是 INV-60 危险翻转；非阻塞绝不锁死；false→true 方向不可证明保持 startup 约定 + B: `out/build/x64-Release` 首次 configure（Ninja + MSVC /O2 + vcpkg toolchain + AY_BUILD_BENCHMARKS=ON）+ AYAnimation_UnitTests release 2843/2843 × 3 全绿 + Scenario G/H release 首测）+ 1 new unit test（`P6_AssetBoneCache_SetThreadSafe_FlipKeepsData`：双翻转 × 2 轮 entries 存活；单线程 UT 无法构造 assert 触发路径，P3 翻转测试回归兜底）+ §4.21.12 Q2 + §4.20.12/§4.21.12/§4.22.12 Q1 标 resolved + §14.2 release-build row ✅ + §11 P6 polish row + roadmap 剩项同步（setTriggerByHash 永久挂起）+ 状态抬头同步 debug 2843/2843 + 421/421 + 1039/1039 3-run stable + release 2843/2843 × 3；**INV-70** (翻转离开 thread-safe 模式 debug assert) NEW。Benchmark（release 首测）：Scenario G true 18.3ns / short 20.6ns（vs debug 86.2/75.9，~4.7x/~3.7x）；Scenario H lock-free 1.40x~2.46x（vs debug 1.06x/1.12x——lock delta 在 release 显著化，兑现 §4.21 论断；lookup 14~18ns 接近裸 unordered_map 成本）。教训：try_lock probe vs `_lockCount` 计数（0 新成员 + 可证明方向正是危险翻转）+ run-to-run 噪声 ±2.5x 必须 min-of-5 报区间（单次 50.8ns 离群）。详见 §4.24 + §11 P6 polish row |
  |

@@ -5,6 +5,7 @@
 
 #include <ayanimation/AssetBoneCache.h>
 
+#include <cassert>
 #include <cstring>
 #include <mutex>
 
@@ -37,8 +38,25 @@ AssetBoneCache& AssetBoneCache::instance()
 
 void AssetBoneCache::setThreadSafe(bool enabled) noexcept
 {
-    // INV-60 — plain write, no synchronization: legal only while no
-    // other thread is inside the cache (typically at startup).
+    // P6 polish (2026-08-10) — INV-60 debug assert (design §4.21.12 Q2).
+    // The flip contract: only flip while no other thread is inside the
+    // cache. Leaving thread-safe mode is PROVABLE — try_lock() fails
+    // iff some other thread holds the mutex mid-access, and being
+    // non-blocking it never deadlocks on an in-flight access. Entering
+    // from lock-free mode is NOT provable (lock-free sites never touch
+    // the mutex), so that direction stays a startup convention (INV-60);
+    // the assert therefore guards exactly the dangerous flip (true→false).
+    //
+    // NDEBUG note: in release builds assert() compiles out and the flip
+    // proceeds as before — the probe is best-effort diagnostics, not a
+    // correctness mechanism (the contract itself is unchanged).
+    if (_threadSafe) {
+        const bool uncontended = _mu.try_lock();
+        if (uncontended) _mu.unlock();
+        assert(uncontended &&
+               "AssetBoneCache::setThreadSafe: another thread is inside "
+               "the cache — INV-60 flip contract violated");
+    }
     _threadSafe = enabled;
 }
 
