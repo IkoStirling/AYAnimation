@@ -292,6 +292,24 @@ struct AdditiveSlot {
     std::vector<float> trackWeights;
 };
 
+// P4-1 (2026-08-10) — Two-Bone IK chain spec (host-authored). The three
+// bone names are resolved against the bound skeleton at bind time —
+// EAGERLY, via AssetBoneCache, mirroring resolveSkeletonMask (design
+// §4.25.4). setSkeleton() re-resolves (INV-71): chains whose names hit
+// the new skeleton revive, chains that miss are disabled in place
+// (resolved indices -1) and skipped by evaluate() — never a crash.
+struct IKChainSpec {
+    std::string               rootBone;    // chain root name (hip / shoulder)
+    std::string               midBone;     // mid bone name (knee / elbow)
+    std::string               tipBone;     // tip name (foot / hand)
+    ayt::math::FVector3       targetWorld; // world-space goal for the tip
+    float                     weight = 1.0f; // [0,1]; 0 = chain off (zero-cost skip, INV-72)
+};
+
+// Hard cap on simultaneous IK chains. Mirrors kMaxAdditiveSlots = 8;
+// 2 arms + 2 legs + 2 head/aux covers production use without growth.
+constexpr uint32_t kMaxIKChains = 8;
+
 // P1.5 — AnimNotifySourceTag declared above (before AnimNotifyRecord)
 // so the record can default-init its `sourceTag` field at compile time.
 // Tag values are stable; do not reorder.
@@ -631,6 +649,37 @@ public:
     // stability across frames.
     std::uint32_t getSkeletonMaskGeneration()  const { return _skeletonMaskGeneration; }
 
+    // === P4-1 — Two-Bone IK chains ===
+    //
+    // Chain identity = chainId index into a sparse vector (mirrors
+    // AdditiveSlot slotId semantics). Out-of-range chainId is silently
+    // ignored (defensive, never crash). Binding resolves the three bone
+    // names via AssetBoneCache immediately (eager, like
+    // resolveSkeletonMask); an unresolvable or topologically-invalid
+    // chain is disabled in place (indices -1) and skipped by evaluate().
+    //
+    // The IK pass runs AFTER the bone-mask gate inside evaluate()
+    // (Phase 2.5, between world accumulation and skin) — the mask does
+    // NOT gate IK (absolute target lock, design §4.25.5).
+    //
+    // setSkeleton() re-resolves every bound chain (INV-71). stop() /
+    // play() preserve chains (same semantics as additive layers).
+    bool setIKChain(uint32_t chainId, const IKChainSpec& spec);
+    void clearIKChain(uint32_t chainId);              // resets to empty spec
+    void clearAllIKChains();
+    // Per-frame hot update: the target moves every frame in gameplay
+    // (e.g. hand follows a world point). No re-resolve, no re-alloc —
+    // just a copy. Weight setter saturates to [0, 1] (INV-72).
+    void setIKChainTarget(uint32_t chainId, const ayt::math::FVector3& worldPos);
+    void setIKChainWeight(uint32_t chainId, float weight);
+
+    const IKChainSpec& getIKChain(uint32_t chainId) const; // OOR → static empty spec
+    size_t             getIKChainCount() const;           // bound (non-empty) chains
+    bool               isIKChainActive(uint32_t chainId) const; // resolved && weight > 0
+    // Bumped on every bind / clear / re-resolve. Tests + future ECS
+    // bridge use it to detect rebinds.
+    std::uint32_t getIKChainGeneration() const { return _ikGeneration; }
+
     float getTime() const             { return _time; }
     float getPlayRate() const         { return _playRate; }
     float getDuration() const         { return _baseClip ? _baseClip->getDuration() : 0.0f; }
@@ -787,6 +836,36 @@ private:
     std::shared_ptr<const ayt::resource::ISkeletonMask> _skeletonMask = nullptr;
     std::vector<float>         _boneMaskWeights;
     std::uint32_t              _skeletonMaskGeneration = 0;
+
+    // P4-1 — Two-Bone IK chains (sparse vector; empty spec == unbound).
+    // `spec` retains the bone NAMES so setSkeleton() can re-resolve —
+    // names outlive index validity (mirror of the TrackSlice pattern).
+    // Resolved indices: -1 = disabled (name miss / topology invalid).
+    struct IKChain {
+        IKChainSpec spec;
+        int32_t     rootBone = -1;
+        int32_t     midBone  = -1;
+        int32_t     tipBone  = -1;
+    };
+    std::vector<IKChain> _ikChains;
+    std::uint32_t        _ikGeneration = 0;
+
+    // P4-1 — eager resolver (design §4.25.4): AssetBoneCache lookup for
+    // the three names + chain topology validation (root must be an
+    // ancestor of mid, mid of tip; parentIndex < childIndex walk).
+    // No-op when _skeleton is null. Idempotent; bumps _ikGeneration.
+    void resolveIKChains();
+
+    // P4-1 — rebuild _world[i] = parent.world * localTRS for i in
+    // [start, n). Phase 2 becomes accumulateWorldFrom(0); the IK pass
+    // calls it per chain with start = chain root index. The hard
+    // parentIndex < childIndex invariant makes [start, n) cover exactly
+    // the chain's subtree — ancestors reuse their untouched Phase 2
+    // values, no branches needed (design §4.25.5).
+    void accumulateWorldFrom(size_t start);
+
+    // P4-1 — write a quaternion into the flat _localRot buffer (n*4).
+    void writeLocalRot(size_t i, const ayt::math::FQuaternion& q);
 
     // Per-bone local TRS working buffers (float-array form to avoid
     // per-frame allocate / align to P0 hot-path goal).

@@ -28,6 +28,10 @@ set(SRC_FILES
     # AdditiveSlot memory release (INV-61/62) + AssetBoneCache
     # heterogeneous lookup (INV-63). standalone (no AYEntity).
     AYTest_P4Stress.cpp
+    # P4-1 (2026-08-10) — TwoBone IK. S1-S10 solver math (standalone,
+    # INV-74) + P1-P12 AnimationPlayer Phase 2.5 integration
+    # (INV-71/72/73, 3-bone fixture).
+    AYTest_TwoBoneIK.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

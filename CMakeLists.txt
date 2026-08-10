@@ -29,6 +29,10 @@ set(SRC_FILES
     # counter switch over CondOpByte opcodes). Consumes the bytecode cache
     # compiled from the AST by ConditionParser.cpp.
     src/CondBytecode.cpp
+    # P4-1 (2026-08-10) — Two-Bone IK analytic solver. Pure math core
+    # (world-space positions/rotations in, world rotations out); consumed
+    # by the AnimationPlayer::evaluate Phase 2.5 IK pass.
+    src/TwoBoneSolver.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

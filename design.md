@@ -1,7 +1,7 @@
 # AYAnimation Design
 
-> **状态（2026-08-10）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 2843/2843 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 2843/2843 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish rows。  
-> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish 2026-08-06..10）。  
+> **状态（2026-08-10）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 TwoBone IK 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 2999/2999 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 2999/2999 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §4.25 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish / P4-1 rows。  
+> **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / FABRIK+CCD / IK 约束 / pole vector / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 2026-08-06..10）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
 > **2026-08-06 设计审计 (三次)**：新增 §4.15 P3.2 L3 子状态机 ship 文档；§4.14.11 UPGRADE-HOOK(P3.2) 标 resolved；§13 row 20c 改为 ✅ + 加 row 20e（L3.5 deferred）；§11 P3.2 row 勾选 + §16 changelog 加 P3.2 entry；3-run 385/385 + 600/600 + 1044/1044 stable。
@@ -13,6 +13,7 @@
 > **2026-08-10 设计审计 (九次)**：新增 §4.22 P4 polish 完整 ship 文档（Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试，12-section 全模板）；§4.21.11 UPGRADE-HOOK(transparent hash) + §4.21.12 Q3 标 resolved；§11 P4 polish row ✅；§11 P4 polish row ✅ + P1/P2/P3 polish rows deferred 列表同步（Additive slot dynamic vector 标 resolved）；§16 changelog 加 P4 polish entry；3-run 421/421 + 2673/2673 + 1039/1039 stable；INV-61/62/63 全部 NEW（闲置 slot 内存归还 + sparse 语义保留 + 异构查找 0 临时 string）；教训：tick≠evaluate（压力测试只 tick 断言全败）+ transparent hash C3066 模糊重载需显式 const char* 重载，详见 §4.22.10。
 > **2026-08-10 设计审计 (十次)**：新增 §4.23 P5 polish 完整 ship 文档（DSL 四则运算 + - * /，12-section 全模板）；§14.3 算术 row 标 ✅ + §4.16/§4.17 历史决策标 RESOLVED；§11 P5 polish row ✅ + roadmap P3 表 P5 polish row；§16 changelog 加 P5 polish entry；3-run 421/421 + 2831/2831 + 1039/1039 stable；INV-64..69 全部 NEW（算术语义 + 负号消歧 + 一元减 + 除零 fail-soft + bytecode parity + 优先级）；教训：测试期望值手算避开恰好相等组合（(4+1)*2=10 两个 FAIL 是期望值错）+ 插测试块先 grep section 头位置（§8.1.5 头在文件顶部 → 误插 TEST_SUITE_END 落中间 → C2065），详见 §4.23.10。
 > **2026-08-10 设计审计 (十一次)**：新增 §4.24 P6 polish 完整 ship 文档（INV-60 flip debug assert + release 配置落地，12-section 全模板）；§4.21.12 Q2 + §4.20.12/§4.21.12/§4.22.12 Q1 标 resolved；§14.2 release-build row 标 ✅；§11 P6 polish row ✅ + roadmap 剩项同步（setTriggerByHash 永久挂起）；§16 changelog 加 P6 polish entry；debug 3-run 421/421 + 2843/2843 + 1039/1039 stable + release 2843/2843 × 3 全绿（release 配置首份证据）；INV-70 NEW（翻转离开 thread-safe 模式 debug assert）；Scenario G/H release 首测（G 18.3ns ~4.7x vs debug；H lock-free 1.40x~2.46x vs debug 1.06x/1.12x）；教训：try_lock probe vs _lockCount 计数权衡 + 单线程 UT 无法构造 assert 路径（由 P3 翻转测试回归兜底）+ run-to-run 噪声 ±2.5x 必须 min-of-5，详见 §4.24.10。
+> **2026-08-10 设计审计 (十二次)**：新增 §4.25 P4-1 TwoBone IK 完整 ship 文档（solver 解析解十二步 + AnimationPlayer Phase 2.5 集成 + 10 new INV-71..74，12-section 全模板）；§6 IKSolver 从「未启动」改 TwoBoneSolver ✅ ship（FABRIK/CCD 未启动）；§11 Phase 4 row ✅ + roadmap 长线开张；§14.3 IK 行拆开（~~TwoBone~~ ✅ + FABRIK+CCD/约束/重定向 open）；§16 changelog 加 P4-1 entry；debug 3-run 421/421 + **2999/2999** + 1039/1039 stable + release 2999/2999 × 3 全绿；INV-71..74 NEW（eager resolve + skeleton-swap re-resolve / weight saturate + ≤0 零成本 skip / IK 只写 root+mid localRot post-mask pre-Phase-3 / solver 纯函数退化→有限或原样永不 NaN）；教训：P7 设计缺陷（共享 mid/tip 的链不能同时命中——后执行者赢）+ AssetBoneCache 指针复用陈旧命中（骨架析构后地址复用 → resolveIKChains 改 findBone 直查）+ 4 test TU depfile 失效 stale .obj（头文件偏移变更 → garbage，touch 真实源文件强制重编），详见 §4.25.10。
 
 ---
 
@@ -1355,15 +1356,15 @@ AnimationStateMachine
 
 ---
 
-## 6. IKSolver（Phase 4 ── 未启动）
+## 6. IKSolver（Phase 4 ── ✅ TwoBoneSolver ship，FABRIK/CCD 未启动）
 
-| 类型 | 适用 |
-|------|------|
-| TwoBoneSolver | 膝、肘 |
-| FABRIKSolver | 手指、触须、多关节 |
-| CCDSolver | 通用链式 |
+| 类型 | 适用 | 状态 |
+|------|------|------|
+| TwoBoneSolver | 膝、肘 | **✅ P4-1 ship 2026-08-10**（§4.25）：解析解核心 + AnimationPlayer Phase 2.5 集成（世界空间目标 + 权重混合 + 链配置 + 骨骼重解析），一条完整消费链（chain config → evaluate → skin 矩阵） |
+| FABRIKSolver | 手指、触须、多关节 | 未启动 |
+| CCDSolver | 通用链式 | 未启动 |
 
-`IKSolver` 接口与 IK 约束设计保留（见 [旧版 §6](../AYAnimation/history/AN-01-design.md)），Phase 4 启动后实装。
+`IKSolver` 通用接口与 IK 约束设计保留（见 [旧版 §6](../AYAnimation/history/AN-01-design.md)），Phase 4 后续刀实装。Pole vector / 局部空间目标 / per-chain mask 门控 / FABRIK+CCD / 约束均 deferred（见 §14.3）。
 
 ---
 
@@ -1486,11 +1487,12 @@ AYAnimation/
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §11 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
-### Phase 4: IK + 重定向 ── ⏳ 排队
+### Phase 4: IK + 重定向 ── ✅ P4-1 ship, 余项排队
 
-- [ ] TwoBoneSolver
+- [x] **P4-1 TwoBone IK**（2026-08-10）─ `TwoBoneSolver`（纯数学解析解：余弦定理 + fromToRotation + 保侧候选 + 世界空间 slerp 权重混合；12 步 + eps=1e-5；退化/NaN/零长骨/不可达 → 原样返回或拉直，永不 NaN）+ `AnimationPlayer` Phase 2.5 集成（IKChainSpec 配置 + kMaxIKChains=8 + setIKChain/clearIKChain/clearAllIKChains/setIKChainTarget/setIKChainWeight/getIKChain/getIKChainCount/isIKChainActive/getIKChainGeneration 9 API + 稀疏 vector<IKChain> 存 resolved index + eager resolve（bind 时）+ setSkeleton 重解析 INV-71 + weight≤0 零成本跳过 INV-72 + 只写 root/mid 的 _localRot post-mask pre-Phase-3 INV-73 + accumulateWorldFrom(start) 子树重算 + writeLocalRot helper + **resolve 用 findBone 直查不用 AssetBoneCache**（低频路径 + 规避指针复用陈旧命中，P5 暴露）+ **0 ECS bridge change**（留 generation 钩子））+ 10 solver unit tests（S1-S10）+ 12 player 集成 tests（P1-P12）；0 regression 3-run stable (AYAnimation **2999/2999** + AYEntity 421/421 + AYResource 1039/1039 × 3) + release 2999/2999 × 3 全绿；详见 §4.25 + §6 + §14.3
 - [ ] FABRIKSolver + CCDSolver
 - [ ] IK 约束 (angle / distance / rotation)
+- [ ] Pole vector / 局部空间目标 / per-chain mask 门控
 - [ ] 骨骼重定向（BoneMappingTable + AnimationRetargeter）
 
 ### Phase 5: 优化 + 压缩 ── ⏳ 排队
@@ -1551,7 +1553,7 @@ AYAnimation/
 | 20d | L4 MotionMatching 风格状态机 | UE Pose Search | ❌ | P3.3 (deferred) |
 | 20e | L3.5 多状态机 / parallel states / `.ayasm` loader | UE multi-layer SM / parallel state | ❌ | P3.x / P4.x (deferred) |
 | 21–22 | AnimGraph visual editor / BlendTree nodes in SM | UE/Unity AnimatorController | ❌ | P3.x刀 2 + P4.x |
-| 23–27 | IK / Retarget | UE | ❌ | Phase 4 |
+| 23–27 | IK / Retarget | UE | ⚠️ TwoBone（P4-1 ship 2026-08-10，§4.25）| Phase 4（FABRIK/CCD/约束/重定向）|
 | 28 | Root Motion | UE | ❌ | Phase 4（可提前）|
 | 29–31 | DQ / CPU / GPU 蒙皮闭环 | UE/Unity | ⚠️ skinMatrices wire | Phase 2 |
 | 32–36 | Morph / 压缩 / LOD / Debug / Profiler | UE | ❌ | Phase 4–5 |
@@ -1601,7 +1603,7 @@ AYAnimation/
 | Montage 语义 Slot（对齐 AdditiveSlot，禁止第二套 layer API）| P2.3（见 §4.8 + §4.14.12 (d)）|
 | Dual-Quaternion Skinning | P2.4 |
 | Root Motion 通道草案 | Phase 4（可提前）|
-| IK（TwoBone / FABRIK+CCD / 约束）/ 骨骼重定向 | Phase 4 |
+| ~~IK（TwoBone）~~（**✅ P4-1 ship 2026-08-10**，见 §4.25）；IK（FABRIK+CCD / 约束 / pole vector / 局部目标）/ 骨骼重定向 | Phase 4 |
 | 压缩 / Profiler / Debug 可视化 / LOD | Phase 5 |
 | PoseHold / HoldDuration notify | 未立项（勿假设 UE AnimNotifyState）|
 
@@ -4437,6 +4439,207 @@ Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
 
 ---
 
+## 4.25 ✅ P4-1 — TwoBone IK（解析解 + AnimationPlayer Phase 2.5 集成）— SHIP（2026-08-10）
+
+> 本节为 P4-1 完整 ship 文档。模板遵循 §4.11 12 段式。**长线第一刀**：polish 阶段收官（P6）后开张 Phase 4（IK），本刀 = TwoBoneSolver 纯数学核心 + AnimationPlayer IK pass 集成，一条完整消费链（IK chain config → evaluate → skin 矩阵 → 渲染）落地。FABRIK / CCD / 约束 / pole vector / 重定向留后续刀。
+
+#### 4.25.1 Overview
+
+Two-Bone IK 在 evaluate() 的 **Phase 2（世界累加）之后、Phase 3（skin = world × IBM）之前** 以 **Phase 2.5** 插入：
+
+```
+Phase 0 rest reseed → Phase 1 track sampling → Phase 1b additive → mask lerp
+→ Phase 2 world accumulate（accumulateWorldFrom(0)）
+→ Phase 2.5 IK pass（P4-1，本刀）——只写 root/mid 的 _localRot
+→ Phase 3 skin = world × inverseBind（消费 _world，IK 结果自然进入蒙皮）
+```
+
+每帧全量重算、零跨帧状态：seek / stop / skeleton swap 天然正确。solver 是**纯函数**（世界空间位置 + 世界旋转 in，世界旋转 out），player 只做骨架世界位收集、世界→局部回写与子树 world 重算。
+
+#### 4.25.2 Motivation
+
+polish 阶段收官后用户选定 **IK 作为长线第一刀**（design §6 预留三型解算器之一：膝/肘）。范围决策：TwoBone 解析解 + 播放器集成，一条完整消费链先立起来（配置 → 解算 → 蒙皮矩阵 → 渲染侧可用）；FABRIK / CCD / 约束 / pole / 重定向 全部留后续刀。选解析解而非迭代解：Two-Bone 有闭式解（余弦定理），无迭代、无收敛问题、确定性输出，是后续迭代解（FABRIK/CCD）的对齐基线。
+
+#### 4.25.3 Data Model
+
+```cpp
+// include/ayanimation/AnimationPlayer.h（IKChainSpec 在 class 前 + 私有存储）
+struct IKChainSpec {
+    std::string         rootBone;      // 链根名（hip/shoulder）
+    std::string         midBone;       // 中骨名（knee/elbow）
+    std::string         tipBone;       // 末端名（foot/hand）
+    ayt::math::FVector3 targetWorld;   // 世界空间目标
+    float               weight = 1.0f; // [0,1]，0 = 链关闭（零成本跳过）
+};
+constexpr uint32_t kMaxIKChains = 8;   // 镜像 kMaxAdditiveSlots
+
+// 私有
+struct IKChain {
+    IKChainSpec spec;
+    int32_t rootBone = -1, midBone = -1, tipBone = -1;  // -1 = 禁用（名字 miss / 拓扑非法）
+};
+std::vector<IKChain> _ikChains;          // 稀疏；空 spec == 未绑定
+std::uint32_t        _ikGeneration = 0;  // bind/clear/re-resolve 时 bump
+```
+
+骨骼数据保持**零数据平行**：骨名索引来自 `ISkeleton::findBone`（**直查，不走 AssetBoneCache** —— 见 4.25.10 教训 #3），世界位/旋转来自 `_world`（Phase 2 输出）。IK 不新增任何骨架侧存储。
+
+**拓扑不变量**：链合法 = `parentIndex(root) < parentIndex(mid) < parentIndex(tip)` 链上且 root/mid/tip 严格祖先链（resolve 时两段祖先 walk 验证）。`parentIndex < childIndex` 硬不变量使 walk 严格递减、必然终止。
+
+#### 4.25.4 Public API
+
+```cpp
+bool setIKChain(uint32_t chainId, const IKChainSpec& spec);  // OOR（>= kMaxIKChains）→ false 静默忽略
+void clearIKChain(uint32_t chainId);                          // 稀疏槽清空
+void clearAllIKChains();
+void setIKChainTarget(uint32_t chainId, const ayt::math::FVector3& worldPos); // 每帧热更新，零重解析
+void setIKChainWeight(uint32_t chainId, float weight);        // saturate [0,1]
+const IKChainSpec& getIKChain(uint32_t chainId) const;        // OOR → static 空 spec
+size_t             getIKChainCount() const;                   // 已绑定（非空 spec）链数
+bool               isIKChainActive(uint32_t chainId) const;   // 已解析 && weight > 0
+std::uint32_t      getIKChainGeneration() const;              // 测试 / 未来 ECS 钩子
+```
+
+生命周期交互（均与 additive 保留语义对齐）：
+
+| 事件 | 行为 |
+|---|---|
+| `setIKChain` | 稀疏填充 → eager `resolveIKChains()` → bump generation |
+| `setSkeleton(新)` | mask re-resolve 旁追加 `resolveIKChains()`（INV-71）——同名命中复活 / 名字 miss 原地禁用（-1） |
+| `evaluate()` | 每帧全量重算，无跨帧状态 → seek/stop 天然正确 |
+| `stop()/play()` | 不触碰 `_ikChains`（同 additive 保留语义） |
+| `_baseClip == null` | debug 退化分支（`#ifndef NDEBUG` 内）早退不跑 IK（文档化：release 同状态走主流程获得 IK） |
+
+#### 4.25.5 Internal Algorithm
+
+**solver 十二步**（`TwoBoneSolver::solve`，eps = 1e-5f，纯函数）：
+
+记 A=root、B=mid、C=tip、T=target：
+1. 任一输入含 NaN（`v != v`）→ 原样返回（INV-74）
+2. `b0=B−A, len0=|b0|`；`b1=C−B, len1=|b1|`；零长骨 → 原样返回
+3. `dir=T−A, d=|dir|`；d < eps（目标=根）→ 原样返回
+4. `reachable = d <= len0+len1+eps`（诊断位；不可达不改变输出形状）
+5. `dC = clamp(d, |len0−len1|, len0+len1)` —— 过近/不可达自动落入同一公式（cos≈1 链拉直朝目标）
+6. **bend 轴 n**：`n = normalize(cross(unit0, unit1))`；**退化判定 = n 模长² < eps² 或 n 平行 unitTarget**（围绕平行轴旋转是 no-op —— v1 bug 修复点）→ fallback 链：`cross(unitTarget, unit0)` → `cross(unitTarget, rootRot*(0,1,0))` → `cross(unitTarget, (1,0,0))` → `cross(unitTarget, (0,1,0))` → 全灭则原样返回
+7. `alpha = acos(clamp((len0²+dC²−len1²)/(2·len0·dC), −1, 1))`
+8. **保侧候选法**（规避轴手性符号 bug）：`unitTarget = dir/d`；`Bp = A + len0·(fromAxisAngle(n, +alpha)·unitTarget)`，`Bm = A + len0·(fromAxisAngle(n, −alpha)·unitTarget)`；`side = dot(cross(unitTarget, unit0), n)`，`B_new = side>=0 ? Bp : Bm`（当前 mid 在目标轴哪侧，新 mid 落哪侧）
+9. `b1new = T−B_new`；`C_new = B_new + len1·normalize(b1new)`（dC1≤eps 时用 unitTarget 兜底）
+10. `rootRotNew = fromToRotation(unit0, normalize(B_new−A)) * rootRot`；`midRotNew = fromToRotation(unit1, normalize(C_new−B_new)) * midRot`（premultiply 保留骨自身 roll）
+11. 权重混合（世界空间同一枢轴）：`finalRoot = rootRot.slerp(rootRotNew, saturate(w))`，mid 同理（w ≥ 1 直取全解）
+12. 返回 `{finalRoot, finalMid, reachable}`
+
+**不输出位置**：root 世界位置保持动画驱动（锚点语义），mid/tip 位置由旋转链传导 —— 这是 P7「链 2 root = 链 0 tip 可同时命中」成立的关键。
+
+**player 集成（Phase 2.5，evaluate 内 Phase 3 前）**：
+
+```cpp
+if (!_ikChains.empty()) {
+    for (IKChain& ch : _ikChains) {
+        if (ch.spec.weight <= 0.0f) continue;              // INV-72 零成本跳过
+        if (ch.rootBone < 0 || ch.midBone < 0 || ch.tipBone < 0) continue;
+        rp = _world[r].transformPoint(0); mp = ...; tp = ...;      // 世界位
+        decompose(_world[r]) → rr；decompose(_world[m]) → mr      // 世界旋转（singular → skip）
+        res = TwoBoneSolver::solve(rp, mp, tp, rr, mr, spec.targetWorld, spec.weight);
+        rootLocal = (root 的父 < 0) ? res.rootRotation
+                  : decompose(_world[parent]).rot.conjugate() * res.rootRotation;
+        writeLocalRot(r, rootLocal);
+        writeLocalRot(m, res.rootRotation.conjugate() * res.midRotation);  // mid 父 = root 新 world rot
+        accumulateWorldFrom(r);    // 子树 world 重算 — Phase 3 消费
+    }
+}
+```
+
+- **子树重算**：Phase 2 循环体原样提取 `accumulateWorldFrom(start)`（start=0 时逐位不变，2999 回归钉住）；IK pass 调 `accumulateWorldFrom(r)` —— `parentIndex < childIndex` 使 `[r, n)` 恰好覆盖链子树，无分支零簿记
+- **世界→局部回写**：`local = parentWorldRot.conjugate() * worldRot`（unit quaternion 的 conjugate == inverse）；mid 的父是 root 的**新** world 旋转
+- **mask 门控**：IK pass 在 mask lerp **之后**跑 —— mask 不 gate IK（绝对目标锁定，文档化；per-chain mask 门控 deferred）
+- **weight 0 零开销**：`_ikChains.empty()` 单次分支 + 链级 `weight<=0` continue，不读 world 不 decompose
+- **重叠链顺序语义**：链执行顺序 = chainId 升序。**共享 mid/tip 骨的链不能同时命中** —— 后执行者覆盖共享骨旋转（P7 教训，见 4.25.10 #2）；仅当链 2 的 root 是链 0 的 tip 时（锚点语义）两链可同时命中
+- **resolve 用 findBone 直查**（不走 AssetBoneCache）：低频路径 + 规避指针复用陈旧命中（见 4.25.10 #3）
+
+#### 4.25.6 ECS Bridge
+
+**本轮 0 touch**。AYEntity 不感知 IK；留 `getIKChainGeneration()` 公开钩子（值变化 = 绑定/重解析发生），未来 ECS bridge（`IKChainComponent` + `IKChainSystem`）可轮询或事件驱动。重叠链、权重动画（ramp in/out）等 host 侧行为靠公开 setter 即可完成，不需要内核改动。
+
+#### 4.25.7 Resource Bridge
+
+- **只读消费** `ayt::resource::ISkeleton`：`findBone(name)`（直查）+ `getBones()[].parentIndex`（祖先 walk）+ `getBoneCount()`
+- **无新资产类型**：IK 链配置是 runtime-only 结构（IKChainSpec），不做序列化格式（host 侧驱动）
+- **solver 是纯数学**：零 AYAnimation 内部依赖（只吃 `ayt::math`），可独立单测
+
+#### 4.25.8 Invariants（INV-71..74 全部 NEW）
+
+| # | 契约 |
+|---|---|
+| **INV-71** | IK 链在绑定时 **eager resolve**（名字 → 索引 + 祖先拓扑校验）；`setSkeleton(新)` 时全量**重解析**——同名骨架链复活、名字 miss 原地禁用（-1），绝不 crash |
+| **INV-72** | `setIKChainWeight` 饱和到 [0,1]；evaluate 中 `weight <= 0` 的链**零成本跳过**（不读 world 不 decompose） |
+| **INV-73** | IK pass 只写 root/mid 两骨的 `_localRot`，post-mask、pre-Phase-3；其余骨 local 数据零触碰 |
+| **INV-74** | solver 是纯函数：NaN / 零长骨 / 目标=根 / 无可用 bend 轴 / 不可达 → 输出**有限**（原样返回或拉直朝目标），**永不 NaN** |
+
+#### 4.25.9 Testing
+
+**Solver（TEST_SUITE(TwoBoneIKTests)，纯数学，无骨架无 player）**：
+
+| Case | 验证 |
+|---|---|
+| S1 | 可达目标命中（T=(0,0,15)，共线走 fallback 轴；len0/len1 保持、tip==T、XZ 平面 y≈0）|
+| S2 | 不可达拉直（T=(0,0,30)，reachable=false，三点共线沿 +Z 拉满）|
+| S3 | 目标过近无 NaN（d < |len0−len1|，cosine 域 clamp）|
+| S4 | 零长骨（mid==root）→ 输出逐位 == 输入 |
+| S5 | 目标在链延长线恰达极限（T=(20,0,0)，alpha=0 直射命中）|
+| S6 | NaN 输入 → 逐位原样 |
+| S7 | 反平行 180° 翻转（T=(-30,0,0)）→ fromToRotation 兜底轴，拉直朝 −X，无 NaN |
+| S8 | weight=0 → 逐位 == 输入 |
+| S9 | weight=0.25/0.5/0.75 混合 == slerp(输入, 全解, w) 且 tip 距目标**单调递减**（旋转空间混合 ≠ 位置空间混合——w=0.75 时 tip 仍距目标 ~7，注释写明）|
+| S10 | weight 越界 clamp（1.5==1、−1==0）|
+
+**Player 集成（TEST_SUITE(AnimationPlayerIKTests)，fixture：3-bone 链 Root(0,0,0)/Mid(10,0,0)/Tip(20,0,0) + 8-bone 双链 + 后代）**：
+
+| Case | 验证 |
+|---|---|
+| P1 | 绑定 → evaluate → tip ≈ target(1e-3)；root 世界位不变（锚点）；XZ 平面；全部矩阵有限 |
+| P2 | weight=0 → world 与无链 player **memcmp 逐位相同** + inactive |
+| P3 | weight 0.25/0.5/0.75/1.0 tip 距目标单调逼近，w=1 命中 |
+| P4 | 未知骨名 → 禁用不崩，world 与无链一致，inactive |
+| P5 | setSkeleton 同名骨架 → 链复活仍命中；异名 → 禁用不崩；generation 递增（INV-71）|
+| P6 | 两独立链（LRoot 链 + RRoot 链）各自命中，双 root 锚点不动 |
+| P7 | **重叠链**：链 2 root == 链 0 tip（锚点语义）→ 两 tip 同时命中（含设计修正，见 4.25.10 #2）|
+| P8 | 后代跟随（LTipChild 距 LTip 恰 5 单位，local 偏移保持）|
+| P9 | seek（0.3/0.7/0.5 往返）无跨帧状态，每帧仍命中 |
+| P10 | stop()→play() 链保留仍命中 |
+| P11 | 不 play 链已绑 → evaluate 早退无崩溃 |
+| P12 | chainId OOR（>= kMaxIKChains）静默忽略 + OOR 读返回空 spec + 最后合法 id 可用 |
+
+**回归护栏**：无链时 `_ikChains.empty()` 单分支挡一切 → 既有 2843 测试 0 变化。
+
+#### 4.25.10 Edge Cases & Lessons
+
+1. **stale .obj（ninja depfile 失效）**：AnimationPlayer.h 成员插在 `_boneMaskWeights` 与 `_world` 之间 → `_world` 偏移移动 → **未重编的 test TU 读旧偏移 → world garbage（值每次运行不同）**。instrumentation 证明 evaluate 内部正确（world0=identity）但测试读 garbage → 矛头指向 test 侧 → 4 个 TU（AYTest_AnimationPlayer/P4Stress/ConditionExpr/main）obj mtime 早于 header → **touch 真实源文件强制重编即愈**。教训：**改 .h 后若出现"内部正确测试 garbage"型怪异回归，先查 test TU 是否重编（obj mtime vs header mtime），不要先加 diagnostic**；且 touch 必须打在 **build.ninja 引用的真实源路径**（绝对路径 D:/Projects/...）而非 build-dir 残留副本（本仓库 CMake 曾留下 0 字节 source 副本，touch 错文件）。
+2. **P7 设计缺陷（共享骨链不能同时命中）**：初版 P7 用「链 2 = LMid→LTip→LTipChild」，链 2 的 mid（LTip）== 链 0 的 tip → 链 2 后执行旋转 LTip 把链 0 的 tip 推出目标（FAIL：tip.x=14.66≠0）。**"两 tip 同时命中"对共享 mid/tip 的链在几何上不可能** —— 顺序依赖语义（chainId 升序，后执行者赢）必须文档化而非断言。重写 P7 为锚点场景：链 2 root == 链 0 tip → root 位置永不动 → 两链真同时命中。
+3. **AssetBoneCache 指针复用陈旧命中**：resolveIKChains 初版走 `AssetBoneCache::resolveAndCache`（key = (骨架指针, 名字)）。cache **不跟踪骨架生命周期**：测试中骨架析构后其地址可能被新骨架（make_shared）复用 → 旧条目 (地址, "Root")→0 复活 → P5 换 8-bone 骨架后链误判 active（随机 FAIL，概率 ≈ malloc 是否复用地址）。**修复：resolveIKChains 改 `findBone` 直查** —— IK resolve 仅 bind/换骨架时运行（非每帧），cache 收益为零，直查精确。**同源风险仍存在于 resolveSkeletonMask（P2.2）**：mask 也按 (指针, 名) 缓存，长生命周期资产不受影响；测试期疯狂建/毁骨架才暴露——已文档化（§4.25.12 Q4），不在本刀修。
+4. **fixture 注释与数据不符**：makeThreeBoneSkeleton 初版 Root local=(10,0,0) → rest world 实为 Root(10)/Mid(20)/Tip(20)，**mid 与 tip 重合 → len1=0 → solver noop**。S1-S10 是纯 solver 测试（手传 A/B/C）不经骨架所以全绿——P 测试第一次真正消费该 fixture 才暴露。教训：**fixture 必须先被真实路径消费一次**（写注释时按意图、数据与注释必须一致）。
+5. **TEST_SUITE 双 suite 收口**：新增第二个 TEST_SUITE 时吞掉了第一个的 `TEST_SUITE_END`（Edit old_string 误匹配）→ C1075 namespace 不闭合。教训：新 suite 前显式补 `TEST_SUITE_END`。
+
+#### 4.25.11 Migration Hooks（后续刀）
+
+| 后续能力 | 预留钩子 |
+|---|---|
+| Pole vector | solver 双候选 → 按 pole 投影选择（step 8 的 side 选择已是该插槽）|
+| FABRIK / CCD | `TwoBoneSolver::solve` 签名即统一入口；player 侧只需换 solver 调用 |
+| IK 约束（angle/distance）| solve 后 clamp 步插入 step 10 与 11 之间 |
+| 局部空间目标 | IKChainSpec 加 local-space 标志 + evaluate 前变换 |
+| per-chain mask 门控 | Phase 2.5 循环内按链查 mask 权重 |
+| ECS bridge | `getIKChainGeneration()` 钩子（§4.25.6）|
+
+#### 4.25.12 Open Questions
+
+1. **非均匀缩放分解误差**：`decompose` 对非均匀缩放 + 旋转混合的数值精度有限（singular skip 已兜底）——IK 链骨带非均匀缩放时精度未验证
+2. **重叠链重算优化**：当前每链 `accumulateWorldFrom(r)` 全子树重算；链密集时（如两脚 + 两膝同时 IK）子树重叠 → 可合并为一次自底向上重算（按 start 排序），量级小暂不做
+3. **Root Motion 交互**：IK 锚点语义（root 世界位不动）与 Root Motion（根移动）的关系未定义——后续 Root Motion 通道刀时对齐
+4. **AssetBoneCache 指针复用同源风险**：resolveSkeletonMask 仍按 (指针, 名) 缓存且不跟踪生命周期——生产长生命周期资产不触发；测试期（P5 暴露同类）依赖 name-miss 场景时建议直接用 findBone（文档化接受，见 4.25.10 #3）
+5. **world→local 回写精度**：`conjugate()` 假设 unit quaternion（动画输出 + fromToRotation 均单位化）；若未来出现非单位化旋转输入需 normalize 兜底
+
+---
+
 ## 15. 与旧版的关键差异（migration notes）
 
 | 旧版（pre-P0） | 新版（post-P0） | 原因 |
@@ -4468,6 +4671,7 @@ Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
 | 2026-08-07 | **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry ship**：§4.18 全 12-section（StateMachine._params 从 unordered_map 改 std::vector<ParamEntry> linear scan cache-friendly N ≤ 8 + _triggers 从 unordered_set 改 sorted std::vector<uint32_t> + detail::ParamNameRegistry Meyers singleton FNV-1a 32-bit hash + ParamEntry 结构移到 ConditionExpr.h 避免循环 include + 6 private helpers + StateMachine::getParamName/getParamNameRegistrySize debug read-back + ConditionEvalCtx field types change + CondIdentifierExpr::evaluateAsFloat 改 intern+linear scan + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts 全部 preserved）+ 2 new unit tests（Params_FlatArray_FindByHashReturnsCorrectValue + Triggers_FlatArray_BinarySearchWorks pin INV-43..46）+ 30 L2 tests 通过 makeCtx helper 5-line shift 适配 flat-vector ConditionEvalCtx + micro-benchmark AYAnimation/benchmark/state_machine_params_bench.cpp 4 scenarios（8/1/32 params + triggers, 100K iter, default OFF behind AY_BUILD_BENCHMARKS=OFF cache var）+ 状态抬头同步 759/759 + 421/421 + 1039/1039 3-run stable；**INV-43..46** (flat-array hot-path 契约) 全部 NEW；hot-path speedup debug build：getParam 8 params 271→68 ns/iter (4.0x), 1 param 225→43 ns/iter (5.2x), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。详见 §4.18 + §11 P0 polish row |
 | 2026-08-07 | **P1 polish — Hot-Path Eval Hash Caching ship**：§4.19 全 12-section（Transition 加 triggerHash + conditionParamNameHash 2 字段，addTransition 一次性 intern 缓存 + CondIdentifierExpr ctor 一次性 intern nameHash + 3 hot-path callsite (findEligibleTransition / evaluateCondition L1 / fireTransition) 改 cached hash + lazy fallback 保留 test fixture const_cast mutation back-compat + detail::ParamNameRegistry 拆 leaf header ParamNameRegistry.h 让 ConditionExpr.h ctor 调 intern 无循环 include + kEmpty 在 StateMachine.cpp 定义 + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts preserved）+ 2 new unit tests (P1_Transition_TriggerHash_CachedAtAddTransition 唯一名避 process-global registry 污染 + P1_Transition_ConditionHash_CachedAtAddTransition) + 3 new unit tests (P1_CondIdent_NameHash_NonEmpty + P1_CondIdent_NameHash_EmptyName_HashZero sentinel pre-check + P1_CondIdent_Evaluate_NoIntern 1000x eval registry size 不变) + micro-benchmark 加 Scenario E findEligibleTransition 5 transitions × 100K (scan 1251 ns + scan+fire 2391 ns) + Scenario F DSL evaluate 3-ident × 100K (true path 132 ns + short-circuit 113 ns) + 状态抬头同步 1783/1783 + 421/421 + 1039/1039 3-run stable；**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat) 全部 NEW。详见 §4.19 + §11 P1 polish row |
 | 2026-08-08 | **P2 polish — Condition DSL AST → Flat Bytecode ship**：§4.20 全 12-section（CondBytecode program + float literal table 平行缓存 + compileToBytecode post-order walk + program-counter switch evaluator 固定栈数组 + short-circuit relative-jump INV-58 + OP_LOAD_RESERVED INV-55 + Transition.cachedBytecode mutable shared_ptr lazy build INV-52/57 + evaluateBytecode hot path + setConditionExpr invalidate 双清 + AST preserved 供 P4.x Visitor + public API 0 change + ECS bridge 0 touch）+ 4 new unit tests (P2_Bytecode_Parity_3IdentExpr 5 cases + P2_Bytecode_LazyBuild_FirstEvalCompiles + P2_Bytecode_ReservedIdent_CompiledAsOpcode + P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse) + 2 new unit tests (P2_Bytecode_Integration_FindTransitionUsesBytecode + P2_Bytecode_Integration_InvalidateCacheClearsBytecode) + micro-benchmark 加 Scenario G bytecode vs AST 3-ident × 100K (bytecode true 773 ns / short-circuit 800 ns vs AST 1035/1022 = **1.34x / 1.28x**, parity PASS × 2) + §4.19.11 UPGRADE-HOOK(P2 polish) 标 resolved + **§11 P0 polish row 补录**（P0 ship day 2026-08-07 遗漏）+ §11 P2 polish row + 状态抬头同步 1824/1824 + 421/421 + 1039/1039 3-run stable；**INV-52..58** (bytecode 1:1 AST 语义 + lazy build + reserved ident opcode + flat float literal table + shared_ptr copyable + short-circuit relative-jump) 全部 NEW。两个前期 bug 修复（bit-30 IEEE-754 exponent 冲突 literal 编码 → flat float table；per-eval vector 栈 8x 慢 → 固定数组），详见 §4.20.10。详见 §4.20 + §11 P2 polish row |
+| 2026-08-10 | **P4-1 TwoBone IK ship（长线第一刀）**：§4.25 全 12-section（TwoBoneSolver 解析解十二步 + AnimationPlayer Phase 2.5 集成 + INV-71..74 + accumulateWorldFrom(start) 子树重算 + 世界→局部回写 + findBone 直查 resolve + 0 ECS bridge change + 10 S 测试 + 12 P 测试）+ §6 IKSolver 改「✅ TwoBoneSolver ship，FABRIK/CCD 未启动」+ §11 Phase 4 row ✅ + §14.3 IK 行拆开（~~TwoBone~~ ✅ + FABRIK+CCD/约束/pole/局部目标/重定向 open）+ 状态抬头同步 **2999/2999** + 421/421 + 1039/1039 3-run stable（debug）+ release 2999/2999 × 3 全绿；**INV-71..74** (eager resolve + skeleton-swap re-resolve / weight saturate + ≤0 零成本 skip / 只写 root+mid localRot post-mask pre-Phase-3 / solver 纯函数退化→有限或原样永不 NaN) 全部 NEW；三 lessons（stale .obj depfile 失效 → touch 真实源 / P7 共享骨链设计缺陷 → 后执行者赢文档化 / AssetBoneCache 指针复用陈旧命中 → IK resolve 改 findBone 直查，mask 同源风险文档化）。详见 §4.25 + §6 + §11 P4-1 row |
 | 2026-08-08 | **P3 polish — AssetBoneCache lock-free single-threaded mode ship**：§4.21 全 12-section（默认 `_threadSafe = false` 无锁 INV-59 + `setThreadSafe(true)` opt-in 重挂 mutex INV-60 + anonymous ns maybeLock RAII helper（enabled ? unique_lock(mu) : default ctor 零成本）+ 7 sites lock_guard → unique_lock 条件锁 + resolveAndCache fast-path 双 lookup 结构不变 + +2 additive public API（setThreadSafe/isThreadSafe）+ AnimationPlayer 2 callsite 0 touch + ECS bridge 0 touch + INV-1..17 preserved）+ 2 new unit tests (P3_AssetBoneCache_DefaultIsLockFree + P3_AssetBoneCache_ThreadSafeMode_BehaviorUnchanged 双模式复跑 P1.7 contract) + micro-benchmark 加 Scenario H 真实 2-bone Skeleton hit 路径 × 100K 交错 min-of-5（resolveAndCache hit 961 vs 1001 = **1.04x** / lookup hit 910 vs 980 = **1.08x**；debug STL 主导绝对值，P3 收益结构性零同步）+ §4.12.1 线程安全注释同步 + §11 P1 polish row deferred 列表同步（AST→bytecode + lock-free 标 resolved）+ §11 P3 polish row + 状态抬头同步 1851/1851 + 421/421 + 1039/1039 3-run stable；**INV-59/60** (默认零锁 + flag 非原子) 全部 NEW。测量教训：顺序一次性测量噪声反转比值（0.83x 假象）→ 交错 min-of-5 修复，详见 §4.21.10。详见 §4.21 + §11 P3 polish row |
 | 2026-08-10 | **文档收口（长线审核副产品）**：新增 **§14 Deferred / Open 项总表**（正确性级 5 项接受权衡 + 性能级 7 项 + 新功能级 12 项 = 单一审计线索）；全文 ~35 处 "§14 X row" 幽灵引用（§14 从未存在，ship row 实际位于 §11）批量归位改指 §11；**BlendSpace 状态登记**（§11 Phase 2 / §13 row 16 / §14.3 / P2.1 roadmap row：P2.1 Blend 1D/2D ship `68f4227` 2026-07-28 从未登记，两处 "仍缺/❌" stale 修正）；§5 AnimationStateMachine "未启动" → 已 ship（P3.1/P3.2/P3.x 2026-08-06/07）；状态头日期 2026-08-08 → 2026-08-10。纯文档改动，0 代码 0 测试影响 |
 | 2026-08-10 | **P4 polish — Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试 ship**：§4.22 全 12-section（`AnimationPlayer::releaseSlotBuffers` 私有 helper swap-with-empty 归还 tracks/pendingNotifies/capturedLocal{Pos,Rot,Scl}/trackWeights + `clearAdditiveLayerSource`/`stop()` 两 callsite + `AssetBoneCache` inner map 改 `detail::StringViewHash + std::equal_to<>` is_transparent 异构查找 0 临时 string + 显式 const char* 重载防 C3066 + 0 public API change + ECS bridge 0 touch）+ 4 new unit tests（AYTest_P4Stress.cpp 新 suite P4StressTests：400 player × 200 帧共享单 skeleton 逐位 memcmp + bind/clear 5 轮 invalidate 回落 + 异构查找单 entry + AdditiveSlot clear/stop/re-bind 行为）+ §4.21.11 UPGRADE-HOOK(transparent hash) + §4.21.12 Q3 标 resolved + §11 P4 polish row + §11 P1/P2/P3 polish rows deferred 同步（Additive slot dynamic vector → RESOLVED）+ 状态抬头同步 2673/2673 + 421/421 + 1039/1039 3-run stable；**INV-61/62/63** (闲置 slot 内存归还 + sparse 语义保留 + 异构查找 0 临时 string) 全部 NEW。教训：tick() 只推进时钟不跑渲染评估（压力测试首版只 tick → resolve 未触发断言全败）+ transparent hash 必须显式 const char* 重载（双重载等权转换 → C3066 模糊）。详见 §4.22 + §11 P4 polish row |
