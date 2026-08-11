@@ -32,6 +32,11 @@ set(SRC_FILES
     # INV-74) + P1-P12 AnimationPlayer Phase 2.5 integration
     # (INV-71/72/73, 3-bone fixture).
     AYTest_TwoBoneIK.cpp
+    # P4-2 (2026-08-11) — FABRIK + CCD iterative IK. F1-F11 / C1-C11
+    # solver math (standalone, INV-74 + collinear asymmetry) + I1-I13
+    # AnimationPlayer unified-pass integration (INV-75/76/77, N-bone
+    # auto-derived path fixture).
+    AYTest_IterativeIK.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

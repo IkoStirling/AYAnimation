@@ -33,6 +33,12 @@ set(SRC_FILES
     # (world-space positions/rotations in, world rotations out); consumed
     # by the AnimationPlayer::evaluate Phase 2.5 IK pass.
     src/TwoBoneSolver.cpp
+    # P4-2 (2026-08-11) — FABRIK + CCD iterative IK solvers (multi-joint
+    # chains, root→tip path auto-derivation). Pure math cores sharing
+    # IterativeIKResult + kMaxIKChainBones; dispatched per chain by
+    # IKChainSpec::type in the Phase 2.5 unified pass.
+    src/FabrikSolver.cpp
+    src/CcdSolver.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})

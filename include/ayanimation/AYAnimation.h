@@ -11,6 +11,8 @@
 #include "AnimNotifyEvent.h"
 #include "KeySampler.h"
 #include "TwoBoneSolver.h"   // P4-1 (2026-08-10) — two-bone IK analytic core
+#include "FabrikSolver.h"    // P4-2 (2026-08-11) — FABRIK iterative IK core (multi-joint)
+#include "CcdSolver.h"       // P4-2 (2026-08-11) — CCD iterative IK core (multi-joint)
 
 namespace ayt::anim
 {

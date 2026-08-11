@@ -292,18 +292,33 @@ struct AdditiveSlot {
     std::vector<float> trackWeights;
 };
 
+// P4-2 (2026-08-11) — solver selection for IK chains. TwoBone is the
+// P4-1 analytic two-segment solve (default — back-compat, P1-P12 tests
+// pass unchanged); FABRIK / CCD are the P4-2 iterative multi-joint
+// solvers, whose bone path is AUTO-DERIVED along the parent chain from
+// rootBone to tipBone (midBone is ignored for them, design §4.26.3).
+enum class IKSolverType : std::uint8_t {
+    TwoBone = 0,   // P4-1 analytic solve, exactly 2 segments
+    FABRIK  = 1,   // P4-2 forward-and-backward reaching (iterative)
+    CCD     = 2,   // P4-2 cyclic coordinate descent (iterative)
+};
+
 // P4-1 (2026-08-10) — Two-Bone IK chain spec (host-authored). The three
 // bone names are resolved against the bound skeleton at bind time —
 // EAGERLY, via AssetBoneCache, mirroring resolveSkeletonMask (design
 // §4.25.4). setSkeleton() re-resolves (INV-71): chains whose names hit
 // the new skeleton revive, chains that miss are disabled in place
 // (resolved indices -1) and skipped by evaluate() — never a crash.
+// P4-2: `type` / `iterations` appended at the END so every existing
+// aggregate-initialization site stays source-compatible.
 struct IKChainSpec {
     std::string               rootBone;    // chain root name (hip / shoulder)
-    std::string               midBone;     // mid bone name (knee / elbow)
+    std::string               midBone;     // mid bone name (knee / elbow); IGNORED by FABRIK/CCD
     std::string               tipBone;     // tip name (foot / hand)
     ayt::math::FVector3       targetWorld; // world-space goal for the tip
     float                     weight = 1.0f; // [0,1]; 0 = chain off (zero-cost skip, INV-72)
+    IKSolverType              type = IKSolverType::TwoBone; // P4-2: solver selection
+    uint32_t                  iterations = 0;               // P4-2: 0 = solver default (FABRIK 4 / CCD 10)
 };
 
 // Hard cap on simultaneous IK chains. Mirrors kMaxAdditiveSlots = 8;
@@ -837,24 +852,36 @@ private:
     std::vector<float>         _boneMaskWeights;
     std::uint32_t              _skeletonMaskGeneration = 0;
 
-    // P4-1 — Two-Bone IK chains (sparse vector; empty spec == unbound).
+    // P4-1/P4-2 — IK chains (sparse vector; empty spec == unbound).
     // `spec` retains the bone NAMES so setSkeleton() can re-resolve —
     // names outlive index validity (mirror of the TrackSlice pattern).
-    // Resolved indices: -1 = disabled (name miss / topology invalid).
+    // P4-2: the three resolved indices became `path` (index 0 = root,
+    // last = tip). TwoBone holds exactly 3 entries; FABRIK/CCD hold the
+    // full root→tip bone path, auto-derived by resolveIKChains. An empty
+    // path = disabled (name miss / topology invalid / over-cap).
     struct IKChain {
         IKChainSpec spec;
-        int32_t     rootBone = -1;
-        int32_t     midBone  = -1;
-        int32_t     tipBone  = -1;
+        std::vector<int32_t> path;
     };
     std::vector<IKChain> _ikChains;
     std::uint32_t        _ikGeneration = 0;
 
-    // P4-1 — eager resolver (design §4.25.4): AssetBoneCache lookup for
-    // the three names + chain topology validation (root must be an
-    // ancestor of mid, mid of tip; parentIndex < childIndex walk).
-    // No-op when _skeleton is null. Idempotent; bumps _ikGeneration.
+    // P4-1/P4-2 — eager resolver (design §4.25.4 + §4.26.4): AssetBoneCache
+    // lookup for the names + chain topology validation. TwoBone: the P4-1
+    // three-name walk (root ancestor of mid, mid of tip). FABRIK/CCD: a
+    // single tip→root parent walk auto-derives the full path (midBone
+    // ignored); walk failure / root==tip / > kMaxIKChainBones → disabled
+    // (empty path). No-op when _skeleton is null. Idempotent; bumps
+    // _ikGeneration.
     void resolveIKChains();
+
+    // P4-2 — unified Phase 2.5 pass for ONE bound chain (design §4.26.4):
+    // snapshot world pos/rot along `ch.path`, dispatch by spec.type,
+    // write back the N-1 bone local rotations (world→local conjugate),
+    // then accumulateWorldFrom(path[0]) re-runs FK over the chain subtree.
+    // Returns false when the chain is inactive (weight <= 0, INV-72) or
+    // degenerate (path.size() < 2) — caller skips without touching state.
+    bool applyIKChain(IKChain& ch);
 
     // P4-1 — rebuild _world[i] = parent.world * localTRS for i in
     // [start, n). Phase 2 becomes accumulateWorldFrom(0); the IK pass

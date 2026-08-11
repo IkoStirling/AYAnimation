@@ -2,6 +2,8 @@
 #include <ayanimation/AssetBoneCache.h>   // P1.7 — asset-level boneIdx cache
 #include <ayanimation/KeySampler.h>
 #include <ayanimation/TwoBoneSolver.h>   // P4-1 — two-bone IK analytic core
+#include <ayanimation/FabrikSolver.h>    // P4-2 — FABRIK iterative IK core (multi-joint)
+#include <ayanimation/CcdSolver.h>       // P4-2 — CCD iterative IK core (multi-joint)
 
 #include <aymath/MathTypes.h>
 #include <aymath/MathUtils.h>
@@ -1356,44 +1358,17 @@ void AnimationPlayer::evaluate()
     // rebuild only the affected subtree; a full pass is start = 0.
     accumulateWorldFrom(0);
 
-    // Phase 2.5 — P4-1 Two-Bone IK pass. Runs AFTER the bone-mask gate
-    // (P2.2) so IK is an absolute post-process lock — the mask does NOT
-    // gate IK (documented; future slices may add per-chain mask gating,
-    // design §4.25.11). Writes only the _localRot of the chain root +
-    // mid; localPos/localScl untouched. The debug-only degenerate branch
-    // (base=null + slots, above) early-returns BEFORE this pass —
-    // documented asymmetry: release builds reach IK via the main path
-    // for the same transient state (design §4.25.5).
+    // Phase 2.5 — P4-1/P4-2 IK pass. Runs AFTER the bone-mask gate (P2.2)
+    // so IK is an absolute post-process lock — the mask does NOT gate IK
+    // (documented; future slices may add per-chain mask gating, design
+    // §4.25.11). applyIKChain() writes only the _localRot of the chain's
+    // non-tip bones; localPos/localScl untouched. The debug-only
+    // degenerate branch (base=null + slots, above) early-returns BEFORE
+    // this pass — documented asymmetry: release builds reach IK via the
+    // main path for the same transient state (design §4.25.5).
     if (!_ikChains.empty()) {
-        const ayt::resource::Bone* bones = _skeleton->getBones();
         for (IKChain& ch : _ikChains) {
-            if (ch.spec.weight <= 0.0f) continue;    // INV-72 — zero-cost skip
-            if (ch.rootBone < 0 || ch.midBone < 0 || ch.tipBone < 0) continue;
-            const size_t r = static_cast<size_t>(ch.rootBone);
-            const size_t m = static_cast<size_t>(ch.midBone);
-            const size_t t = static_cast<size_t>(ch.tipBone);
-            const ayt::math::FVector3 rp = _world[r].transformPoint(ayt::math::FVector3(0,0,0));
-            const ayt::math::FVector3 mp = _world[m].transformPoint(ayt::math::FVector3(0,0,0));
-            const ayt::math::FVector3 tp = _world[t].transformPoint(ayt::math::FVector3(0,0,0));
-            ayt::math::FVector3    tr; ayt::math::FQuaternion rr, mr; ayt::math::FVector3 scl;
-            if (!_world[r].decompose(tr, rr, scl)) continue;   // singular → skip
-            if (!_world[m].decompose(tr, mr, scl)) continue;
-            const TwoBoneIKResult res = TwoBoneSolver::solve(
-                rp, mp, tp, rr, mr, ch.spec.targetWorld, ch.spec.weight);
-            // world → local write-back. conjugate() == inverse for unit
-            // quaternions (decompose guarantees unit rotation parts).
-            // mid's parent is the chain root, so its parent world rot IS
-            // res.rootRotation.
-            const int pr = bones[r].parentIndex;
-            if (pr < 0) {
-                writeLocalRot(r, res.rootRotation);
-            } else {
-                ayt::math::FVector3    pTr; ayt::math::FQuaternion pRot; ayt::math::FVector3 pScl;
-                if (!_world[static_cast<size_t>(pr)].decompose(pTr, pRot, pScl)) continue;
-                writeLocalRot(r, pRot.conjugate() * res.rootRotation);
-            }
-            writeLocalRot(m, res.rootRotation.conjugate() * res.midRotation);
-            accumulateWorldFrom(r);   // subtree world rebuild — Phase 3 reads _world
+            applyIKChain(ch);   // zero-cost skip on inactive / degenerate (INV-72/76)
         }
     }
 
@@ -1452,12 +1427,23 @@ void AnimationPlayer::writeLocalRot(size_t i, const ayt::math::FQuaternion& q)
     _localRot[i * 4 + 3] = q.w;
 }
 
-// P4-1 — eager resolver (mirror of resolveSkeletonMask:1779): look up the
-// three bone names via AssetBoneCache, then validate chain topology —
-// root must be an ancestor of mid and mid of tip (parentIndex < childIndex
-// walk from the higher index). A miss or invalid topology disables the
-// chain in place (indices -1) — evaluate() skips it, never crashes.
-// Idempotent; no-op when the skeleton is null; bumps _ikGeneration.
+// P4-1/P4-2 — eager resolver (mirror of resolveSkeletonMask:1779): look up
+// the bone names via findBone, then validate chain topology.
+//
+// TwoBone (P4-1 path, kept bit-identical): root must be an ancestor of mid
+// and mid of tip (parentIndex < childIndex walk from the higher index) —
+// resolves to the 3-entry path {r, m, t}.
+//
+// FABRIK/CCD (P4-2): the full root→tip path is AUTO-DERIVED by a single
+// tip→root parent walk; midBone is IGNORED for these (design §4.26.3).
+// Disabled when the walk fails (passed root without seeing it, or walked
+// off the top), when root == tip (path < 2 joints), or when the path
+// exceeds kMaxIKChainBones (fixed-size solver arrays, zero per-frame
+// alloc — design §4.26.5).
+//
+// A miss or invalid topology disables the chain in place (empty path) —
+// evaluate() skips it, never crashes. Idempotent; no-op when the skeleton
+// is null; bumps _ikGeneration.
 void AnimationPlayer::resolveIKChains()
 {
     if (_skeleton == nullptr) {
@@ -1470,23 +1456,44 @@ void AnimationPlayer::resolveIKChains()
         if (ch.spec.rootBone.empty() && ch.spec.midBone.empty() && ch.spec.tipBone.empty()) {
             continue;   // unbound slot — untouched
         }
-        // NOTE: direct findBone, NOT AssetBoneCache. IK resolve runs only
-        // on bind / skeleton swap (not per-frame), so the cache buys
-        // nothing — and the cache keys on the skeleton POINTER without
-        // tracking its lifetime: a freed skeleton's address can be reused
-        // by a new skeleton, reviving a stale (addr, name) entry and
-        // falsely re-resolving a chain whose names miss on the NEW
-        // skeleton (surfaced by P5, design §4.25.9). findBone is exact.
+        // NOTE: direct findBone, NOT AssetBoneCache (unchanged from P4-1).
+        // IK resolve runs only on bind / skeleton swap (not per-frame), so
+        // the cache buys nothing — and the cache keys on the skeleton
+        // POINTER without tracking its lifetime: a freed skeleton's address
+        // can be reused by a new skeleton, reviving a stale (addr, name)
+        // entry and falsely re-resolving a chain whose names miss on the
+        // NEW skeleton (surfaced by P5, design §4.25.9). findBone is exact.
         const int32_t r = _skeleton->findBone(ch.spec.rootBone.c_str());
-        const int32_t m = _skeleton->findBone(ch.spec.midBone.c_str());
         const int32_t t = _skeleton->findBone(ch.spec.tipBone.c_str());
-        ch.rootBone = ch.midBone = ch.tipBone = -1;
-        if (r < 0 || m < 0 || t < 0) continue;          // name miss → disabled
-        if (static_cast<size_t>(r) >= n || static_cast<size_t>(m) >= n ||
-            static_cast<size_t>(t) >= n) continue;
-        // Ancestor check: walk parent links from tip up to mid, then mid up
-        // to root. The parentIndex < childIndex invariant makes the walk
-        // strictly decreasing, so it terminates.
+        ch.path.clear();
+        if (r < 0 || t < 0) continue;                   // name miss → disabled
+        if (static_cast<size_t>(r) >= n || static_cast<size_t>(t) >= n) continue;
+
+        if (ch.spec.type != IKSolverType::TwoBone) {
+            // FABRIK / CCD — auto-derive the full path: single walk from
+            // tip up the parent chain, collecting on the way (reversed at
+            // the end). The parentIndex < childIndex invariant makes the
+            // walk strictly decreasing, so it terminates.
+            if (r == t) continue;                       // path < 2 joints
+            std::vector<int32_t> rev;
+            int32_t cursor = t;
+            for (;;) {
+                rev.push_back(cursor);
+                if (cursor == r) break;
+                if (cursor < r) { rev.clear(); break; } // passed root — not a descendant
+                cursor = _skeleton->getBones()[static_cast<size_t>(cursor)].parentIndex;
+                if (cursor < 0) { rev.clear(); break; } // walked off the top
+            }
+            if (rev.size() < 2) continue;
+            if (rev.size() > kMaxIKChainBones) continue; // over-cap → disabled
+            ch.path.assign(rev.rbegin(), rev.rend());
+            continue;
+        }
+
+        // P4-1 TwoBone — exact legacy logic: find mid, validate the two
+        // ancestor steps, resolve {r, m, t}.
+        const int32_t m = _skeleton->findBone(ch.spec.midBone.c_str());
+        if (m < 0 || static_cast<size_t>(m) >= n) continue;
         int32_t cursor = t;
         bool midIsAncestorOfTip = false;
         while (cursor >= 0) {
@@ -1503,11 +1510,90 @@ void AnimationPlayer::resolveIKChains()
             cursor = _skeleton->getBones()[static_cast<size_t>(cursor)].parentIndex;
         }
         if (!rootIsAncestorOfMid) continue;
-        ch.rootBone = r;
-        ch.midBone  = m;
-        ch.tipBone  = t;
+        ch.path = { r, m, t };
     }
     ++_ikGeneration;
+}
+
+// P4-2 — unified Phase 2.5 pass for ONE bound chain (design §4.26.4).
+// Returns false (no state touched) when the chain is inactive or
+// degenerate — the per-frame loop relies on this as the zero-cost gate.
+bool AnimationPlayer::applyIKChain(IKChain& ch)
+{
+    if (ch.spec.weight <= 0.0f) return false;   // INV-72 — zero-cost skip
+    const size_t cnt = ch.path.size();
+    if (cnt < 2) return false;                  // disabled / degenerate (INV-76)
+
+    // 1. Snapshot world joint positions + non-tip world rotations. The tip
+    // joint's rotation is never written back by any solver — only its
+    // position enters the solve (localRot stays the Phase 1 sample).
+    ayt::math::FVector3    jointPos[kMaxIKChainBones];
+    ayt::math::FQuaternion jointRot[kMaxIKChainBones];
+    for (size_t i = 0; i < cnt; ++i) {
+        jointPos[i] = _world[static_cast<size_t>(ch.path[i])].transformPoint(
+            ayt::math::FVector3(0, 0, 0));
+    }
+    for (size_t i = 0; i + 1 < cnt; ++i) {
+        ayt::math::FVector3    tr; ayt::math::FQuaternion rr; ayt::math::FVector3 scl;
+        if (!_world[static_cast<size_t>(ch.path[i])].decompose(tr, rr, scl)) {
+            return false;   // singular — leave the chain untouched
+        }
+        jointRot[i] = rr;
+    }
+
+    // 2. Dispatch by solver type. newWorld[i] = the chain bone's NEW world
+    // rotation; the tip entry is copied through (never written back).
+    ayt::math::FQuaternion newWorld[kMaxIKChainBones];
+    if (ch.spec.type != IKSolverType::TwoBone) {
+        const IterativeIKResult res = (ch.spec.type == IKSolverType::FABRIK)
+            ? FabrikSolver::solve(jointPos, jointRot, static_cast<uint32_t>(cnt),
+                                  ch.spec.targetWorld, ch.spec.weight, ch.spec.iterations)
+            : CcdSolver::solve(jointPos, jointRot, static_cast<uint32_t>(cnt),
+                               ch.spec.targetWorld, ch.spec.weight, ch.spec.iterations);
+        for (size_t i = 0; i + 1 < cnt; ++i) newWorld[i] = res.worldRot[i];
+        // newWorld[cnt-1] (tip) intentionally unused — never written back.
+    } else {
+        // P4-1 TwoBone — analytic two-segment solve; the resolved path is
+        // exactly {r, m, t} (3 entries). Equivalence with the P4-1 inline
+        // code is bit-exact: same inputs, same solve, same write-back
+        // (the two-bone branch below reduces to the P4-1 root/mid writes).
+        const TwoBoneIKResult res = TwoBoneSolver::solve(
+            jointPos[0], jointPos[1], jointPos[2], jointRot[0], jointRot[1],
+            ch.spec.targetWorld, ch.spec.weight);
+        newWorld[0] = res.rootRotation;
+        newWorld[1] = res.midRotation;
+        // newWorld[2] (tip) intentionally unused — never written back.
+    }
+
+    // 3. World → local write-back for the N-1 non-tip bones. For i == 0 the
+    // parent world rotation comes from OUTSIDE the chain (identity when
+    // the chain root is a skeleton root — the P4-1 pr < 0 branch); for
+    // i > 0 it is newWorld[i-1] — the parent was just solved.
+    // conjugate() == inverse for unit quaternions (decompose guarantees
+    // unit rotation parts).
+    for (size_t i = 0; i + 1 < cnt; ++i) {
+        ayt::math::FQuaternion parentWorld;
+        if (i == 0) {
+            const int pr = _skeleton->getBones()[static_cast<size_t>(ch.path[0])].parentIndex;
+            if (pr < 0) {
+                parentWorld = ayt::math::FQuaternion();   // identity
+            } else {
+                ayt::math::FVector3    tr; ayt::math::FQuaternion rr; ayt::math::FVector3 scl;
+                if (!_world[static_cast<size_t>(pr)].decompose(tr, rr, scl)) {
+                    return false;   // singular parent — leave the chain untouched
+                }
+                parentWorld = rr;
+            }
+        } else {
+            parentWorld = newWorld[i - 1];
+        }
+        writeLocalRot(static_cast<size_t>(ch.path[i]),
+                      parentWorld.conjugate() * newWorld[i]);
+    }
+
+    // 4. Rebuild the chain subtree's world rows (Phase 3 reads _world).
+    accumulateWorldFrom(static_cast<size_t>(ch.path[0]));
+    return true;
 }
 
 // ===========================================================================
@@ -1524,7 +1610,7 @@ bool AnimationPlayer::setIKChain(uint32_t chainId, const IKChainSpec& spec)
     }
     IKChain& ch = _ikChains[chainId];
     ch.spec = spec;
-    ch.rootBone = ch.midBone = ch.tipBone = -1;
+    ch.path.clear();
     resolveIKChains();   // eager resolve (INV-71) — bumps _ikGeneration
     return true;
 }
@@ -1534,7 +1620,7 @@ void AnimationPlayer::clearIKChain(uint32_t chainId)
     if (chainId >= _ikChains.size()) return;
     IKChain& ch = _ikChains[chainId];
     ch.spec = IKChainSpec{};
-    ch.rootBone = ch.midBone = ch.tipBone = -1;
+    ch.path.clear();
     ++_ikGeneration;
 }
 
@@ -1569,7 +1655,7 @@ size_t AnimationPlayer::getIKChainCount() const
 {
     size_t count = 0;
     for (const IKChain& ch : _ikChains) {
-        if (!ch.spec.rootBone.empty() || !ch.spec.midBone.empty() || !ch.spec.tipBone.empty()) {
+        if (!ch.spec.rootBone.empty() || !ch.spec.tipBone.empty()) {
             ++count;
         }
     }
@@ -1580,7 +1666,7 @@ bool AnimationPlayer::isIKChainActive(uint32_t chainId) const
 {
     if (chainId >= _ikChains.size()) return false;
     const IKChain& ch = _ikChains[chainId];
-    return ch.rootBone >= 0 && ch.midBone >= 0 && ch.tipBone >= 0 && ch.spec.weight > 0.0f;
+    return !ch.path.empty() && ch.spec.weight > 0.0f;
 }
 
 // ===========================================================================
