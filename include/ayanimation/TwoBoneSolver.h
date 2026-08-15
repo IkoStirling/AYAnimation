@@ -14,7 +14,7 @@
 // v0 scope (P4-1): bend direction inherited from the CURRENT chain plane
 // (no pole vector); no FABRIK / CCD / constraints (design §4.25.11).
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 
 namespace ayt::anim
 {

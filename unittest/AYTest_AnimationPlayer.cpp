@@ -11,8 +11,8 @@
 
 #include "AYAnimation.h"
 #include <AYTest.h>
-#include <aymath/MathTypes.h>
-#include <aymath/MathUtils.h>
+#include <AYMath/MathTypes.h>
+#include <AYMath/MathUtils.h>
 
 #include <assetsDefs/IAYAnimation.h>
 #include <assetsDefs/IAYSkeleton.h>

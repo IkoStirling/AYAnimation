@@ -25,7 +25,7 @@
 // v0 scope (P4-2): no constraints / joint limits / pole vector
 // (design §4.26.11 — third slice).
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <cstdint>
 
 namespace ayt::anim

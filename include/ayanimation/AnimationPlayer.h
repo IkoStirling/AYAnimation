@@ -97,7 +97,7 @@
 //   consumePendingNotifiesAdditive/getPendingNotifyCountAdditive — replaced
 //   by the P1.5 merged consumePendingNotifiesMerged/getPendingNotifyCountMerged.
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <assetsDefs/IAYAnimation.h>
 #include <assetsDefs/IAYSkeleton.h>
 

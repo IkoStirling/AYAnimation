@@ -20,7 +20,7 @@
 
 #include "AYAnimation.h"
 #include <AYTest.h>
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 
 #include <assetsDefs/IAYSkeleton.h>
 #include <assetsImpl/AYSkeleton.h>

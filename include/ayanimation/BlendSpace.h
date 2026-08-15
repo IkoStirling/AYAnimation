@@ -39,7 +39,7 @@
 
 #include <ayanimation/AnimationPlayer.h>
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 
 #include <assetsDefs/IAYAnimation.h>
 

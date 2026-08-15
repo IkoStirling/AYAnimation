@@ -13,7 +13,7 @@
 #include <ayanimation/AYAnimation.h>
 #include "AYTest.h"
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <assetsDefs/IAYSkeleton.h>
 #include <assetsDefs/IAYAnimation.h>
 #include <assetsImpl/AYSkeleton.h>

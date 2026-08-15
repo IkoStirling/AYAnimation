@@ -11,7 +11,7 @@
 //     dot(a, b) < 0 to defend against visual twitching.
 //   - Sample functions are responsible for normalizing quaternions on
 //     return.
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 #include <assetsDefs/IAYAnimation.h>
 #include <cstddef>
 #include <vector>

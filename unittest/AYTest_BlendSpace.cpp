@@ -18,7 +18,7 @@
 #include <ayanimation/AnimationPlayer.h>
 #include <ayanimation/BlendSpace.h>
 
-#include <aymath/MathTypes.h>
+#include <AYMath/MathTypes.h>
 
 #include <assetsDefs/IAYAnimation.h>
 #include <assetsDefs/IAYSkeleton.h>

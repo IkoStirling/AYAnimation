@@ -5,8 +5,8 @@
 #include <ayanimation/FabrikSolver.h>    // P4-2 — FABRIK iterative IK core (multi-joint)
 #include <ayanimation/CcdSolver.h>       // P4-2 — CCD iterative IK core (multi-joint)
 
-#include <aymath/MathTypes.h>
-#include <aymath/MathUtils.h>
+#include <AYMath/MathTypes.h>
+#include <AYMath/MathUtils.h>
 
 #include <algorithm>
 #include <cassert>
