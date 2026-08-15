@@ -1,9 +1,9 @@
 // AssetBoneCache.cpp — P1.7 implementation + P3 polish (2026-08-08)
-// lock-free single-threaded mode. See AssetBoneCache.h for the
+// lock-free single-threaded mode. See AYAnimation/AssetBoneCache.h for the
 // contract; this file is the single definition site for the
 // singleton, its three public methods, and the P3 polish mode flag.
 
-#include <ayanimation/AssetBoneCache.h>
+#include <AYAnimation/AssetBoneCache.h>
 
 #include <cassert>
 #include <cstring>

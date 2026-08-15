@@ -1,5 +1,5 @@
 #pragma once
-// BlendSpace.h — P2.1 (2026-07-27). Linear-simplex Blend Tree (UE BlendSpace
+// AYAnimation/BlendSpace.h — P2.1 (2026-07-27). Linear-simplex Blend Tree (UE BlendSpace
 // / Unity AnimationBlendTree 1D/2D equivalent).
 //
 // Two independent classes — BlendSpace1D and BlendSpace2D — each holding
@@ -37,11 +37,11 @@
 // locomotion / hit-react range). Nearest-vertex fallback when no
 // enclosing triangle is found. See BlendSpace.cpp::rebuildWeights().
 
-#include <ayanimation/AnimationPlayer.h>
+#include <AYAnimation/AnimationPlayer.h>
 
 #include <AYMath/MathTypes.h>
 
-#include <assetsDefs/IAYAnimation.h>
+#include <AYResource/assetsDefs/IAnimation.h>
 
 #include <cstdint>
 #include <memory>

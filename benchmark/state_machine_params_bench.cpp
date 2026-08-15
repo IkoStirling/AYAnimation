@@ -32,12 +32,12 @@
 //   cmake --build D:\Projects\out\build\x64-Debug --target AYAnimation_Benchmarks -j 8
 //   ./bin/Debug/AYAnimation/benchmark/AYAnimation_Benchmarks
 
-#include <ayanimation/AssetBoneCache.h>
-#include <ayanimation/CondBytecode.h>
-#include <ayanimation/ConditionExpr.h>
-#include <ayanimation/ConditionParser.h>
-#include <ayanimation/StateMachine.h>
-#include <assetsImpl/AYSkeleton.h>
+#include <AYAnimation/AssetBoneCache.h>
+#include <AYAnimation/CondBytecode.h>
+#include <AYAnimation/ConditionExpr.h>
+#include <AYAnimation/ConditionParser.h>
+#include <AYAnimation/StateMachine.h>
+#include <AYResource/assetsImpl/Skeleton.h>
 
 #include <chrono>
 #include <cstdio>

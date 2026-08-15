@@ -10,14 +10,14 @@
 // Geometry convention (mirrors AYTest_TwoBoneIK.cpp): bones rest along +X,
 // targets in the XZ plane, y ≈ 0 asserts the bend plane.
 
-#include <ayanimation/AYAnimation.h>
+#include <AYAnimation.h>
 #include "AYTest.h"
 
 #include <AYMath/MathTypes.h>
-#include <assetsDefs/IAYSkeleton.h>
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsImpl/AYSkeleton.h>
-#include <assetsImpl/AYAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsImpl/Skeleton.h>
+#include <AYResource/assetsImpl/Animation.h>
 #include <cstring>
 #include <limits>
 #include <string>

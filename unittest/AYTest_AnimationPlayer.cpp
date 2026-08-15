@@ -9,21 +9,21 @@
 // Drives the AnimationPlayer with hand-built ISkeleton + IAnimation, then
 // verifies the 3-phase evaluate output and the time-management contract.
 
-#include "AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
 #include <AYMath/MathUtils.h>
 
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsDefs/IAYSkeleton.h>
-#include <assetsImpl/AYSkeleton.h>
-#include <assetsImpl/AYAnimation.h>
-#include <ayanimation/AssetBoneCache.h>   // P1.7 — asset-level bone cache
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
+#include <AYResource/assetsImpl/Skeleton.h>
+#include <AYResource/assetsImpl/Animation.h>
+#include <AYAnimation/AssetBoneCache.h>   // P1.7 — asset-level bone cache
 
 // Phase 1.5 — Anim Notify EventBus integration test (test #8) lives at the
 // bottom of this file and constructs an EventBus instance + subscribes to
 // AnimNotifyEvent; pull in the EventBus header here so the source builds.
-#include <ayevent/EventBus.h>
+#include <AYEventSystem/EventBus.h>
 
 #include <cmath>
 #include <cstring>

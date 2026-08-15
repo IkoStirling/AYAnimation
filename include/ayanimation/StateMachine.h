@@ -1,4 +1,4 @@
-// StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机
+// AYAnimation/StateMachine.h — P3.1 (2026-08-06) L1 简单状态机 + P3.2 (2026-08-06) L3 子状态机
 //                  + P3.x  (2026-08-07) L2 Condition DSL (string expr + lazy parse +
 //                  dirty cache) + P3.x刀 N+1.B (2026-08-07) Time-in-State Query
 //                  (getCurrentStateElapsedTime + reserved ident "CurrentStateTime")
@@ -108,9 +108,9 @@
 
 #pragma once
 
-#include <ayanimation/CondBytecode.h>
-#include <ayanimation/ConditionExpr.h>
-#include <ayanimation/ParamNameRegistry.h>
+#include <AYAnimation/CondBytecode.h>
+#include <AYAnimation/ConditionExpr.h>
+#include <AYAnimation/ParamNameRegistry.h>
 
 #include <cmath>
 #include <cstddef>
@@ -148,7 +148,7 @@ struct StateCondition {
 // allocation, no hash bucket walk, no string compare.
 //
 // Composition:
-//   * ParamNameRegistry (declared in ParamNameRegistry.h) — process-singleton,
+//   * ParamNameRegistry (declared in AYAnimation/ParamNameRegistry.h) — process-singleton,
 //     interns string→hash (FNV-1a 32-bit). Hash IS the canonical key from
 //     this point on; the string is held only for debug read-back
 //     (getParamName).
@@ -158,19 +158,19 @@ struct StateCondition {
 //
 // The public API (setParam/getParam/setTrigger) is unchanged; only
 // internals change. ConditionEvalCtx field types also change (see
-// ConditionExpr.h), but only StateMachine.cpp constructs that struct.
+// AYAnimation/ConditionExpr.h), but only StateMachine.cpp constructs that struct.
 //
 // P1 polish (2026-08-07) — ParamNameRegistry is split into its own header
-// (ParamNameRegistry.h) so ConditionExpr.h's inline CondIdentifierExpr
+// (AYAnimation/ParamNameRegistry.h) so AYAnimation/ConditionExpr.h's inline CondIdentifierExpr
 // ctor can call intern() once at construction time (for nameHash caching)
-// without circular include. StateMachine.h now simply includes the
-// split-out header. See ParamNameRegistry.h header doc for full contract.
+// without circular include. AYAnimation/StateMachine.h now simply includes the
+// split-out header. See AYAnimation/ParamNameRegistry.h header doc for full contract.
 
-// ParamEntry is defined in ConditionExpr.h (which is included above)
-// to avoid a circular include between this header and ConditionExpr.h.
-// Header-order safe: ConditionExpr.h now includes ParamNameRegistry.h
+// ParamEntry is defined in AYAnimation/ConditionExpr.h (which is included above)
+// to avoid a circular include between this header and AYAnimation/ConditionExpr.h.
+// Header-order safe: AYAnimation/ConditionExpr.h now includes AYAnimation/ParamNameRegistry.h
 // directly (also split out), so ParamNameRegistry is visible
-// transitively without StateMachine.h.
+// transitively without AYAnimation/StateMachine.h.
 
 // One state in the graph. POD; mirrors UE UAnimState shape (subset).
 struct State {

@@ -1,5 +1,5 @@
 #pragma once
-// AssetBoneCache.h — P1.7 (2026-07-27) Shared Skeleton Tick Cache.
+// AYAnimation/AssetBoneCache.h — P1.7 (2026-07-27) Shared Skeleton Tick Cache.
 //
 // Asset-level (ISkeleton* address → boneName → boneIdx) cache that
 // sits across every AnimationPlayer. Two players bound to the SAME
@@ -32,7 +32,7 @@
 // concurrent use to re-engage the mutex (INV-60: the flag is NOT
 // atomic — flip it only while no other thread is inside the cache).
 
-#include <assetsDefs/IAYSkeleton.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
 
 #include <cstdint>
 #include <functional>

@@ -1,5 +1,5 @@
 #pragma once
-// FabrikSolver.h — FABRIK iterative IK solver (P4-2, 2026-08-11).
+// AYAnimation/FabrikSolver.h — FABRIK iterative IK solver (P4-2, 2026-08-11).
 //
 // Pure math core: NO skeleton / animation-player dependencies. Consumes
 // count world-space joint positions + world rotations, produces new world
@@ -46,7 +46,7 @@ struct IterativeIKResult
                                              // |target-root| <= chain length
                                              // (necessary, NOT sufficient —
                                              // CCD cannot bend an exactly
-                                             // collinear chain, see CcdSolver.h)
+                                             // collinear chain, see AYAnimation/CcdSolver.h)
 };
 
 class FabrikSolver

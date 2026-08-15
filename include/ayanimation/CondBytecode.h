@@ -1,4 +1,4 @@
-// CondBytecode.h — P2 polish (2026-08-07) Flat Bytecode for Condition DSL.
+// AYAnimation/CondBytecode.h — P2 polish (2026-08-07) Flat Bytecode for Condition DSL.
 //
 // Parallel cache representation of CondExprAst: instead of a virtual-dispatch
 // AST, the same expression is compiled to a flat opcode stream + literal
@@ -52,7 +52,7 @@ namespace ayt::anim
 {
 
 struct ConditionEvalCtx;  // forward decl — note: tag is `struct` (matches
-                            // ConditionExpr.h) for MSVC symbol compatibility
+                            // AYAnimation/ConditionExpr.h) for MSVC symbol compatibility
                             // (different tag kinds produce different mangled
                             // names even for the same logical type).
 
@@ -133,7 +133,7 @@ struct CondBytecode {
 // bytes. The caller (Transition::evaluateBytecode) is responsible for
 // handling AST parse failures (cachedAst == nullptr path).
 //
-// NOTE — forward decl tag must be `class` to match ConditionExpr.h's
+// NOTE — forward decl tag must be `class` to match AYAnimation/ConditionExpr.h's
 // `class CondExprAst` definition. MSVC mangles by first-seen tag kind in
 // each TU: `struct CondExprAst;` here + `class CondExprAst` there = C4099
 // + LNK2019 (different mangled names for the same logical type). Same

@@ -10,18 +10,18 @@
 //   INV-42 — AnimNotifyRecord::fromStateName default "" when not driven
 //            by an SM (legacy / direct clip playback back-compat).
 //
-// Standalone — no AYEntity, no AnimationPlayer.h facade rebuild. Direct
+// Standalone — no AYEntity, no AYAnimation/AnimationPlayer.h facade rebuild. Direct
 // API calls on a hand-built ISkeleton + IAnimation.
 
-#include "AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
 #include <AYMath/MathUtils.h>
 
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsDefs/IAYSkeleton.h>
-#include <assetsImpl/AYSkeleton.h>
-#include <assetsImpl/AYAnimation.h>
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
+#include <AYResource/assetsImpl/Skeleton.h>
+#include <AYResource/assetsImpl/Animation.h>
 
 #include <cstring>
 #include <memory>

@@ -1,4 +1,4 @@
-// AnimStateChangedEvent.h — P3.1 (2026-08-06) state-changed event.
+// AYAnimation/AnimStateChangedEvent.h — P3.1 (2026-08-06) state-changed event.
 //
 // Mirrors UE FAnimStateChangedEvent shape (subset). Emitted on the
 // EventBus whenever a StateMachine transitions fires. Gameplay code

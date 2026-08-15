@@ -1,5 +1,5 @@
 #pragma once
-// KeySampler.h — P0 (2026-07-26) signature change.
+// AYAnimation/KeySampler.h — P0 (2026-07-26) signature change.
 //
 // Sample a track at time t. Inputs are now raw resource-side arrays
 // (FVector3* / FQuaternion* / float* + keyCount + times[]).
@@ -12,7 +12,7 @@
 //   - Sample functions are responsible for normalizing quaternions on
 //     return.
 #include <AYMath/MathTypes.h>
-#include <assetsDefs/IAYAnimation.h>
+#include <AYResource/assetsDefs/IAnimation.h>
 #include <cstddef>
 #include <vector>
 

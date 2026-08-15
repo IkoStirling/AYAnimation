@@ -1,5 +1,5 @@
 #pragma once
-// AnimationPlayer.h — P0 (2026-07-26) rewrite + P1.5 AnimNotify extension (2026-07-26).
+// AYAnimation/AnimationPlayer.h — P0 (2026-07-26) rewrite + P1.5 AnimNotify extension (2026-07-26).
 //
 // Consumes ayt::resource::ISkeleton + ayt::resource::IAnimation directly;
 // no parallel skeleton/animation types in ayt::anim.
@@ -98,11 +98,11 @@
 //   by the P1.5 merged consumePendingNotifiesMerged/getPendingNotifyCountMerged.
 
 #include <AYMath/MathTypes.h>
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsDefs/IAYSkeleton.h>
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
 
-#include <ayanimation/AnimNotifyEvent.h>   // P1.5 — AnimNotifySourceTag definition
-#include <assetsDefs/IAYSkeletonMask.h>   // P3.x刀1 — formal interface in AYResource
+#include <AYAnimation/AnimNotifyEvent.h>   // P1.5 — AnimNotifySourceTag definition
+#include <AYResource/assetsDefs/ISkeletonMask.h>   // P3.x刀1 — formal interface in AYResource
 
 #include <cstdint>
 #include <functional>
@@ -221,11 +221,11 @@ enum class CaptureState : ayt::math::UInt8 {
 // host needs more.
 constexpr uint32_t kMaxAdditiveSlots = 8;
 
-// P1.5 — AnimNotifySourceTag is defined in AnimNotifyEvent.h (the
+// P1.5 — AnimNotifySourceTag is defined in AYAnimation/AnimNotifyEvent.h (the
 // header-light bus-facing POD type). This file includes that header
 // so the AnimNotifyRecord struct below can use the enum. The enum
 // values (Base=0, Additive_0..7=1..8) are duplicated in source — the
-// canonical declaration is AnimNotifyEvent.h; we re-use the type by
+// canonical declaration is AYAnimation/AnimNotifyEvent.h; we re-use the type by
 // reference, no duplicate definition.
 
 // P1.5 — Anim Notify record, hoisted from AnimationPlayer class scope

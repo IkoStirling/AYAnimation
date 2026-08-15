@@ -13,8 +13,8 @@
 // P2 polish (2026-08-07) Bytecode parallel cache (AST → flat opcode
 // stream; eliminate virtual dispatch on hot path; see design §4.20).
 
-#include <ayanimation/ConditionParser.h>
-#include <ayanimation/StateMachine.h>
+#include <AYAnimation/ConditionParser.h>
+#include <AYAnimation/StateMachine.h>
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -23,7 +23,7 @@ namespace ayt::anim
 {
 
 // === P0 polish (2026-08-07) + P1 polish (2026-08-07) — ParamNameRegistry
-// out-of-line storage. The registry is declared in ParamNameRegistry.h;
+// out-of-line storage. The registry is declared in AYAnimation/ParamNameRegistry.h;
 // only the static kEmpty sentinel needs a definition in one TU. Returns ""
 // for unknown hashes — debug-only. Path was ayt::anim::detail before the
 // P1 polish header split; same definition site here.
@@ -121,7 +121,7 @@ void StateMachine::addTransition(const Transition& t) {
     // fireTransition, and Transition::evaluateCondition L1 path.
     // Both hashes are immutable after addTransition() (INV-49); if
     // host code mutates trigger / condition.paramName directly after
-    // construction, the cache becomes stale (documented in StateMachine.h).
+    // construction, the cache becomes stale (documented in AYAnimation/StateMachine.h).
     Transition withHashes = t;
     withHashes.triggerHash = t.trigger.empty()
         ? 0u

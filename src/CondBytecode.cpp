@@ -4,7 +4,7 @@
 // Walks the flat opcode stream emitted by compileToBytecode() (in
 // ConditionParser.cpp). Single switch dispatch (no virtual calls); operands
 // are read directly from the program stream in fixed positions matching the
-// encoding documented in CondBytecode.h.
+// encoding documented in AYAnimation/CondBytecode.h.
 //
 // Stack machine: a FIXED-SIZE float stack array (capacity 16; AST depth
 // ≤ 5 production). No heap allocation on the hot path — the earlier
@@ -15,8 +15,8 @@
 // returns false (fail-soft — mirrors INV-33 philosophy: never crash, never
 // throw).
 
-#include <ayanimation/CondBytecode.h>
-#include <ayanimation/ConditionExpr.h>  // full ConditionEvalCtx def
+#include <AYAnimation/CondBytecode.h>
+#include <AYAnimation/ConditionExpr.h>  // full ConditionEvalCtx def
 
 #include <cmath>
 #include <cstdint>

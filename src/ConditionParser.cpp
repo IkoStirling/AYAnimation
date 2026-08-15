@@ -23,12 +23,12 @@
 // P2 polish — compileToBytecode. Post-order walk of the AST emits a flat
 // opcode stream + literal table. Short-circuit OP_AND/OR encoded with
 // a signed relative jump offset that the evaluator skips when the left
-// operand is decisive (INV-58). See CondBytecode.h for opcode set + layout.
+// operand is decisive (INV-58). See AYAnimation/CondBytecode.h for opcode set + layout.
 
-#include <ayanimation/CondBytecode.h>
-#include <ayanimation/ConditionExpr.h>
-#include <ayanimation/ConditionParser.h>
-#include <ayanimation/StateMachine.h>  // P0 polish — for detail::ParamNameRegistry
+#include <AYAnimation/CondBytecode.h>
+#include <AYAnimation/ConditionExpr.h>
+#include <AYAnimation/ConditionParser.h>
+#include <AYAnimation/StateMachine.h>  // P0 polish — for detail::ParamNameRegistry
 
 #include <cctype>
 #include <cmath>

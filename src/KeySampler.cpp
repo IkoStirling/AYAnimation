@@ -1,4 +1,4 @@
-#include <ayanimation/KeySampler.h>
+#include <AYAnimation/KeySampler.h>
 #include <cassert>
 #include <cmath>
 #include <cstddef>

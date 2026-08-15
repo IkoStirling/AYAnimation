@@ -1,12 +1,12 @@
 #pragma once
-// CcdSolver.h — CCD (Cyclic Coordinate Descent) iterative IK solver
+// AYAnimation/CcdSolver.h — CCD (Cyclic Coordinate Descent) iterative IK solver
 // (P4-2, 2026-08-11).
 //
 // Pure math core, same contract as FabrikSolver: count world joint
 // positions + world rotations in, new world rotations out (chain root
 // included, anchor semantics — the root's world POSITION is never moved).
 // IterativeIKResult + kMaxIKChainBones are shared — defined in
-// FabrikSolver.h and reused here (identical solve signature; the include
+// AYAnimation/FabrikSolver.h and reused here (identical solve signature; the include
 // keeps the type defined exactly once across TUs).
 //
 // Degeneracy contract (INV-74): identical guard set to FabrikSolver. CCD
@@ -20,7 +20,7 @@
 // v0 scope (P4-2): no constraints / joint limits / pole vector
 // (design §4.26.11 — third slice).
 
-#include "FabrikSolver.h"
+#include "AYAnimation/FabrikSolver.h"
 
 namespace ayt::anim
 {

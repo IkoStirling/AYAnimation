@@ -17,7 +17,7 @@
 // other joints rotate (dev-time bug, fixed in P4-2; see the note in
 // solve()).
 
-#include "ayanimation/CcdSolver.h"
+#include "AYAnimation/CcdSolver.h"
 
 #include <cmath>
 

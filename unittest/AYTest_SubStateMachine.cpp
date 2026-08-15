@@ -9,10 +9,10 @@
 //
 // Standalone — no AYEntity, no AnimationPlayer. Direct StateMachine API.
 
-#include <AYAnimation.h>
+#include <AYResource/assetsImpl/Animation.h>
 #include <AYTest.h>
 
-#include <ayanimation/StateMachine.h>
+#include <AYAnimation/StateMachine.h>
 
 #include <memory>
 #include <string>

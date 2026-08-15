@@ -16,7 +16,7 @@
 // guaranteed by the guard below (the player-side weight <= 0 skip is
 // INV-72 — the first, zero-cost gate).
 
-#include "ayanimation/FabrikSolver.h"
+#include "AYAnimation/FabrikSolver.h"
 
 #include <cmath>
 

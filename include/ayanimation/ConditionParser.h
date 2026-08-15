@@ -1,4 +1,4 @@
-// ConditionParser.h — P3.x (2026-08-07) L2 Condition DSL parser API
+// AYAnimation/ConditionParser.h — P3.x (2026-08-07) L2 Condition DSL parser API
 //                  + P2 polish (2026-08-07) compileToBytecode (AST → flat
 //                    opcode stream for hot-path evaluation).
 //
@@ -23,14 +23,14 @@
 // false (never asserts, never crashes).
 //
 // P2 polish — compileToBytecode (AST → flat opcode stream). See
-// CondBytecode.h for opcode set + encoding. The AST remains the source
+// AYAnimation/CondBytecode.h for opcode set + encoding. The AST remains the source
 // of truth (preserved for P4.x Visitor graph-builder); bytecode is a
 // parallel cache built lazily on first evaluate. See design §4.20.
 
 #pragma once
 
-#include <ayanimation/CondBytecode.h>
-#include <ayanimation/ConditionExpr.h>
+#include <AYAnimation/CondBytecode.h>
+#include <AYAnimation/ConditionExpr.h>
 
 #include <memory>
 #include <string>

@@ -1,6 +1,6 @@
 // AYTest_BlendSpace.cpp — P2.1 (2026-07-27) acceptance cases.
 //
-// 12 cases pin every contract documented in BlendSpace.h. The class API
+// 12 cases pin every contract documented in AYAnimation/BlendSpace.h. The class API
 // (addSamplePoint / setSkeleton / setParameter / tick / evaluate /
 // resizeTRS / setTriangulation / library-mode computeWeightedBoneTRS) is
 // exercised against hand-built ayt::resource::Skeleton + Animation
@@ -12,18 +12,18 @@
 // (CHECK / CHECK_FLOAT_EQ / TEST_CASE / TEST_SUITE) — same harness as
 // AYTest_AnimationPlayer.cpp.
 
-#include "AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYTest.h>
 
-#include <ayanimation/AnimationPlayer.h>
-#include <ayanimation/BlendSpace.h>
+#include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimation/BlendSpace.h>
 
 #include <AYMath/MathTypes.h>
 
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsDefs/IAYSkeleton.h>
-#include <assetsImpl/AYAnimation.h>
-#include <assetsImpl/AYSkeleton.h>
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
+#include <AYResource/assetsImpl/Animation.h>
+#include <AYResource/assetsImpl/Skeleton.h>
 
 #include <cmath>
 #include <cstring>

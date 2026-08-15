@@ -1,4 +1,4 @@
-// AnimNotifyEvent.h — Phase 1.5 cross-module bridge event.
+// AYAnimation/AnimNotifyEvent.h — Phase 1.5 cross-module bridge event.
 //
 // AnimationSystem::onUpdate (in AYEntity) drains each AnimationPlayer's
 // per-frame fired-notifies queue via consumePendingNotifiesMerged() and
@@ -22,13 +22,13 @@
 //
 // Header-light by design: NO dependency on AYEventSystem. AYAnimation
 // itself does not link AYEventSystem, so this file stays out of the
-// include graph that pulls in EventBus.h. Callers (AYEntity bridge)
+// include graph that pulls in AYEventSystem/EventBus.h. Callers (AYEntity bridge)
 // include both AYEventSystem and AnimNotifyEvent; subscribers can
-// include AnimNotifyEvent.h alone if they only need the POD shape and
+// include AYAnimation/AnimNotifyEvent.h alone if they only need the POD shape and
 // don't subscribe via the bus.
 //
 // `entity` is typed as `uint32_t` because AYEntity's handle type isn't
-// a single integer (it's `{id, version}` — see AYEntityHandle.h), and
+// a single integer (it's `{id, version}` — see AYEntity/EntityHandle.h), and
 // the unique identity we want to broadcast is just the id. A future
 // PR can upgrade to EntityHandle if we need version-aware stale-pointer
 // detection.

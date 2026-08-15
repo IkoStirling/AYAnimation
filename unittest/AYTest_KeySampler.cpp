@@ -11,7 +11,7 @@
 //     sampler falls through to clamp-to-front, so we just check that
 //     it doesn't OOB-read).
 
-#include "AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
 

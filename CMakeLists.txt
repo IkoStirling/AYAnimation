@@ -44,8 +44,9 @@ set(SRC_FILES
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})
 
 target_include_directories(${MODULE_NAME} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/ayanimation>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/AYAnimation>
 )
 
 # P0 (2026-07-26): link AYResource so AnimationPlayer can read

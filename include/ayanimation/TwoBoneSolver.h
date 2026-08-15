@@ -1,5 +1,5 @@
 #pragma once
-// TwoBoneSolver.h — Two-Bone IK analytic solver (P4-1, 2026-08-10).
+// AYAnimation/TwoBoneSolver.h — Two-Bone IK analytic solver (P4-1, 2026-08-10).
 //
 // Pure math core: NO skeleton / animation-player dependencies. Consumes
 // world-space positions + world rotations, produces new world rotations.

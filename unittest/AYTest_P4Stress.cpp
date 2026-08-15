@@ -18,14 +18,14 @@
 //      string_view keys hit the SAME entry as a std::string-seeded one
 //      (no duplicate inserts — the transparent StringViewHash path).
 
-#include "AYAnimation.h"
+#include "AYResource/assetsImpl/Animation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
 
-#include <assetsDefs/IAYSkeleton.h>
-#include <assetsImpl/AYSkeleton.h>
-#include <assetsImpl/AYAnimation.h>
-#include <ayanimation/AssetBoneCache.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
+#include <AYResource/assetsImpl/Skeleton.h>
+#include <AYResource/assetsImpl/Animation.h>
+#include <AYAnimation/AssetBoneCache.h>
 
 #include <cstring>
 #include <memory>

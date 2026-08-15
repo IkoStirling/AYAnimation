@@ -28,12 +28,12 @@
 //
 // Standalone — no AYEntity, no AnimationPlayer. Direct API calls.
 
-#include <AYAnimation.h>
+#include <AYResource/assetsImpl/Animation.h>
 #include <AYTest.h>
 
-#include <ayanimation/ConditionExpr.h>
-#include <ayanimation/ConditionParser.h>
-#include <ayanimation/StateMachine.h>
+#include <AYAnimation/ConditionExpr.h>
+#include <AYAnimation/ConditionParser.h>
+#include <AYAnimation/StateMachine.h>
 
 #include <memory>
 #include <string>

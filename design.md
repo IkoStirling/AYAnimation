@@ -1,6 +1,6 @@
 # AYAnimation Design
 
-> **状态（2026-08-11）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 TwoBone IK + P4-2 FABRIK + CCD 迭代 IK 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 3161/3161 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 3161/3161 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §4.25 / §4.26 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish / P4-1 / P4-2 rows。  
+> **状态（2026-08-11）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 TwoBone IK + P4-2 FABRIK + CCD 迭代 IK 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header AYAnimation/ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 3161/3161 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 3161/3161 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §4.25 / §4.26 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish / P4-1 / P4-2 rows。  
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
@@ -59,13 +59,13 @@ AYAnimation 是 AY Engine 的**动画子系统**，负责：
 │  │                 AYAnimation (薄消费层)                    │    │
 │  │                                                          │    │
 │  │  ┌────────────────────────────────────────────────┐     │    │
-│  │  │  KeySampler.h                                  │     │    │
+│  │  │  AYAnimation/KeySampler.h                                  │     │    │
 │  │  │  sampleTrackVector3 / Quaternion / Float        │     │    │
 │  │  │  + binary-search + dot<0 slerp 选优 + monotonic │     │    │
 │  │  └────────────────────────────────────────────────┘     │    │
 │  │                                                          │    │
 │  │  ┌────────────────────────────────────────────────┐     │    │
-│  │  │  AnimationPlayer.h                             │     │    │
+│  │  │  AYAnimation/AnimationPlayer.h                             │     │    │
 │  │  │  - 持 const ISkeleton* / const IAnimation*     │     │    │
 │  │  │  - tick(dt) / evaluate()                       │     │    │
 │  │  │  - 3 阶段: sample → world → skin                │     │    │
@@ -132,7 +132,7 @@ boneMatrix[i] = boneWorldMatrix[i] × inverseBindMatrix[i]
 AN-01 曾定义 `ayt::anim::Skeleton`（含 `Bone` + parallel local TRS arrays）。该类型**已在 P0 修复中删除** ── 现在直接消费 `ayt::resource::ISkeleton`：
 
 ```cpp
-#include <assetsDefs/IAYSkeleton.h>   // AYResource 接口
+#include <assetsDefs/AYResource/assetsDefs/ISkeleton.h>   // AYResource 接口
 
 namespace ayt::anim
 {
@@ -153,7 +153,7 @@ namespace ayt::anim
 AN-01 曾定义 `ayt::anim::Animation`（含 `KeyframeTrack`）。该类型**已在 P0 修复中删除** ── 现在直接消费 `ayt::resource::IAnimation`：
 
 ```cpp
-#include <assetsDefs/IAYAnimation.h>   // AYResource 接口
+#include <assetsDefs/AYResource/assetsDefs/IAnimation.h>   // AYResource 接口
 
 namespace ayt::anim
 {
@@ -341,7 +341,7 @@ void tick(float dt) {
 Full contract for the additive blend layer — pin the math so future
 contributors don't accidentally change the semantics of a shipped API.
 
-**Blend modes** (`AnimBlendMode` enum on `IAYAnimation.h:38`):
+**Blend modes** (`AnimBlendMode` enum on `AYResource/assetsDefs/IAnimation.h:38`):
 ```cpp
 enum class AnimBlendMode : UInt8 {
     Override = 0,   // default — bit-identical to v2 behavior
@@ -700,7 +700,7 @@ enum class CaptureState : ayt::math::UInt8 { Fresh=0, Valid=1, Stale=2 };
 
 #### 4.10.4 Helper 复用清单(不发明新轮)
 
-- `sampleTrackFloat(values, count, times, t, out)` from `KeySampler.h:34` —— **概念上游复用**,但曲线跑分选择 manual lerp(从 2-element `[from, to]` + eased `t01`),不分配 buffer
+- `sampleTrackFloat(values, count, times, t, out)` from `AYAnimation/KeySampler.h:34` —— **概念上游复用**,但曲线跑分选择 manual lerp(从 2-element `[from, to]` + eased `t01`),不分配 buffer
 - `aymath::easeIn(t, power=2)` / `easeOut` / `easeInOut` from `MathUtils.h:1036/1098/1116` —— 4 个 ease cases 中 3 个直接 dispatch
 - `aymath::smoothstep(t)` from `MathUtils.h:930` —— `BlendEasing::Smoothstep` 一行调用
 - `resolveBoneIdxOnce(TrackSlice&)` from `AnimationPlayer.cpp:113` —— P1.4 hot-path 已 ship,新 capture / ref-pose path 不需要改动 cache
@@ -1084,7 +1084,7 @@ void AnimationPlayer::rebuildMergedNotifies() {
 
 #### 4.11.8 AYEntity bridge
 
-**`AdditiveLayerSpec`** ── 新 struct(11 个 `AY_PROPERTY` 字段 + ctor + `AY_FINALIZE_REGISTRATION_METADATA` 注册)放在 `AYAnimationComponent.h`,在 `AnimationComponent` 之前定义:
+**`AdditiveLayerSpec`** ── 新 struct(11 个 `AY_PROPERTY` 字段 + ctor + `AY_FINALIZE_REGISTRATION_METADATA` 注册)放在 `AYEntity/components/AYEntity/components/AYEntity/components/AYEntity/components/AnimationComponent.h`,在 `AnimationComponent` 之前定义:
 
 ```cpp
 struct AdditiveLayerSpec {
@@ -1137,7 +1137,7 @@ if (!anim->additiveLayers.empty()) {
 }
 ```
 
-**4 个 nested rebind-detection maps** (在 `AYAnimationSystem.h`):`_lastAppliedAdditivePaths` / `_lastAppliedSyncToBase` / `_lastAppliedRefPoseCapture` / `_lastAppliedBlendCurveDuration` / `_lastAppliedBlendCurveEasing` 全部从 `entity → T` 升级为 `entity → unordered_map<uint32_t, T>`。
+**4 个 nested rebind-detection maps** (在 `AYEntity/AnimationSystem.h`):`_lastAppliedAdditivePaths` / `_lastAppliedSyncToBase` / `_lastAppliedRefPoseCapture` / `_lastAppliedBlendCurveDuration` / `_lastAppliedBlendCurveEasing` 全部从 `entity → T` 升级为 `entity → unordered_map<uint32_t, T>`。
 
 **AnimNotifyEvent dispatch** 改用 `consumePendingNotifiesMerged()` 单接口;per-slot record 的 `clipName` 从 `_lastAppliedAdditivePaths[e][slotIdx]` 反查;`sourceTag` 直接 pipe 到 event 字段。
 
@@ -1201,11 +1201,11 @@ P1.6 = 纯 deprecate wrapper cleanup（**无新功能**）：
 
 | 改动 | 位置 |
 |------|------|
-| 删 `setAdditiveWeight` / `getAdditiveWeight` | AnimationPlayer.h:339-340 (P1.2 inline-forward) |
-| 删 `consumePendingNotifiesAdditive` decl + def | AnimationPlayer.h:602 + cpp:732-734 (P1.3 DEPRECATE-P1.5) |
-| 删 `getPendingNotifyCountAdditive` inline | AnimationPlayer.h:603-609 (P1.3 DEPRECATE-P1.5) |
-| 删 `dispatchAdditiveNotifies` decl + def | AnimationPlayer.h:600 + cpp:722-729（0 caller，P1.6 顺手清 dead code） |
-| 删 `// REMOVE-MARKER(P1.6)` marker | AnimationPlayer.h:91 |
+| 删 `setAdditiveWeight` / `getAdditiveWeight` | AYAnimation/AnimationPlayer.h:339-340 (P1.2 inline-forward) |
+| 删 `consumePendingNotifiesAdditive` decl + def | AYAnimation/AnimationPlayer.h:602 + cpp:732-734 (P1.3 DEPRECATE-P1.5) |
+| 删 `getPendingNotifyCountAdditive` inline | AYAnimation/AnimationPlayer.h:603-609 (P1.3 DEPRECATE-P1.5) |
+| 删 `dispatchAdditiveNotifies` decl + def | AYAnimation/AnimationPlayer.h:600 + cpp:722-729（0 caller，P1.6 顺手清 dead code） |
+| 删 `// REMOVE-MARKER(P1.6)` marker | AYAnimation/AnimationPlayer.h:91 |
 | Bridge 改 canonical | AYAnimationSystem.cpp:203 `setAdditiveWeight` → `setBlendWeight` |
 | Test 改 canonical | AYTest_AnimationPlayer.cpp 11 处 + SkinnedAnimationTest.cpp 8 处 |
 | Test semantic 改 | `P1_3_NotifyIndependence_BaseAndAdditive` 改测 merged queue + sourceTag discriminator |
@@ -1226,7 +1226,7 @@ P1.6 = 纯 deprecate wrapper cleanup（**无新功能**）：
 2. **Curve 时钟用 base `_time` 不是 slot `time`** ── loop wrap 时 `s.time` 短暂回到 0 → `elapsed = s.time - s.curve.startTime` 也回到 0 → `curve.active` 永不 disarm。**改用 base `_time`**(`elapsed = _time - s.curve.startTime`)保证曲线窗口基于 host time。
 3. **INV-7 capture 必须 Phase 0 Valid-apply + post-Phase-1a capture,Phase 1b NEVER re-capture** ── 否则:enable 立即 capture rest + Phase 1b 末尾又 capture additive-final → 第二帧 double-add(`1.98 → 3.96`)。Phase 0 (top of evaluate) Phase 1a 之前 apply-captured;post-1a capture;Phase 1b 只加 delta。design.md §4.10.6 顺序是 contract。
 4. **Merged notify dedup-by-(time, name) 必须 sort by (time, sourceTag)** ── stable secondary key 保证 base 在 collision 时排在前,`std::unique` 删后面那个。`std::sort` 不是 stable sort?——**`std::sort` 不是 stable**;但 sourceTag 是 unique 区分键,所以 base 永远 < additive 同时间,sort by (time ASC, sourceTag ASC) 之后 base 必然先,unique 删除逻辑跟 stable sort 等价。**仍然保险**:sort 用 stable version 的话加 `std::stable_sort` 即可。
-5. **AnimNotifyEvent 不能再 include AYEventSystem** ── AYAnimation 不 link AYEventSystem(模块隔离),所以 AnimNotifyEvent.h 不能依赖 `EventPriority.h`。**P1.5 修正**:从 AnimNotifyEvent.h 删 kPriority 字段(只在 bus subscribe path 隐式用,subscriber-side 转换)。`kTypeId` 保留为 uint32_t 不依赖 ayt::event namespace。
+5. **AnimNotifyEvent 不能再 include AYEventSystem** ── AYAnimation 不 link AYEventSystem(模块隔离),所以 AYAnimation/AnimNotifyEvent.h 不能依赖 `AYEventSystem/EventPriority.h`。**P1.5 修正**:从 AYAnimation/AnimNotifyEvent.h 删 kPriority 字段(只在 bus subscribe path 隐式用,subscriber-side 转换)。`kTypeId` 保留为 uint32_t 不依赖 ayt::event namespace。
 6. **AYEntity vector<AY_PROPERTY struct> first-of-kind** ── `AY_PROPERTY(std::vector<AdditiveLayerSpec>, additiveLayers, ...)` 是本 codebase 第一个 vector-of-reflected-struct 字段;PropertyMacros 已支持(`tryRegisterVector`),但 struct 自身必须先 `AY_FINALIZE_REGISTRATION_METADATA(AdditiveLayerSpec)` 注册才能 vector 注册。**顺序硬约束**:struct 必须在 field 之前;finalize 紧跟 struct 之后。
 7. **Per-slot rebind-detection 必须 nested map** ── P1.3 的 `_lastAppliedAdditivePath` 是 `entity → string`;P1.5 必须升级为 `entity → unordered_map<slotIdx, string>`,否则两 slot path 互相覆盖。**4 个 P1.4 rebind map 都同理**。
 8. **`isAdditiveLayerActive()` 保留 slot[0] 语义** ── 多 slot 后 P1.5 决定**不** 改它语义,只读 slot[0];需要真 multi-slot 活跃度检测的 host 用 `getAdditiveLayerCount()` 自遍历。**降低破坏性 + P1.3/P1.4 测试零修改**。
@@ -1240,7 +1240,7 @@ P1.7 = **A (ECS refactor) + B (player-side asset cache)**：
 **与 P1.6 关系**：P1.6 显式 defer 共享 cache 到 P1.7（§11 + §4.11.10）。P1.7 是 P1.6 收口动作的延续（用户决策：A+B 都要做）。
 
 **Engine 跨模块改动**：
-- AYAnimation 1 文件新增（AssetBoneCache.h/cpp）+ 2 文件改（AnimationPlayer.h 字段签名 + AnimationPlayer.cpp resolveBoneIdxOnce）
+- AYAnimation 1 文件新增（AYAnimation/AssetBoneCache.h/cpp）+ 2 文件改（AYAnimation/AnimationPlayer.h 字段签名 + AnimationPlayer.cpp resolveBoneIdxOnce）
 - AYEntity 1 文件改 header（SkeletonComponent field 类型） + 1 文件改 cpp（AnimationSystem lazy-load 改 shared_ptr 路径，不再有 `setBoneCount(n) + n × setBone()` 拷贝循环）
 - 60+ AYAnimation test callsite + 14 AYEntity test callsite + 0 SuzanneSkinnedDemo 改（demo 只设 skeletonPath）
 - 6 + 2 新 test case（详见 §11 / §13）
@@ -1248,14 +1248,14 @@ P1.7 = **A (ECS refactor) + B (player-side asset cache)**：
 **On-disk format 不变**：`.ayanm` v4 / `.ayskel` v1 维持，ISkeleton VERSION 不动。零格式迁移。
 
 **新文件**（P1.7 完整 list）：
-- `AYAnimation/include/ayanimation/AssetBoneCache.h`
+- `AYAnimation/include/AYAnimation/AssetBoneCache.h`
 - `AYAnimation/src/AssetBoneCache.cpp`（单例 + mutex + 3 public method）
 
 **改文件**（关键 6）：
-- `AYAnimation/include/ayanimation/AnimationPlayer.h`（字段 + 签名）
+- `AYAnimation/include/AYAnimation/AnimationPlayer.h`（字段 + 签名）
 - `AYAnimation/src/AnimationPlayer.cpp`（setSkeleton + resolveBoneIdxOnce）
 - `AYAnimation/CMakeLists.txt`（+ AssetBoneCache.cpp）
-- `AYEntity/include/components/AYSkeletonComponent.h`（字段类型）
+- `AYEntity/include/AYEntity/components/SkeletonComponent.h`（字段类型）
 - `AYEntity/src/AYAnimationSystem.cpp`（懒加载 + debug log deref）
 - `AYEntity/unittest/SkinnedAnimationTest.cpp`（14 callsite 改 shared_ptr 路径）
 
@@ -1399,11 +1399,11 @@ AYAnimation/
 ├── design.md                       # 本文档
 ├── CMakeLists.txt                  # target_link_libraries(... AYResource)
 ├── include/
-│   └── ayanimation/
+│   └── AYAnimation/
 │       ├── AYAnimation.h           # umbrella header
 │       │
-│       ├── KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
-│       └── AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
+│       ├── AYAnimation/KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
+│       └── AYAnimation/AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
 │
 ├── src/
 │   ├── KeySampler.cpp              # ✅ AN-01 ship: locateSegment + dot<0 slerp 选优 + 单调性 assert
@@ -1416,8 +1416,8 @@ AYAnimation/
 ```
 
 **已删除（2026-07-26 P0 修复）**：
-- ~~Skeleton.h / Skeleton.cpp~~ ── parallel type 取消,改用 `resource::ISkeleton`
-- ~~Animation.h / Animation.cpp~~ ── 同上
+- ~~AYResource/assetsImpl/Skeleton.h / Skeleton.cpp~~ ── parallel type 取消,改用 `resource::ISkeleton`
+- ~~AYResource/assetsImpl/Animation.h / Animation.cpp~~ ── 同上
 
 **未 ship（按 Phase 顺序）**：
 - ~~State.h / Transition.h / BlendTree.h~~ ── Phase 3
@@ -1459,7 +1459,7 @@ AYAnimation/
 - [x] **P1.5 Multi-Slot Additive Stack**（2026-07-27）─ `vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + merged notify queue + `AnimNotifySourceTag` enum + per-track `trackWeights` opt-in mask + 18 旧 single-slot API 全 redirect 到 slot[0] backward-compat wrappers + AYEntity `AdditiveLayerSpec` 结构 + nested (entity → slot) rebind-detection maps + per-slot push loop + EventBus `AnimNotifyEvent.sourceTag` pipe; INV-9/10/11 (per-slot 化 INV-6/7/8 + 新增 capture-buffer size + dedup 守则) + 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398 + AYEntity 216 + AYResource 701 unchanged); 详见 §4.11
 - [x] **P1.5 Multi-Slot stack（Player）**（文档对齐 2026-07-27）─ `AdditiveSlot`×8 + merged notify/`sourceTag` + per-slot trackWeights；**ECS/测试桥接未齐**；详见 §4.8
 - [x] **P1.6 Deprecate Wrapper Cleanup**（2026-07-27）─ 真实 deprecate `setAdditiveWeight`/`getAdditiveWeight`（P1.2 inline-forward wrapper）和 `consumePendingNotifiesAdditive`/`getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5 wrapper）全删；连带 dead `dispatchAdditiveNotifies` helper 删除；`AYAnimationSystem::onUpdate` bridge 调 canonical `setBlendWeight`；tests 11 处 + 8 处 caller 改 canonical；2 个 P1.3 测试因 dual-drain 消失改测 merged queue + sourceTag discriminator。3-run stable: AYAnimation 398/398 + AYEntity 216/216 × 3，零回归。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor：`SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`），P1.6 不动 ECS 边界。详见 §11 row + §13 row + §11 P1.6 row
-- [x] **P1.7 Shared Skeleton Tick Cache**（2026-07-27）─ ECS refactor：`SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert to `shared_ptr<const ISkeleton>` 给 AnimationPlayer）；N entity 同 skeletonPath 共享同一 ISkeleton asset，砍 N 倍内存 + N 次首帧拷贝；AYAnimationSystem 懒加载改持 shared_ptr 路径（无 `setBoneCount + n×setBone()` 循环）。Asset-level boneIdx cache：`AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx`；`AnimationPlayer::setSkeleton` 改接受 `shared_ptr<const ISkeleton>`；`_skeleton` 字段改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AssetBoneCache.h/cpp`；改 6 文件（AYAnimation 3 + AYEntity 3）；60+ AYAnimation + 14 AYEntity test callsite 改；6 + 2 新 test case（`P1_7_SetSkeleton_AcceptsSharedPtr` / `P1_7_AssetBoneCache_LookupAfterResolve` / `P1_7_AssetBoneCache_DifferentSkeletonsIndependent` / `P1_7_AssetBoneCache_Invalidate` / `P1_7_TwoPlayers_OneSkeleton_ShareResolve` / `P1_7_SharedPtr_SkeletonLifecyclePreservedByComponent` + AYEntity `skeleton_component_shared_ptr_does_not_duplicate_skeleton` / `skeleton_component_shared_ptr_outlives_resource_manager_eviction_safe`）。**关键 footgun**：所有 inline-build skeleton 测试必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `buildFourBoneSkeleton(*skel->skeleton)` ── 否则 deref nullptr → AV。3-run stable: AYAnimation 420/420 + AYResource 701/701 × 3, AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §11 row + §13 row 17g + §11 P1.7 row + §4.12
+- [x] **P1.7 Shared Skeleton Tick Cache**（2026-07-27）─ ECS refactor：`SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert to `shared_ptr<const ISkeleton>` 给 AnimationPlayer）；N entity 同 skeletonPath 共享同一 ISkeleton asset，砍 N 倍内存 + N 次首帧拷贝；AYAnimationSystem 懒加载改持 shared_ptr 路径（无 `setBoneCount + n×setBone()` 循环）。Asset-level boneIdx cache：`AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx`；`AnimationPlayer::setSkeleton` 改接受 `shared_ptr<const ISkeleton>`；`_skeleton` 字段改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AYAnimation/AssetBoneCache.h/cpp`；改 6 文件（AYAnimation 3 + AYEntity 3）；60+ AYAnimation + 14 AYEntity test callsite 改；6 + 2 新 test case（`P1_7_SetSkeleton_AcceptsSharedPtr` / `P1_7_AssetBoneCache_LookupAfterResolve` / `P1_7_AssetBoneCache_DifferentSkeletonsIndependent` / `P1_7_AssetBoneCache_Invalidate` / `P1_7_TwoPlayers_OneSkeleton_ShareResolve` / `P1_7_SharedPtr_SkeletonLifecyclePreservedByComponent` + AYEntity `skeleton_component_shared_ptr_does_not_duplicate_skeleton` / `skeleton_component_shared_ptr_outlives_resource_manager_eviction_safe`）。**关键 footgun**：所有 inline-build skeleton 测试必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `buildFourBoneSkeleton(*skel->skeleton)` ── 否则 deref nullptr → AV。3-run stable: AYAnimation 420/420 + AYResource 701/701 × 3, AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §11 row + §13 row 17g + §11 P1.7 row + §4.12
 
 ### Phase 2: 混合 + 蒙皮 ── ⏳ 排队
 
@@ -1478,8 +1478,8 @@ AYAnimation/
 - [x] **P3.1 L1 简单状态机**（2026-08-06）─ `StateMachine` class (events-driven FSM + first-match-wins + wildcard fromState + automatic trigger + cross-fade wait + trigger auto-consume + unknown-param fail-soft) + `AnimationStateMachineComponent` (POD: resourcePath placeholder + pendingTriggers + speed/verticalSpeed/isGrounded/isAttacking + currentState/previousState/isTransitioning read-back + setTrigger convenience) + `StateMachineSystem` priority 460 (after AnimationSystem 450, sync params + drain triggers + tick SM + push new clip + emit `AnimStateChangedEvent` via EventBus kTypeId=0x000A'0010) + 15 AYAnimation unit tests + 8 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 543/543 + AYEntity 370/370 + AYResource 1044/1044 × 3)；详见 §4.14 + §13 row 20 + §11 P3.1 row
 - [x] **P3.x L2 条件 DSL**（2026-08-07）─ `Transition` 扩展缓存层 (conditionExpr / cachedAst / conditionDirty / conditionParseError 4 字段) + `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族 (Binary/Unary/Identifier/Literal + Visitor 接口) + `ConditionParser` (mini Lexer + precedence-climbing Parser) + 8 算子 (`> < == != && || ! ()`) + 字面量 float/bool + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + `ConditionEvalCtx` 4 字段 (`params/triggers/currentState/currentStateTime` 留 P3.x刀 N+1 钩子) + 30 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3)；详见 §4.16 + §13 row 20b + §11 P3.x row
 - [x] **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing**（2026-08-07）─ **B**: `StateMachine._currentStateEnterTime` 字段 + `getCurrentStateElapsedTime()` API + `update(dt)` 顶部 +dt 累加 + `setInitialState` / lazy-init / `fireTransition` (instant-cut + cross-fade START) 3 处 reset 0.0f + `ConditionEvalCtx` 兑现 `currentStateTime` (`StateMachine.cpp` 1 line 从 0.0f literal 改 getCurrentStateElapsedTime) + `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime` (3 LoC, shadow user params) + 6 TIS unit tests (InitialZero / AfterUpdate / AfterTransition / CrossFade / Condition_GT_Fires / Condition_LT_DoesNotFire) + 1 ECS integration test (sm_system_TIS_CurrentStateTime_GT_Fires) + **C**: `AnimNotifyRecord::fromStateName` + `AnimNotifyEvent::fromStateName` 字段 (default empty back-compat) + `AnimationPlayer._currentStateNameForNotify` + `setCurrentStateName(string)` / `getCurrentStateName()` API + `AnimationPlayer` push notify 路径写 `fromStateName` (2-step pattern 修复 P1.5 alignment 回归) + AYEntity `StateMachineSystem` bridge **every-tick** `setCurrentStateName` (改 from transition-only to every-tick, 1 line 简化) + 4 ANR unit tests (NotifyFromState / AfterTransition / WithoutSM_Empty / Merged_Preserves) + 3 ECS integration tests (sm_system_ANR_NotifyCarriesFromStateName / sm_system_ANR_PerStateRoute_SubscriberFilters / sm_system_TIS_NoRegression)；0 regression 3-run stable (AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.17 + §13 row 20b (deferred 兑现) + §11 P3.x刀 N+1.BC row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。
-- [x] **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry**（2026-08-07）─ `StateMachine._params` 从 `std::unordered_map<std::string, float>` 改为 `std::vector<ParamEntry>` (pre-reserve 8, linear scan, cache-friendly, N ≤ 8 production) + `StateMachine._triggers` 从 `std::unordered_set<std::string>` 改为 `std::vector<uint32_t>` sorted (pre-reserve 4, `std::lower_bound` for has/erase, N ≤ 4 production) + `detail::ParamNameRegistry` (Meyers singleton, FNV-1a 32-bit hash + linear scan intern, process-global) + `ParamEntry { uint32_t hash; float value; }` 结构移到 `ConditionExpr.h` 避免循环 include + 新增 6 private helpers (`findParamIndex` / `setParamByHash` / `getParamByHash` / `addTriggerHash` / `hasTriggerHash` / `eraseTriggerHash`) + `StateMachine::getParamName` / `getParamNameRegistrySize` debug read-back 静态方法 + `ConditionEvalCtx` field types change (`ParamsVector` / `TriggersVector` 指针) + `CondIdentifierExpr::evaluateAsFloat` 改 intern + linear scan + **public API 0 change** (setParam / getParam / setTrigger 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`Params_FlatArray_FindByHashReturnsCorrectValue` + `Triggers_FlatArray_BinarySearchWorks` INV-43..46 pin) + 30 L2 tests 通过 `makeCtx` helper 5-line shift 适配 flat-vector `ConditionEvalCtx` + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` 4 scenarios (8/1/32 params + triggers, 100K iter, default OFF behind `AY_BUILD_BENCHMARKS=OFF` cache var)；0 regression 3-run stable (AYAnimation 759/759 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.18 + §11 P0 polish row。**INV-43..46** (flat-array hot-path 契约) 全部 NEW。Hot-path speedup (debug build): getParam 8 params 271→68 ns/iter (**4.0x** ⭐), 1 param 225→43 ns/iter (**5.2x** ⭐), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。
-- [x] **P1 polish — Hot-Path Eval Hash Caching**（2026-08-07）─ `Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（addTransition 时一次性 intern 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`findEligibleTransition` / `Transition::evaluateCondition` L1 path / `fireTransition`) 改 cached hash + lazy fallback (test fixture const_cast mutation back-compat) + `detail::ParamNameRegistry` 拆 header (`ParamNameRegistry.h` 独立 leaf header, kEmpty 在 StateMachine.cpp 定义) 让 `ConditionExpr.h` inline ctor 调 intern 无循环 include + **public API 0 change** (Transition / CondIdentifierExpr / ConditionParser / StateMachine 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避免 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + 3 new unit tests (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` sentinel pre-check + `P1_CondIdent_Evaluate_NoIntern` 1000x eval 后 registry size 不变证明 0 per-eval intern) + micro-benchmark 加 2 scenarios (Scenario E `findEligibleTransition` 5 transitions × 100K + Scenario F DSL evaluate 3-ident × 100K); 0 regression 3-run stable (AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.19 + §11 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback) 全部 NEW。Benchmark (debug build): Scenario E scan 1251 ns/iter + scan+fire 2391 ns/iter; Scenario F evaluate true path 132 ns/iter + short-circuit 113 ns/iter。
+- [x] **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry**（2026-08-07）─ `StateMachine._params` 从 `std::unordered_map<std::string, float>` 改为 `std::vector<ParamEntry>` (pre-reserve 8, linear scan, cache-friendly, N ≤ 8 production) + `StateMachine._triggers` 从 `std::unordered_set<std::string>` 改为 `std::vector<uint32_t>` sorted (pre-reserve 4, `std::lower_bound` for has/erase, N ≤ 4 production) + `detail::ParamNameRegistry` (Meyers singleton, FNV-1a 32-bit hash + linear scan intern, process-global) + `ParamEntry { uint32_t hash; float value; }` 结构移到 `AYAnimation/ConditionExpr.h` 避免循环 include + 新增 6 private helpers (`findParamIndex` / `setParamByHash` / `getParamByHash` / `addTriggerHash` / `hasTriggerHash` / `eraseTriggerHash`) + `StateMachine::getParamName` / `getParamNameRegistrySize` debug read-back 静态方法 + `ConditionEvalCtx` field types change (`ParamsVector` / `TriggersVector` 指针) + `CondIdentifierExpr::evaluateAsFloat` 改 intern + linear scan + **public API 0 change** (setParam / getParam / setTrigger 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`Params_FlatArray_FindByHashReturnsCorrectValue` + `Triggers_FlatArray_BinarySearchWorks` INV-43..46 pin) + 30 L2 tests 通过 `makeCtx` helper 5-line shift 适配 flat-vector `ConditionEvalCtx` + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` 4 scenarios (8/1/32 params + triggers, 100K iter, default OFF behind `AY_BUILD_BENCHMARKS=OFF` cache var)；0 regression 3-run stable (AYAnimation 759/759 + AYEntity 421/421 + AYResource 1039/1039 × 3)；详见 §4.18 + §11 P0 polish row。**INV-43..46** (flat-array hot-path 契约) 全部 NEW。Hot-path speedup (debug build): getParam 8 params 271→68 ns/iter (**4.0x** ⭐), 1 param 225→43 ns/iter (**5.2x** ⭐), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。
+- [x] **P1 polish — Hot-Path Eval Hash Caching**（2026-08-07）─ `Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（addTransition 时一次性 intern 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`findEligibleTransition` / `Transition::evaluateCondition` L1 path / `fireTransition`) 改 cached hash + lazy fallback (test fixture const_cast mutation back-compat) + `detail::ParamNameRegistry` 拆 header (`AYAnimation/ParamNameRegistry.h` 独立 leaf header, kEmpty 在 StateMachine.cpp 定义) 让 `AYAnimation/ConditionExpr.h` inline ctor 调 intern 无循环 include + **public API 0 change** (Transition / CondIdentifierExpr / ConditionParser / StateMachine 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避免 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + 3 new unit tests (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` sentinel pre-check + `P1_CondIdent_Evaluate_NoIntern` 1000x eval 后 registry size 不变证明 0 per-eval intern) + micro-benchmark 加 2 scenarios (Scenario E `findEligibleTransition` 5 transitions × 100K + Scenario F DSL evaluate 3-ident × 100K); 0 regression 3-run stable (AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.19 + §11 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback) 全部 NEW。Benchmark (debug build): Scenario E scan 1251 ns/iter + scan+fire 2391 ns/iter; Scenario F evaluate true path 132 ns/iter + short-circuit 113 ns/iter。
 - [x] **P2 polish — Condition DSL AST → Flat Bytecode**（2026-08-08）─ `CondBytecode` (parallel cache: `std::vector<uint8_t> program` + `std::vector<float> literals` flat float table + 10 opcodes + `CondReservedId`) + `compileToBytecode(ast)` post-order walk (comparison: left→right→op; And/Or: placeholder + patch relative-jump ±127) + program-counter switch evaluator (`float stack[16]` 固定栈数组 + bounds-checked fail-soft, no per-eval heap alloc) + `Transition.cachedBytecode` `mutable shared_ptr` lazy build (INV-52, INV-57 copyable) + `Transition::evaluateBytecode` hot path (L2: lazy parse + lazy compile + eval; L1: delegate `evaluateCondition`; `setConditionExpr` → invalidate 双清) + `OP_LOAD_RESERVED R_CURRENT_STATE_TIME` (INV-55 0 string compare at eval) + **public API 0 change** (StateMachine / Transition / ConditionParser / CondExprAst 签名 identical; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + AST preserved (P4.x CondVisitor graph-builder 需要) + 4 new unit tests (`P2_Bytecode_Parity_3IdentExpr` 5 cases 含 Speed=3 vs 5.0 抓 bit-30 bug + `P2_Bytecode_LazyBuild_FirstEvalCompiles` + `P2_Bytecode_ReservedIdent_CompiledAsOpcode` + `P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse`) + 2 new unit tests (`P2_Bytecode_Integration_FindTransitionUsesBytecode` + `P2_Bytecode_Integration_InvalidateCacheClearsBytecode`) + micro-benchmark 加 Scenario G (bytecode vs AST 3-ident × 100K); 0 regression 3-run stable (AYAnimation 1824/1824 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.20 + §11 P2 polish row。**INV-52..58** (bytecode 1:1 AST 语义 + lazy build + reserved ident opcode + flat float literal table + shared_ptr copyable + short-circuit relative-jump) 全部 NEW。Benchmark (debug build): bytecode 773 ns/iter (true) / 800 ns/iter (short-circuit) vs AST 1035/1022 = **1.34x / 1.28x**; 两个前期 bug 修复 (bit-30 IEEE-754 exponent 冲突 literal 编码 + per-eval vector 栈 8x 慢 → 固定数组)。
 - [x] **P3 polish — AssetBoneCache lock-free single-threaded mode**（2026-08-08）─ `AssetBoneCache` 默认改无锁：`_threadSafe = false` (INV-59 — 7 访问点永不触碰 mutex, ECS 单线程主 tick 路径零同步可证明) + `setThreadSafe(true)` opt-in 重挂 mutex (authoring tools / 多线程 host, INV-60 — flag 非原子须并发前设) + anonymous ns `maybeLock(std::mutex&, bool)` RAII helper (enabled ? unique_lock(mu) : default ctor — 无锁路径零成本 + 锁路径异常安全) + 7 sites `lock_guard` → `unique_lock lk = maybeLock(_mu, _threadSafe)` + **+2 additive public API** (setThreadSafe / isThreadSafe; lookup / resolveAndCache / invalidate / clear / entry-count 签名 identical; AnimationPlayer 2 callsite 0 touch; ECS bridge 0 touch; L1/L2/L3 contracts 全部 preserved) + 2 new unit tests (`P3_AssetBoneCache_DefaultIsLockFree` INV-59 pin + `P3_AssetBoneCache_ThreadSafeMode_BehaviorUnchanged` 双模式复跑完整 P1.7 contract) + micro-benchmark 加 Scenario H (真实 2-bone Skeleton, hit 路径, 交错 min-of-5); 0 regression 3-run stable (AYAnimation 1851/1851 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.21 + §11 P3 polish row。**INV-59/60** (默认零锁 + flag 非原子) 全部 NEW。Benchmark (debug build, min-of-5): resolveAndCache hit 961 vs 1001 ns/iter (**1.04x**) / lookup hit 910 vs 980 ns/iter (**1.08x**) — debug STL 主导绝对值 (临时 string + checked iterators), P3 收益结构性 (零同步); 测量教训: 顺序一次性测量噪声反转比值 → 交错 min-of-5。
 - [x] **P4 polish — Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试**（2026-08-10）─ `AnimationPlayer::releaseSlotBuffers(AdditiveSlot&)` 新私有 helper (swap-with-empty 归还 tracks / pendingNotifies / capturedLocal{Pos,Rot,Scl} / trackWeights; `clearAdditiveLayerSource` + `stop()` 两 callsite; 闲置 slot 此前持有 n*3+n*4+n*3 floats 到 player 析构) + `AssetBoneCache` inner map 改 `StringViewHash + std::equal_to<>` (is_transparent C++14 异构查找, `find(const char*)` 0 临时 string 构造 — 兑现 §4.21.12 Q3; 3 重载含显式 const char* 防 C3066 模糊) + **0 public API change** (AnimationPlayer / AssetBoneCache 签名 identical; ECS bridge 0 touch; L1/L2/L3 + INV-1..60 全部 preserved) + **3 new INV** (INV-61 闲置 slot heavy buffers 全释放 / INV-62 `_additiveSlots` size 保留 sparse 语义 + re-bind fresh state / INV-63 异构查找 0 临时 string 且三拼写单 entry) + **4 new unit tests** (`AYTest_P4Stress.cpp` 新 suite P4StressTests: p4_stress_400_players_share_one_skeleton 400×200 帧完整帧 tick+evaluate 逐位 memcmp 一致 + p4_stress_bind_clear_cycle_returns_cache_entries 5 轮 invalidate 回落 0 + P4_AssetBoneCache_HeterogeneousLookup_SingleEntry + P4_AdditiveSlot_ClearStop_RebindFreshState); 0 regression 3-run stable (AYAnimation 2673/2673 + AYEntity 421/421 + AYResource 1039/1039 × 3); 详见 §4.22 + §11 P4 polish row。**INV-61/62/63** (内存归还 + sparse 保留 + 异构查找) 全部 NEW。教训: tick() 只推进时钟不跑 evaluate (压力测试只 tick → resolve 未触发断言全败 → 每帧 tick+evaluate 完整帧) + transparent hash 必须显式 const char* 重载防 C3066。
@@ -1641,7 +1641,7 @@ P2.2 把 mask 提到 **骨骼层（resource-level）**，与 P1.5 trackWeights�
 #### 4.13.3 Data Model
 
 ```cpp
-// include/ayanimation/ISkeletonMask.h (P2.2 NEW — temporary in-package)
+// include/AYResource/assetsDefs/ISkeletonMask.h (P2.2 NEW — temporary in-package)
 namespace ayt::anim {
 
 struct SkeletonMaskBone {
@@ -1681,7 +1681,7 @@ ISkeletonMask (IResource)
 #### 4.13.4 Public API
 
 ```cpp
-// AnimationPlayer.h 新增（P2.2）：
+// AYAnimation/AnimationPlayer.h 新增（P2.2）：
 void        setSkeletonMask(std::shared_ptr<const ISkeletonMask> mask);
 void        clearSkeletonMask();
 bool        hasSkeletonMask() const;
@@ -1766,20 +1766,20 @@ if (!_boneMaskWeights.empty()) {
 
 #### 4.13.7 Resource Bridge — SHIP (2026-08-06, P3.x刀1)
 
-`.aymask` v1 binary + `IAYSkeletonMask.h`（in `ayt::resource` namespace）+ `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` **全部 ship**。bridge 调用 `ResourceManager::load<ayt::resource::ISkeletonMask>(path)` 现在返回真实 `shared_ptr<SkeletonMask>`。
+`.aymask` v1 binary + `AYResource/assetsDefs/ISkeletonMask.h`（in `ayt::resource` namespace）+ `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` **全部 ship**。bridge 调用 `ResourceManager::load<ayt::resource::ISkeletonMask>(path)` 现在返回真实 `shared_ptr<SkeletonMask>`。
 
 **文件清单**：
-- `AYResource/interface/assetsDefs/IAYSkeletonMask.h` (NEW, in `ayt::resource` namespace — replaces the P2.2 in-package `ayt::anim::ISkeletonMask`; adds `getGuid()` for L2 cache key)
-- `AYResource/include/assetsImpl/AYSkeletonMask.h` + `src/AssetsImpl/AYSkeletonMask.cpp` (NEW, P2.2 in-memory fixture 升级为正式 asset class; `SkeletonMask::create()` factory 保留)
-- `AYResource/include/Loader/SkeletonMaskLoader.h` + `src/Loader/SkeletonMaskLoader.cpp` (NEW, 50 行骨架沿用 `SkeletonLoader.cpp`)
+- `AYResource/interface/AYResource/assetsDefs/ISkeletonMask.h` (NEW, in `ayt::resource` namespace — replaces the P2.2 in-package `ayt::anim::ISkeletonMask`; adds `getGuid()` for L2 cache key)
+- `AYResource/include/AYResource/assetsImpl/SkeletonMask.h` + `src/AssetsImpl/AYSkeletonMask.cpp` (NEW, P2.2 in-memory fixture 升级为正式 asset class; `SkeletonMask::create()` factory 保留)
+- `AYResource/include/AYResource/Loader/SkeletonMaskLoader.h` + `src/Loader/SkeletonMaskLoader.cpp` (NEW, 50 行骨架沿用 `SkeletonLoader.cpp`)
 - `AYResource/src/AYResourceBootstrap.cpp::initializeLoaders` (+1 行 `registerLoaderType`)
 - `AYResource/unittest/AYTest_SkeletonMaskLoader.cpp` (NEW, 12 cases)
 - `AYResource/unittest/AYTest_ResourceBootstrap.cpp` (+1 case `.aymask` registry)
 
 **Include flip**（4 文件）：
-- `AYAnimation/include/ayanimation/AnimationPlayer.h` — `<ayanimation/ISkeletonMask.h>` → `<assetsDefs/IAYSkeletonMask.h>`；`ayt::anim::ISkeletonMask` → `ayt::resource::ISkeletonMask`
-- `AYAnimation/include/ayanimation/ISkeletonMask.h` — **删除**
-- `AYAnimation/src/SkeletonMask.h` — **删除**（已迁到 AYResource `assetsImpl/AYSkeletonMask.h`）
+- `AYAnimation/include/AYAnimation/AnimationPlayer.h` — `<AYResource/assetsDefs/ISkeletonMask.h>`；`ayt::anim::ISkeletonMask` → `ayt::resource::ISkeletonMask`
+- `AYAnimation/include/AYResource/assetsDefs/ISkeletonMask.h` — **删除**
+- `AYAnimation/src/AYResource/assetsImpl/SkeletonMask.h`）
 - `AYAnimation/unittest/AYTest_SkeletonMask.cpp` — include flip + using 改名
 - `AYAnimation/src/AnimationPlayer.cpp::resolveSkeletonMask()` — `SkeletonMaskBone::name` 从 `char[64]` 改 `std::string`（字段对齐 `ayt::resource::Bone`）
 - `AYEntity/src/AYAnimationSystem.cpp` — include flip + `load<ayt::resource::ISkeletonMask>`
@@ -1804,7 +1804,7 @@ Per entry: `[UInt32 nameLength][char name[nameLength]][Float32 weight]`. Empty n
 
 **关键工程教训**：
 1. **namespace leak fix** — P2.2 临时 `ayt::anim::ISkeletonMask` 必须迁去 `ayt::resource`，否则 AYResource convention 破（13 个 IResource 子类都在 `ayt::resource`）
-2. **fixture 路径迁移** — `../../AYAnimation/src/SkeletonMask.h`（sibling-source）→ `<assetsImpl/AYSkeletonMask.h>`（cross-submodule 但 AYResource PUBLIC include 已 expose）
+2. **fixture 路径迁移** — `../../AYAnimation/src/AYResource/assetsImpl/SkeletonMask.h>`（cross-submodule 但 AYResource PUBLIC include 已 expose）
 3. **`SkeletonMask::create()` 保留** — 同一份代码既支持 loader-driven 路径也支持 in-memory 测试路径；不破坏 P2.2 测试 ergonomics
 5. **0 CMake 改动** — AYResource 用 `GLOB_RECURSE` + `target_include_directories` PUBLIC `assetsDefs`；AYAnimation 已 link `AYResource`；新 include path 自动可达。**只有**`AYResource/unittest/CMakeLists.txt` 需要显式加新测试文件（因为 unittest list 是手写而非 GLOB）
 6. **forward-compat tripwire** — `loadFromBinary` 拒绝 `version > VERSION`，跟 IAnimation V4 / Skeleton V2 一致
@@ -1907,7 +1907,7 @@ P3.1 把 `StateMachine` 搬进 AYAnimation + 在 AYEntity 加 `AnimationStateMac
 #### 4.14.3 Data Model
 
 ```cpp
-// include/ayanimation/StateMachine.h (P3.1 NEW)
+// include/AYAnimation/StateMachine.h (P3.1 NEW)
 namespace ayt::anim {
 
 enum class StateConditionOp : uint8_t {
@@ -1988,7 +1988,7 @@ private:
     bool   _transitionedThisFrame = false;
 };
 
-// include/ayanimation/AnimStateChangedEvent.h (P3.1 NEW)
+// include/AYAnimation/AnimStateChangedEvent.h (P3.1 NEW)
 struct AnimStateChangedEvent {
     const ayt::entity::Entity* entity;
     std::string                previousState;
@@ -2133,7 +2133,7 @@ bool StateMachine::evaluateCondition(const StateCondition& c) const {
 
 #### 4.14.6 ECS Bridge (AYEntity)
 
-**File**: `AYEntity/include/components/AYAnimationStateMachineComponent.h` (P3.1 NEW)
+**File**: `AYEntity/include/AYEntity/components/AnimationStateMachineComponent.h` (P3.1 NEW)
 
 ```cpp
 namespace ayt::entity {
@@ -2162,7 +2162,7 @@ struct AnimationStateMachineComponent : public IComponent {
 } // namespace ayt::entity
 ```
 
-**File**: `AYEntity/include/AYStateMachineSystem.h` (P3.1 NEW)
+**File**: `AYEntity/include/AYEntity/StateMachineSystem.h` (P3.1 NEW)
 
 ```cpp
 namespace ayt::entity {
@@ -2258,7 +2258,7 @@ P3.1 ship **不带 `.ayasm` loader**。`AnimationStateMachineComponent::resource
 这与 §4.13.7 P3.x刀 1 defer 模式 1:1：bridge `load<StateMachine>(path)` 返回 nullptr → system 走 fail-soft "no state machine"。区别是 P3.1 连 "placeholder load 路径" 都没 ship ── 因为 `StateMachine` 状态图是 in-memory graph（不需要 on-disk 序列化），L1 用 API 注入即可。
 
 **P4.x ship 时**：
-- `include/assetsDefs/IAYStateMachine.h` formal interface + `AYStateMachine` concrete (类似 §4.13.7 `IAYSkeletonMask` 流程)
+- `include/AYAnimation/StateMachine.h` formal interface + `AYStateMachine` concrete (类似 §4.13.7 `IAYSkeletonMask` 流程)
 - `AYResource/src/Loader/StateMachineLoader.cpp` + `registerLoaderType("StateMachine", ".ayasm")`
 - `StateMachineSystem::buildStateMachine` 走 `ResourceManager::load<ayt::resource::IStateMachine>(c.resourcePath)` 路径
 
@@ -2383,7 +2383,7 @@ P3.2 ship **子状态机**：root 是顶层状态图，child 是 sub-graph；tra
 #### 4.15.3 Data Model
 
 ```cpp
-// include/ayanimation/StateMachine.h (P3.2 modify)
+// include/AYAnimation/StateMachine.h (P3.2 modify)
 namespace ayt::anim {
 
 struct State {
@@ -2732,7 +2732,7 @@ P3.1 L1 单 predicate (`Transition::condition: {paramName, op, compareValue}`) �
 **`Transition` 扩展缓存层** (P3.x NEW, 4 字段):
 
 ```cpp
-// include/ayanimation/StateMachine.h (P3.x NEW)
+// include/AYAnimation/StateMachine.h (P3.x NEW)
 struct Transition {
     // P3.1 + P3.2 fields preserved
     std::string trigger, fromState, toState;
@@ -2751,7 +2751,7 @@ struct Transition {
 **`ConditionExprAst` 类族** (P3.x NEW, 5 个类):
 
 ```cpp
-// include/ayanimation/ConditionExpr.h (P3.x NEW)
+// include/AYAnimation/ConditionExpr.h (P3.x NEW)
 namespace ayt::anim {
 
 enum class CondOp : uint8_t {
@@ -2812,7 +2812,7 @@ struct ConditionEvalCtx {
 **`ConditionParser` 签名** (P3.x NEW):
 
 ```cpp
-// include/ayanimation/ConditionParser.h (P3.x NEW)
+// include/AYAnimation/ConditionParser.h (P3.x NEW)
 class ConditionParser {
 public:
     static std::unique_ptr<CondExprAst> parse(const std::string& src, std::string& outErr);
@@ -3043,7 +3043,7 @@ L2 AST Visitor 接口 (`CondVisitor::visit(BinaryExpr/UnaryExpr/IdentifierExpr/L
 **`StateMachine` 加 time-in-state 字段 + API** (P3.x刀 N+1.B NEW):
 
 ```cpp
-// include/ayanimation/StateMachine.h (P3.x刀 N+1.B MODIFY)
+// include/AYAnimation/StateMachine.h (P3.x刀 N+1.B MODIFY)
 class StateMachine {
 public:
     // ... (existing API) ...
@@ -3069,7 +3069,7 @@ private:
 **`CondIdentifierExpr` reserved-name pre-check** (P3.x刀 N+1.B MODIFY):
 
 ```cpp
-// include/ayanimation/ConditionExpr.h (P3.x刀 N+1.B MODIFY)
+// include/AYAnimation/ConditionExpr.h (P3.x刀 N+1.B MODIFY)
 float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const override {
     // P3.x刀 N+1.B NEW — reserved identifiers take priority over user params.
     if (name == "CurrentStateTime") return ctx.currentStateTime;
@@ -3084,7 +3084,7 @@ float CondIdentifierExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const ove
 **`AnimNotifyRecord` + `AnimNotifyEvent` 加 `fromStateName`** (P3.x刀 N+1.C MODIFY):
 
 ```cpp
-// include/ayanimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
+// include/AYAnimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
 struct AnimNotifyRecord {
     const char*           name         = nullptr;
     float                 time         = 0.0f;
@@ -3099,7 +3099,7 @@ struct AnimNotifyRecord {
     std::string           fromStateName;
 };
 
-// include/ayanimation/AnimNotifyEvent.h (P3.x刀 N+1.C MODIFY, mirror)
+// include/AYAnimation/AnimNotifyEvent.h (P3.x刀 N+1.C MODIFY, mirror)
 struct AnimNotifyEvent {
     // ... (existing fields, kTypeId unchanged 0x000A'0001) ...
     AnimNotifySourceTag  sourceTag  = AnimNotifySourceTag::Base;
@@ -3110,7 +3110,7 @@ struct AnimNotifyEvent {
 **`AnimationPlayer` 加 setter** (P3.x刀 N+1.C MODIFY):
 
 ```cpp
-// include/ayanimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
+// include/AYAnimation/AnimationPlayer.h (P3.x刀 N+1.C MODIFY)
 class AnimationPlayer {
 public:
     // Set the active state name (called by AYEntity StateMachineSystem
@@ -3353,12 +3353,12 @@ P0 polish refactor: replace `std::unordered_map<std::string,float>` (StateMachin
 
 **Composition**:
 - **`detail::ParamNameRegistry`** (Meyers singleton) — interns `string → hash`. Holds `_byHash` (`std::vector<{hash, name}>`) for hash→string debug lookup.
-- **`ParamEntry { uint32_t hash; float value; }`** — flat row in `StateMachine._params`. Defined in `ConditionExpr.h` (avoids circular include with StateMachine.h).
+- **`ParamEntry { uint32_t hash; float value; }`** — flat row in `StateMachine._params`. Defined in `AYAnimation/ConditionExpr.h` (avoids circular include with AYAnimation/StateMachine.h).
 - **`StateMachine._params`** — `std::vector<ParamEntry>`. Pre-reserved capacity 8 in constructor. Linear scan for lookup (N ≤ 8 production).
 - **`StateMachine._triggers`** — `std::vector<uint32_t>` (sorted by hash). Pre-reserved capacity 4. `std::lower_bound` for membership / erase.
 
 ```cpp
-// include/ayanimation/ConditionExpr.h — ParamEntry (NEW, moved from StateMachine.h to break include cycle)
+// include/AYAnimation/ConditionExpr.h — ParamEntry (NEW, moved from AYAnimation/StateMachine.h to break include cycle)
 struct ParamEntry {
     uint32_t hash;   // FNV-1a(name) — canonical key
     float    value;
@@ -3374,7 +3374,7 @@ struct ConditionEvalCtx {
     float         currentStateTime = 0.0f;  // P3.x刀 N+1.B
 };
 
-// include/ayanimation/StateMachine.h — ParamNameRegistry (NEW)
+// include/AYAnimation/StateMachine.h — ParamNameRegistry (NEW)
 namespace detail {
 constexpr uint32_t fnv1a_32(const char* s) {
     uint32_t h = 2166136261u;
@@ -3395,7 +3395,7 @@ private:
 };
 } // namespace detail
 
-// StateMachine.h — private fields
+// AYAnimation/StateMachine.h — private fields
 std::vector<uint32_t>    _triggers;   // sorted by hash (INV-46)
 std::vector<ParamEntry>  _params;     // flat array (INV-45)
 ```
@@ -3556,8 +3556,8 @@ AYEntity 421 tests pass unchanged × 3.
 
 ### 4.18.10 Edge Cases & Lessons Learned
 
-1. **Circular include resolved** — `ParamEntry` definition moved from `StateMachine.h` to `ConditionExpr.h` (which `StateMachine.h` already includes). ConditionExpr.h never includes StateMachine.h, so no cycle. Header-order safe.
-2. **`unordered_map`/`unordered_set` includes removed from ConditionExpr.h** — no longer needed; `<vector>` added. StateMachine.h still includes both (used internally for `_stateIndexByName` and possibly elsewhere).
+1. **Circular include resolved** — `ParamEntry` definition moved from `AYAnimation/StateMachine.h` to `AYAnimation/ConditionExpr.h` (which `AYAnimation/StateMachine.h` already includes). AYAnimation/ConditionExpr.h never includes AYAnimation/StateMachine.h, so no cycle. Header-order safe.
+2. **`unordered_map`/`unordered_set` includes removed from AYAnimation/ConditionExpr.h** — no longer needed; `<vector>` added. AYAnimation/StateMachine.h still includes both (used internally for `_stateIndexByName` and possibly elsewhere).
 3. **ConditionEvalCtx field types changed** — only `StateMachine::findEligibleTransition` constructs the struct; `makeCtx` test helper adapted in 5 lines (AYTest_ConditionExpr.cpp). All 30 L2 tests re-validated with flat-vector `ConditionEvalCtx`.
 4. **Reserved `hash 0` sentinel** — FNV-1a baseline 2166136261u is non-zero; first byte XOR+multiply never produces 0 for non-empty input. Asserted in `fnv1a_32` contract (INV-43). User can pass empty string `""` — intern returns the FNV-1a hash of empty (also non-zero, well-defined); param lookup just falls through to 0.0f via the linear scan miss path.
 5. **`getParam` interns on every call** — even for `Unknown` params (returns 0.0f via fail-soft, INV-23). This grows the registry slightly per unique `Unknown` string. Production impact: zero (well-known params only).
@@ -3597,9 +3597,9 @@ P1 polish refactor: eliminate the remaining 3 per-frame `detail::ParamNameRegist
 
 P0 polish (`7898cb2`) eliminated 4 per-frame `intern()` calls in `setParam` / `getParam` / `setTrigger` / `CondIdentifierExpr::evaluateAsFloat`. **Audit revealed 3 more per-frame `intern()` callsites** that escaped P0 polish:
 
-1. `StateMachine::findEligibleTransition` ([StateMachine.cpp:293](../../runtime/ayanimation/src/StateMachine.cpp#L293)) — `intern(t.trigger)` for every transition's trigger check, per frame
-2. `Transition::evaluateCondition` L1 path ([StateMachine.cpp:486](../../runtime/ayanimation/src/StateMachine.cpp#L486)) — `intern(condition.paramName)` for every L1 condition eval, per frame
-3. `fireTransition` ([StateMachine.cpp:334](../../runtime/ayanimation/src/StateMachine.cpp#L334)) — `intern(t.trigger)` for trigger erase after fire
+1. `StateMachine::findEligibleTransition` ([StateMachine.cpp:293](../../runtime/AYAnimation/src/StateMachine.cpp#L293)) — `intern(t.trigger)` for every transition's trigger check, per frame
+2. `Transition::evaluateCondition` L1 path ([StateMachine.cpp:486](../../runtime/AYAnimation/src/StateMachine.cpp#L486)) — `intern(condition.paramName)` for every L1 condition eval, per frame
+3. `fireTransition` ([StateMachine.cpp:334](../../runtime/AYAnimation/src/StateMachine.cpp#L334)) — `intern(t.trigger)` for trigger erase after fire
 
 **Production impact**: a state machine with 5 transitions ticked at 60 fps walks `findEligibleTransition` (5 triggerHash lookups + 5 conditionParamNameHash lookups) per frame = ~600 hash lookups/sec/entity. With ~50 entities, that's **30,000 hash lookups/sec across two callsites** = ~7.5 ms/sec debug build at 250 ns/intern (the linear scan over a ~50-entry process-global registry).
 
@@ -3615,10 +3615,10 @@ Both `trigger` and `condition.paramName` are **author-set once and immutable aft
 - **`Transition::triggerHash`** (`uint32_t`) — pre-computed at `addTransition` time. 0 ⟺ `trigger.empty()`.
 - **`Transition::conditionParamNameHash`** (`uint32_t`) — pre-computed at `addTransition` time. 0 ⟺ `!hasCondition || condition.paramName.empty()`.
 - **`CondIdentifierExpr::nameHash`** (`uint32_t`) — pre-computed at ctor time. 0 ⟺ empty name.
-- **`detail::ParamNameRegistry` is split into its own header** (`ParamNameRegistry.h`) so `ConditionExpr.h`'s inline `CondIdentifierExpr` ctor can call `intern()` once without circular include (StateMachine.h includes ConditionExpr.h, so ConditionExpr.h cannot include StateMachine.h). ParamNameRegistry.h is the leaf — included by both.
+- **`detail::ParamNameRegistry` is split into its own header** (`AYAnimation/ParamNameRegistry.h`) so `AYAnimation/ConditionExpr.h`'s inline `CondIdentifierExpr` ctor can call `intern()` once without circular include (AYAnimation/StateMachine.h includes AYAnimation/ConditionExpr.h, so AYAnimation/ConditionExpr.h cannot include AYAnimation/StateMachine.h). AYAnimation/ParamNameRegistry.h is the leaf — included by both.
 
 ```cpp
-// include/ayanimation/ParamNameRegistry.h (NEW, split from StateMachine.h)
+// include/AYAnimation/ParamNameRegistry.h (NEW, split from AYAnimation/StateMachine.h)
 namespace ayt::anim::detail {
 constexpr uint32_t fnv1a_32(const char* s) { /* unchanged from §4.18 */ }
 
@@ -3636,14 +3636,14 @@ private:
 };
 } // namespace ayt::anim::detail
 
-// include/ayanimation/StateMachine.h — Transition struct (P1 polish additions)
+// include/AYAnimation/StateMachine.h — Transition struct (P1 polish additions)
 struct Transition {
     // ... existing P3.x fields ...
     uint32_t triggerHash              = 0;  // P1 polish (INV-47)
     uint32_t conditionParamNameHash   = 0;  // P1 polish (INV-48)
 };
 
-// include/ayanimation/ConditionExpr.h — CondIdentifierExpr (P1 polish additions)
+// include/AYAnimation/ConditionExpr.h — CondIdentifierExpr (P1 polish additions)
 struct CondIdentifierExpr final : public CondExprAst {
     std::string name;
     uint32_t    nameHash = 0;  // P1 polish (INV-50)
@@ -3800,7 +3800,7 @@ AYEntity 421 tests pass unchanged × 3.
 ### 4.19.10 Edge Cases & Lessons Learned
 
 1. **Transition author-set immutability invariant** — `Transition.trigger` and `Transition.condition.paramName` are author-set once (mirrors `fromState` / `toState`). Pre-P1 polish, the per-frame `intern()` masked any drift between authoring and runtime; post-P1 polish, drift would produce a stale cache. **Mitigation**: lazy fallback in 3 hot-path callsites — if cached hash is 0 but source is non-empty, recompute on demand. Production never hits the fallback (cost 0); test fixtures that mutate via `const_cast` still work.
-2. **Header split to break circular include** — `CondIdentifierExpr` ctor needs to call `detail::ParamNameRegistry::intern()`. `StateMachine.h` already includes `ConditionExpr.h`, so `ConditionExpr.h` cannot include `StateMachine.h`. **Solution**: split `ParamNameRegistry` into its own leaf header `ParamNameRegistry.h`; both StateMachine.h and ConditionExpr.h include it; the `kEmpty` sentinel is defined in StateMachine.cpp (the only .cpp that needs it). Header-order safe.
+2. **Header split to break circular include** — `CondIdentifierExpr` ctor needs to call `detail::ParamNameRegistry::intern()`. `AYAnimation/StateMachine.h` already includes `AYAnimation/ConditionExpr.h`, so `AYAnimation/ConditionExpr.h` cannot include `AYAnimation/StateMachine.h`. **Solution**: split `ParamNameRegistry` into its own leaf header `AYAnimation/ParamNameRegistry.h`; both AYAnimation/StateMachine.h and AYAnimation/ConditionExpr.h include it; the `kEmpty` sentinel is defined in StateMachine.cpp (the only .cpp that needs it). Header-order safe.
 3. **`0` hash sentinel pre-check** — FNV-1a baseline 2166136261u ≠ 0 (and the hash function never produces 0 for non-empty input). Use `0 ⟺ empty` as the universal pre-check across 4 callsites (`addTransition` × 2, `findEligibleTransition`, `evaluateCondition`, `fireTransition`). Cost is one `cmp/jne` — branches the empty case out of `intern()`.
 4. **`withHashes` local copy + move pattern** — `Transition` is a POD-like struct held in `std::vector<Transition>` (copy required for push_back). We don't want callers to need to know about the new hash fields. **Pattern**: copy input → mutate the 2 hash fields → `push_back(std::move(withHashes))`. Constructor / API surface unchanged; existing user code that constructs `Transition t; sm.addTransition(t);` works without modification.
 5. **Constructor-time cache eliminates hot-path intern cleanly** — `CondIdentifierExpr::nameHash` is intern'd once when the parser constructs the node. Every subsequent `evaluateAsFloat` call walks `ctx.params` with the cached hash directly — no intern, no registry lookup. AST is built once at parse time (or lazily on first eval via the L2 cache); per-frame cost is just the linear scan over the param vector.
@@ -3809,7 +3809,7 @@ AYEntity 421 tests pass unchanged × 3.
 8. **Process-global registry test fixture interaction** — the process-global registry shares state across all SM instances in a test suite. P1 polish tests assert `registrySizeAfter - registrySizeBefore == 1`; this is robust because each test uses a unique name. If tests shared a name, the delta would be 0 and the assertion would fail (correctly indicating no new intern).
 9. **Reserved ident priority preserved** — `"CurrentStateTime"` string compare in `evaluateAsFloat` runs **before** the nameHash lookup (INV-51). The string compare is cheap (~5 ns SSO) and preserves the existing P3.x刀 N+1.B shadow semantic (user params named `CurrentStateTime` are ignored in favor of the live state-machine clock). Cached `nameHash` is computed for `CurrentStateTime` too (no special case in ctor) — the string compare just wins the race in `evaluateAsFloat`.
 10. **`Transition` copy semantics preserved** — the new `uint32_t` fields are POD; default copy ctor copies them. `vector<Transition>::push_back` (which copies) works unchanged. No move-only semantics introduced.
-11. **`kEmpty` sentinel location** — `kEmpty` is defined as `const std::string ayt::anim::detail::ParamNameRegistry::kEmpty;` in `StateMachine.cpp` (line 24). After the header split, `ConditionExpr.h` and `ParamNameRegistry.h` no longer define it directly; the symbol is provided by the .cpp. Header-linker safe.
+11. **`kEmpty` sentinel location** — `kEmpty` is defined as `const std::string ayt::anim::detail::ParamNameRegistry::kEmpty;` in `StateMachine.cpp` (line 24). After the header split, `AYAnimation/ConditionExpr.h` and `AYAnimation/ParamNameRegistry.h` no longer define it directly; the symbol is provided by the .cpp. Header-linker safe.
 
 ### 4.19.11 Migration / Upgrade Hooks
 
@@ -3850,10 +3850,10 @@ The win is the elimination of per-eval virtual dispatch + AST node traversal. No
 ### 4.20.3 Data Model
 
 **New files**:
-- **`include/ayanimation/CondBytecode.h`** — `struct CondBytecode { std::vector<uint8_t> program; std::vector<float> literals; }` + `CondOpByte` enum (10 opcodes) + `CondReservedId` enum + `compileToBytecode(const CondExprAst*)` API.
+- **`include/AYAnimation/CondBytecode.h`** — `struct CondBytecode { std::vector<uint8_t> program; std::vector<float> literals; }` + `CondOpByte` enum (10 opcodes) + `CondReservedId` enum + `compileToBytecode(const CondExprAst*)` API.
 - **`src/CondBytecode.cpp`** — the program-counter switch evaluator.
 
-**New field** on `Transition` (StateMachine.h):
+**New field** on `Transition` (AYAnimation/StateMachine.h):
 ```cpp
 mutable std::shared_ptr<CondBytecode> cachedBytecode;  // INV-57 — copyable
 ```
@@ -3967,7 +3967,7 @@ Key fix in this ship: comparisons must compile the **right subtree before emitti
 
 1. **bit-30 sign-tag scheme is fundamentally broken** — the original literal encoding tagged float sign in bit 30 (`bits & 0x40000000u`). IEEE-754 exponent occupies bits 23..30, so any literal with |v| ≥ 2.0 (e.g. `5.0` = 0x40A00000) had bit 30 set and decoded as **negative** → `Speed > 5.0` evaluated `3 > -5` = true. The parity test's Case 2 (`Speed=3` against `5.0`) caught it. **Fix**: flat `std::vector<float>` — no tag bits, no encoding at all. Bools are 1.0f/0.0f and coerce with `!= 0.0f`, which the AST already does. **Lesson**: don't pack metadata into float bitfields without checking IEEE-754 layout per magnitude range.
 2. **per-eval `std::vector` stack is an 8x slowdown** — the first evaluator allocated `std::vector<float> stack; stack.reserve(8)` every call → heap alloc + capacity check per eval → **1133 ns/iter, 8x slower than AST** (144 ns). **Fix**: fixed `float stack[16]` + `std::size_t sp` with bounds guards (fail-soft on overflow). Recovered to 773 ns (1.34x faster than AST). **Lesson**: on a per-frame hot path, per-call heap allocation dominates everything.
-3. **MSVC struct/class tag mangling** — `struct CondExprAst;` forward decl in CondBytecode.h vs `class CondExprAst` in ConditionExpr.h → C4099 + LNK2019 (mangled name differs per first-seen tag kind per TU). **Fix**: match the tag kind (`class CondExprAst;`). Same rule as `ConditionEvalCtx` (declared `struct` in ConditionExpr.h). This is the second instance of this landmine in this repo.
+3. **MSVC struct/class tag mangling** — `struct CondExprAst;` forward decl in AYAnimation/CondBytecode.h vs `class CondExprAst` in AYAnimation/ConditionExpr.h → C4099 + LNK2019 (mangled name differs per first-seen tag kind per TU). **Fix**: match the tag kind (`class CondExprAst;`). Same rule as `ConditionEvalCtx` (declared `struct` in AYAnimation/ConditionExpr.h). This is the second instance of this landmine in this repo.
 4. **stale .obj layout mismatch → RTC_StackFailure** — `AYTest_SubStateMachine.cpp.obj` compiled against the pre-P2 `Transition` layout; the new `addTransition` copy (`Transition withHashes = t;`) read a garbage `shared_ptr` past the old struct → `_Incref()` wrote past the stack canary. **Fix**: touch the source file → ninja recompiles. Symptom moved between tests (crash in different TEST_CASEs) — classic stale-obj signature (memory: always suspect stale .obj before adding diagnostics).
 5. **compileNode comparison bug (10 test failures)** — comparisons returned after compiling the left subtree; the right subtree was never emitted → literal table empty + evaluator stack underflow → fail-soft false → transitions never fire (broke new P2 tests AND legacy L2/TIS tests that now route through the bytecode hot path). **Fix**: compile right subtree before emitting the opcode.
 6. **shared_ptr for copyability (INV-57)** — `vector<Transition>::push_back` requires copyable `Transition`. `unique_ptr<CondBytecode>` would break it. `shared_ptr` + `mutable` + lazy build keeps `const` API semantics.
@@ -4012,7 +4012,7 @@ P1.7（§4.12.1）设计时 mutex 是「保险 + thread-sanitizer 友好」— �
 ### 4.21.3 Data Model
 
 **改文件 2 个**（零新文件）：
-- **`include/ayanimation/AssetBoneCache.h`** — 新增 `bool _threadSafe = false;`（INV-59 默认）+ 2 个新 method 声明 + thread-safety 注释段改写。
+- **`include/AYAnimation/AssetBoneCache.h`** — 新增 `bool _threadSafe = false;`（INV-59 默认）+ 2 个新 method 声明 + thread-safety 注释段改写。
 - **`src/AssetBoneCache.cpp`** — anonymous namespace 新增 `maybeLock(std::mutex&, bool)` RAII helper（`enabled ? unique_lock(mu) : unique_lock()` — default ctor noexcept 零成本，锁路径 RAII 语义不变）；7 个访问点 `lock_guard` → `unique_lock lk = maybeLock(_mu, _threadSafe);`。
 
 **新增 API**（§4.21.4）：
@@ -4234,7 +4234,7 @@ Condition DSL 从 8 算子扩到 **13**（`> < == != && || !` + 新增 `+ - * /`
 
 ### 4.23.8 Invariants
 
-**INV-64..69 全部 NEW**（见 §4.23.1/5 引用 + ConditionExpr.h 头注释）：
+**INV-64..69 全部 NEW**（见 §4.23.1/5 引用 + AYAnimation/ConditionExpr.h 头注释）：
 
 - INV-64 — Add/Sub/Mul/Div 二元 float 算子；evaluateAsFloat 算值 / evaluate 强转 bool；比较/逻辑子表达式在 float 上下文仍 0.0f
 - INV-65 — lexer 负号消歧（`A-3` == `A - 3`；负字面量形状保留）
@@ -4376,12 +4376,12 @@ Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
 | Step | 文件 | 内容 | 测试 |
 |---|---|---|---|
 | P0.1 | AYAnimation/design.md | 修订（本文档）| — |
-| P0.2 | Skeleton.h/cpp + Animation.h/cpp | **删** parallel type | 编译通过 |
-| P0.3 | AnimationPlayer.h/cpp | 改消费 `ISkeleton/IAnimation` | 现有 6 case 仍 PASS |
+| P0.2 | AYResource/assetsImpl/Animation.h/cpp | **删** parallel type | 编译通过 |
+| P0.3 | AYAnimation/AnimationPlayer.h/cpp | 改消费 `ISkeleton/IAnimation` | 现有 6 case 仍 PASS |
 | P0.4 | KeySampler.cpp | `dot<0` slerp 选优 | 现有 Quat slerp 仍 PASS + 新 dot<0 case |
 | P0.5 | CMakeLists.txt | `target_link_libraries(... AYResource)` | 编译通过 |
 | P0.6 | AYEntity/AYResourceAnimationAdapter.{h,cpp} | **删**（被 AnimationPlayer 直接消费替代）| SkinnedAnimationTest 仍 PASS |
-| P0.7 | AnimationPlayer.h/cpp | Float track sink + 预转换 ticks | 新 `float_track_drives_parameter` case |
+| P0.7 | AYAnimation/AnimationPlayer.h/cpp | Float track sink + 预转换 ticks | 新 `float_track_drives_parameter` case |
 | P0.8 | AnimationPlayer.cpp | topology assert + matrix 约定 lock-test + IBM=0 safe | 3 个新 case |
 
 **完成定义**：8 步全 ✓ + 16+ tests 3-run stable。
@@ -4396,14 +4396,14 @@ Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
 | P1.4 | Hot-path 优化 + Cross-Fade full ship：track → boneIndex 预解析 (已 ship) + keyframed weight curve (`blendWeightOverTime` with 4 ease flavors reusing AYMath) + syncToBase option (additive playhead lock-step to base) + ref-pose capture path (CaptureState 3-state machine replacing rest-pose-at-0 assumption) + additive pause/resume (INV-8 unified with base pause)── ✅ **FULL SHIP 2026-07-26**; 8 AnimationPlayer tests + 3 AYEntity tests; 0 regression across 3 modules (701+312+187) |
 | P1.5 | Multi-slot stack：`vector<AdditiveSlot>` (kMaxAdditiveSlots=8) + notify merge/`sourceTag` + `trackWeights` opt-in + AYEntity `AdditiveLayerSpec` 桥接 + EventBus `AnimNotifyEvent.sourceTag` pipe ── ✅ **FULL SHIP 2026-07-27**; 22 AnimationPlayer tests + 5 AYEntity tests; 0 regression across 3 modules (AYAnimation 398/398 + AYEntity 216/216 × 3); 详见 §4.11; 共享 skeleton tick cache 仍留 P1.6 |
 | P1.6 | Deprecate Wrapper Cleanup：真实删除 `setAdditiveWeight` / `getAdditiveWeight`（P1.2 inline-forward）+ `consumePendingNotifiesAdditive` / `getPendingNotifyCountAdditive`（P1.3 DEPRECATE-P1.5）+ dead `dispatchAdditiveNotifies` helper；bridge 改 canonical `setBlendWeight`；tests 11 + 8 caller 改 canonical；`P1_3_NotifyIndependence_BaseAndAdditive` 改测 merged queue + sourceTag ── ✅ **SHIP 2026-07-27**; 3-run stable 398/398 + 216/216 + 701/701 × 3, zero regression。**共享 skeleton tick cache 留 P1.7**（需 ECS refactor `SkeletonComponent::skeleton` → `shared_ptr<const ISkeleton>`） |
-| P1.7 | Shared Skeleton Tick Cache = **ECS refactor** + **asset-level boneIdx cache**：(A) `SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert 给 `setSkeleton(shared_ptr<const ISkeleton>)`），N entity 同 skeleton 共享 1 份 asset，砍 N 倍内存 + N 次首帧 `setBoneCount + n×setBone()` 拷贝；(B) `AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx` 跨 player 共享；`AnimationPlayer::_skeleton` 改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AssetBoneCache.h/cpp` + 改 6 文件 + 60+ AYAnim + 14 AYEntity test callsite + 6 + 2 新 test。**关键 footgun**：inline-build skeleton test 必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `*skel->skeleton`。On-disk format 不变（`.ayanm` v4 / `.ayskel` v1） ── ✅ **SHIP 2026-07-27**; 3-run stable 420/420 + 701/701 × 3 (AYAnimation + AYResource); AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §4.12 |
+| P1.7 | Shared Skeleton Tick Cache = **ECS refactor** + **asset-level boneIdx cache**：(A) `SkeletonComponent::skeleton` by-value → `shared_ptr<Skeleton>`（implicit convert 给 `setSkeleton(shared_ptr<const ISkeleton>)`），N entity 同 skeleton 共享 1 份 asset，砍 N 倍内存 + N 次首帧 `setBoneCount + n×setBone()` 拷贝；(B) `AssetBoneCache` 单例（mutex）`(ISkeleton* addr, boneName) → boneIdx` 跨 player 共享；`AnimationPlayer::_skeleton` 改 shared_ptr；`resolveBoneIdxOnce` 走 AssetBoneCache（hit 直接写、miss resolveAndCache）。新文件 `AYAnimation/AssetBoneCache.h/cpp` + 改 6 文件 + 60+ AYAnim + 14 AYEntity test callsite + 6 + 2 新 test。**关键 footgun**：inline-build skeleton test 必须先 `skel->skeleton = std::make_shared<Skeleton>()` 再 `*skel->skeleton`。On-disk format 不变（`.ayanm` v4 / `.ayskel` v1） ── ✅ **SHIP 2026-07-27**; 3-run stable 420/420 + 701/701 × 3 (AYAnimation + AYResource); AYEntity 含 1 个 pre-existing CharacterEntity flake（与 P1.7 无关）。详见 §4.12 |
 
 ### P2 — 混合 + 蒙皮（~3 PR 量）
 
 | Step | 内容 |
 |---|---|
-| P2.1 | Blend 1D / Blend 2D（BlendTree 节点类型）── ✅ **SHIP 2026-07-28 `68f4227`**（BlendSpace 1D/2D：BlendSpace.h/cpp + AYTest_BlendSpace.cpp 13 cases；P3.x刀2 BlendTree-in-SM 直接建立在它之上）|
-| P2.2 | 骨骼遮罩 (Skeleton Mask) ── ✅ **SHIP 2026-08-03** + **P3.x刀1 .aymask loader ship 2026-08-06** — ISkeletonMask 移去 `ayt::resource` namespace + `IAYSkeletonMask.h` formal interface + `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` + 12 case loader 测试 + 1 case Bootstrap 测试 + 4 文件 include flip；AYAnimation 510/510 + AYEntity 338/338 + AYResource 1044/1044 × 3 stable，零回归 |
+| P2.1 | Blend 1D / Blend 2D（BlendTree 节点类型）── ✅ **SHIP 2026-07-28 `68f4227`**（BlendSpace 1D/2D：AYAnimation/BlendSpace.h/cpp + AYTest_BlendSpace.cpp 13 cases；P3.x刀2 BlendTree-in-SM 直接建立在它之上）|
+| P2.2 | 骨骼遮罩 (Skeleton Mask) ── ✅ **SHIP 2026-08-03** + **P3.x刀1 .aymask loader ship 2026-08-06** — ISkeletonMask 移去 `ayt::resource` namespace + `AYResource/assetsDefs/ISkeletonMask.h` formal interface + `AYSkeletonMask` concrete + `SkeletonMaskLoader` + `registerLoaderType("SkeletonMask", ".aymask")` + 12 case loader 测试 + 1 case Bootstrap 测试 + 4 文件 include flip；AYAnimation 510/510 + AYEntity 338/338 + AYResource 1044/1044 × 3 stable，零回归 |
 | P2.3 | Montage 语义 Slot（**对齐** §4.8 AdditiveSlot，禁止第二套 layer API）|
 | P2.4 | Dual-Quaternion Skinning |
 | P2.5 | CPUSkinningPass（独立 module，CPU 顶点变形真输出）|
@@ -4417,8 +4417,8 @@ Scenario G/H 在 **x64-Release** 首测（debug 基线今日同跑对照）：
 | P3.2 | L3 子状态机 ── ✅ **SHIP 2026-08-06**：StateMachine 加 `vector<unique_ptr<StateMachine>> _children` + `_currentChildIndex` + `State.isSubMachine / subMachineIndex` + `addSubMachine / getActiveSubMachine / getActiveLeafStateName` API + StateMachine 显式 move-only（`_children` 不可拷贝）+ 递归 `setTrigger / setParam`（INV-28）+ child-first transition fallback（INV-29）+ `getActiveLeafStateName` 深度 ≤ 2（INV-30）+ `_currentChildIndex` 在 transition complete / instant cut 同步更新（INV-31）+ ECS bridge 兑现 dt plumbing（`sm.update(0.0f)` → `sm.update(dt)`）+ `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry state 不调 `player.play()`（child SM drives, INV-27）+ 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；3-run stable AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3，零回归；详见 §4.15 + §13 row 21 + §11 P3.2 row |
 | **P3.x** | **L2 Condition DSL ── ✅ SHIP 2026-08-07**：Transition 扩展缓存层（`conditionExpr / cachedAst / conditionDirty / conditionParseError` 4 字段）+ `setConditionExpr` / `invalidateConditionCache` / `evaluateCondition(ctx)` 3 API + `ConditionExprAst` 类族（Binary/Unary/Identifier/Literal + Visitor 接口给 P4.x graph-builder 留口）+ `ConditionParser`（mini Lexer + precedence-climbing Parser，照抄 AYShader pattern 但 0 link AYShader / AYScript / AYGraph）+ 8 算子（`> < == != && \|\| ! ()`）+ 字面量 float / bool + 短路求值（`&&` / `\|\|`）+ 负数字面量 + lazy parse + dirty cache + `setConditionExpr` auto-flag dirty + 显式 `invalidateConditionCache()` + parse-fail-soft-false（cachedAst=null + conditionParseError 非空 + stderr 一行 + transition 永假）+ L1 back-compat 双轨（`hasCondition=true + conditionExpr=""` 走 L1；非空 conditionExpr 走 L2）+ `ConditionEvalCtx` 4 字段（`params / triggers / currentState / currentStateTime`，后两个留 P3.x刀 N+1 钩子）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）；3-run stable AYAnimation 703/703 + AYEntity 401/401 + AYResource 1044/1044 × 3，零回归；详见 §4.16 + §13 row 20b + §11 P3.x row。**.ayasm loader / per-state AnimNotify routing / 算术 / 函数调用 / 节点图 deferred** |
 | **P3.x刀 N+1** | **B Time-in-State Query + C Per-state AnimNotify Routing ── ✅ SHIP 2026-08-07**：**B** `StateMachine._currentStateEnterTime : float` 新字段 + `getCurrentStateElapsedTime() const → float` 公共 API + `update(dt)` 顶部 +dt 累加（即使 mid-transition 也累加，UE `FAnimNode_StateMachine::GetCurrentStateElapsedTime` 一致）+ `setInitialState` / lazy-init / `fireTransition` instant-cut + `fireTransition` cross-fade START 4 处 reset `_currentStateEnterTime = 0.0f` + `ConditionEvalCtx` 兑现 `currentStateTime`（`StateMachine::findEligibleTransition` 内 1 line 从 `0.0f` literal 改 `getCurrentStateElapsedTime()`）+ `CondIdentifierExpr::evaluateAsFloat` reserved-name pre-check `CurrentStateTime`（3 LoC，shadow user params 优先 SM 内部状态；UE pattern 同样不 raise warning）+ **C** `AnimNotifyRecord::fromStateName : std::string` + `AnimNotifyEvent::fromStateName : std::string` 字段（default empty back-compat sentinel，P1.3/P1.4/P1.5 398 tests 0 回归）+ `AnimationPlayer._currentStateNameForNotify` 字段 + `setCurrentStateName(std::string)` setter + `getCurrentStateName() const → const string&` getter + `AnimationPlayer::dispatchPendingNotifies` / `dispatchSlotNotifies` 路径 2-step pattern 写 `fromStateName`（避免 `push_back({...})` brace-init 跟 std::string alignment 冲突——P1.5 13-test regression 的 root cause）+ AYEntity `StateMachineSystem` bridge **every-tick** `player->setCurrentStateName(sm.getCurrentStateName())`（从 transition-only 改为 every-tick——1 line 简化，无 init 标志，避免 wire-up 后 first tick player cache 仍空）+ **6 TIS unit tests** + **4 ANR unit tests**（NEW `AYTest_AnimNotifyRouting.cpp`） + **4 ECS integration tests** (TIS_GT_Fires + ANR_NotifyCarriesFromStateName + ANR_PerStateRoute_SubscriberFilters + TIS_NoRegression)；3-run stable AYAnimation 752/752 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.17 + §13 row 20b (deferred 兑现) + §11 P3.x刀 N+1 row。**INV-36..39** (time-in-state 契约) + **INV-40..42** (per-state notify 契约) 全部 NEW。**L1/L2/L3 全 preserved**。**OnStateEntered/Exited event / 多状态 notify / arithmetic / functions / `.ayasm` loader / state-graph UI 全部 deferred** |
-| **P0 polish** | **Flat-array params/triggers + FNV-1a ParamName Registry ── ✅ SHIP 2026-08-07**（§14 row 由 P2 polish ship day 2026-08-08 补录——P0 ship day 遗漏）：`StateMachine._params` 从 `std::unordered_map<std::string, float>` 改 `std::vector<ParamEntry>`（pre-reserve 8, linear scan, cache-friendly, N ≤ 8 production）+ `StateMachine._triggers` 从 `std::unordered_set<std::string>` 改 sorted `std::vector<uint32_t>`（pre-reserve 4, `std::lower_bound`, N ≤ 4 production）+ `detail::ParamNameRegistry` Meyers singleton FNV-1a 32-bit hash + `ParamEntry { uint32_t hash; float value; }` 移到 `ConditionExpr.h` 避免循环 include + 6 private helpers + `getParamName` / `getParamNameRegistrySize` debug read-back + `ConditionEvalCtx` field types change + `CondIdentifierExpr::evaluateAsFloat` 改 intern+linear scan + **public API 0 change**（ECS bridge 0 touch；L1/L2/L3 preserved）+ 2 new unit tests (INV-43..46 pin) + 30 L2 tests makeCtx 5-line shift + micro-benchmark 4 scenarios；3-run stable AYAnimation 759/759 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.18。**INV-43..46** 全部 NEW。Hot-path speedup (debug): getParam 8 params 4.0x / 1 param 5.2x / 32 params 1.7x；setTrigger regression 0.4x (debug-only, accepted)。**AST → 扁平字节码 (P2 polish) deferred → §4.20 RESOLVED** |
-| **P1 polish** | **Hot-Path Eval Hash Caching ── ✅ SHIP 2026-08-07**：`Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（`addTransition` 一次性 `ParamNameRegistry::intern()` 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`StateMachine::findEligibleTransition` / `Transition::evaluateCondition` L1 path / `StateMachine::fireTransition`) 改 cached hash + **lazy fallback**（test fixture `const_cast` mutation 后 cached hash=0 但 source 非空则 re-intern on the fly——production 永 0 cost 走 hit path，仅 fixture 走 fallback）+ `detail::ParamNameRegistry` **拆 leaf header `ParamNameRegistry.h`**（让 `ConditionExpr.h` inline ctor 调 `intern()` 无循环 include；`kEmpty` 在 `StateMachine.cpp` 定义）+ **public API 0 change**（`Transition` / `CondIdentifierExpr` / `ConditionParser` / `StateMachine` 签名 identical；ECS bridge `AYStateMachineSystem::onUpdate` 0 touch；INV-18..42 全部 preserved）+ **2 new unit tests** (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + **3 new unit tests** (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` 0 sentinel pre-check 跳过空名 intern + `P1_CondIdent_Evaluate_NoIntern` 1000× eval 后 registry size 不变证明 0 per-eval intern + reserved ident `"CurrentStateTime"` INV-51 priority preserved) + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` **+ Scenario E** `findEligibleTransition` 5 transitions × 100K iter (scan 1251 ns + scan+fire 2391 ns) + **+ Scenario F** DSL evaluate 3-ident `(Speed>5) && IsGrounded && !IsDead` × 100K iter (true path 132 ns + short-circuit 113 ns)；3-run stable AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.19 + §13 row 20e (NEW) + §11 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat + author-set immutability) 全部 NEW。**AST → 扁平字节码 (P2 polish) → §4.20 RESOLVED 2026-08-08 / AssetBoneCache lock-free (D polish) → §4.21 RESOLVED 2026-08-08 / Additive slot dynamic vector (内存复用方向) → §4.22 P4 polish RESOLVED 2026-08-10 / setTriggerByHash caller-side cache (P2 polish .A) 全部 deferred** |
+| **P0 polish** | **Flat-array params/triggers + FNV-1a ParamName Registry ── ✅ SHIP 2026-08-07**（§14 row 由 P2 polish ship day 2026-08-08 补录——P0 ship day 遗漏）：`StateMachine._params` 从 `std::unordered_map<std::string, float>` 改 `std::vector<ParamEntry>`（pre-reserve 8, linear scan, cache-friendly, N ≤ 8 production）+ `StateMachine._triggers` 从 `std::unordered_set<std::string>` 改 sorted `std::vector<uint32_t>`（pre-reserve 4, `std::lower_bound`, N ≤ 4 production）+ `detail::ParamNameRegistry` Meyers singleton FNV-1a 32-bit hash + `ParamEntry { uint32_t hash; float value; }` 移到 `AYAnimation/ConditionExpr.h` 避免循环 include + 6 private helpers + `getParamName` / `getParamNameRegistrySize` debug read-back + `ConditionEvalCtx` field types change + `CondIdentifierExpr::evaluateAsFloat` 改 intern+linear scan + **public API 0 change**（ECS bridge 0 touch；L1/L2/L3 preserved）+ 2 new unit tests (INV-43..46 pin) + 30 L2 tests makeCtx 5-line shift + micro-benchmark 4 scenarios；3-run stable AYAnimation 759/759 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.18。**INV-43..46** 全部 NEW。Hot-path speedup (debug): getParam 8 params 4.0x / 1 param 5.2x / 32 params 1.7x；setTrigger regression 0.4x (debug-only, accepted)。**AST → 扁平字节码 (P2 polish) deferred → §4.20 RESOLVED** |
+| **P1 polish** | **Hot-Path Eval Hash Caching ── ✅ SHIP 2026-08-07**：`Transition.triggerHash` + `Transition.conditionParamNameHash` 2 字段（`addTransition` 一次性 `ParamNameRegistry::intern()` 缓存）+ `CondIdentifierExpr.nameHash` 字段（ctor 一次性 intern 缓存）+ 3 hot-path callsite (`StateMachine::findEligibleTransition` / `Transition::evaluateCondition` L1 path / `StateMachine::fireTransition`) 改 cached hash + **lazy fallback**（test fixture `const_cast` mutation 后 cached hash=0 但 source 非空则 re-intern on the fly——production 永 0 cost 走 hit path，仅 fixture 走 fallback）+ `detail::ParamNameRegistry` **拆 leaf header `AYAnimation/ParamNameRegistry.h`**（让 `AYAnimation/ConditionExpr.h` inline ctor 调 `intern()` 无循环 include；`kEmpty` 在 `StateMachine.cpp` 定义）+ **public API 0 change**（`Transition` / `CondIdentifierExpr` / `ConditionParser` / `StateMachine` 签名 identical；ECS bridge `AYStateMachineSystem::onUpdate` 0 touch；INV-18..42 全部 preserved）+ **2 new unit tests** (`P1_Transition_TriggerHash_CachedAtAddTransition` 唯一名避 process-global registry 累积污染 + `P1_Transition_ConditionHash_CachedAtAddTransition`) + **3 new unit tests** (`P1_CondIdent_NameHash_NonEmpty` + `P1_CondIdent_NameHash_EmptyName_HashZero` 0 sentinel pre-check 跳过空名 intern + `P1_CondIdent_Evaluate_NoIntern` 1000× eval 后 registry size 不变证明 0 per-eval intern + reserved ident `"CurrentStateTime"` INV-51 priority preserved) + micro-benchmark `AYAnimation/benchmark/state_machine_params_bench.cpp` **+ Scenario E** `findEligibleTransition` 5 transitions × 100K iter (scan 1251 ns + scan+fire 2391 ns) + **+ Scenario F** DSL evaluate 3-ident `(Speed>5) && IsGrounded && !IsDead` × 100K iter (true path 132 ns + short-circuit 113 ns)；3-run stable AYAnimation 1783/1783 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.19 + §13 row 20e (NEW) + §11 P1 polish row。**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat + author-set immutability) 全部 NEW。**AST → 扁平字节码 (P2 polish) → §4.20 RESOLVED 2026-08-08 / AssetBoneCache lock-free (D polish) → §4.21 RESOLVED 2026-08-08 / Additive slot dynamic vector (内存复用方向) → §4.22 P4 polish RESOLVED 2026-08-10 / setTriggerByHash caller-side cache (P2 polish .A) 全部 deferred** |
 | **P2 polish** | **Condition DSL AST → Flat Bytecode ── ✅ SHIP 2026-08-08**：`CondBytecode` 平行缓存（`std::vector<uint8_t> program` + `std::vector<float> literals` flat float table，无 tag bit）+ 10 opcodes + `CondReservedId` + `compileToBytecode(ast)` post-order walk（comparison: left→right→op；And/Or: placeholder + patch int8_t relative-jump INV-58）+ program-counter switch evaluator（`float stack[16]` 固定栈数组 + 全边界 guard fail-soft，**0 per-eval heap alloc**——vector 栈实测 8x 慢）+ `Transition.cachedBytecode` `mutable shared_ptr` lazy build（INV-52/57）+ `Transition::evaluateBytecode` hot path（L2: lazy parse + lazy compile + eval；L1: delegate `evaluateCondition`；`setConditionExpr` → invalidate 双清）+ `OP_LOAD_RESERVED R_CURRENT_STATE_TIME`（INV-55 0 string compare at eval）+ AST preserved（P4.x CondVisitor graph-builder 需要）+ **public API 0 change**（ECS bridge 0 touch；INV-18..51 全部 preserved）+ **6 new unit tests**（4 ConditionExpr: Parity 5 cases 含 Speed=3 vs 5.0 抓 bit-30 literal bug + LazyBuild + ReservedIdent + ParseFail；2 StateMachine: FindTransitionUsesBytecode + InvalidateCacheClearsBytecode）+ micro-benchmark **+ Scenario G** bytecode vs AST 3-ident × 100K；3-run stable AYAnimation 1824/1824 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.20 + §11 P2 polish row。**INV-52..58** (bytecode 1:1 AST 语义 + lazy build + reserved ident opcode + flat float literal table + shared_ptr copyable + short-circuit relative-jump) 全部 NEW。Benchmark (debug build): bytecode true 773 ns vs AST 1035 ns (**1.34x**) / short-circuit 800 ns vs 1022 ns (**1.28x**), parity PASS × 2。两个前期 bug 修复（bit-30 IEEE-754 exponent 冲突 literal 编码 → flat float table；per-eval vector 栈 8x 慢 → 固定数组），详见 §4.20.10。**setTriggerByHash caller-side cache (P2 polish .A) / Additive slot dynamic vector (内存复用方向 → §4.22 P4 polish RESOLVED 2026-08-10) 全部 deferred** |
 | **P3 polish** | **AssetBoneCache lock-free single-threaded mode ── ✅ SHIP 2026-08-08**：`AssetBoneCache` 默认改无锁（`_threadSafe = false`，**INV-59** — 7 访问点永不触碰 mutex，ECS 单线程主 tick 路径零同步可证明）+ `setThreadSafe(true)` opt-in 重挂 mutex（authoring tools / 多线程 host，**INV-60** — flag 非原子，须并发使用前设）+ anonymous ns `maybeLock(mutex&, bool)` RAII helper（enabled ? `unique_lock(mu)` : default ctor — 无锁路径零成本 + 锁路径异常安全）+ 7 sites `lock_guard` → `unique_lock lk = maybeLock(_mu, _threadSafe)`（resolveAndCache fast-path 双 lookup 结构不变）+ **+2 additive public API**（`setThreadSafe` / `isThreadSafe`；`lookup / resolveAndCache / invalidate / clear / entry-count` 签名 identical；`AnimationPlayer` 2 callsite 0 touch；ECS bridge 0 touch；INV-1..17 全部 preserved）+ **2 new unit tests**（`P3_AssetBoneCache_DefaultIsLockFree` INV-59 pin + `P3_AssetBoneCache_ThreadSafeMode_BehaviorUnchanged` 双模式复跑完整 P1.7 contract）+ micro-benchmark **+ Scenario H** 真实 2-bone Skeleton hit 路径 × 100K 交错 min-of-5；3-run stable AYAnimation 1851/1851 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.21 + §11 P3 polish row。**INV-59/60** (默认零锁 + flag 非原子) 全部 NEW。Benchmark (debug build, min-of-5): resolveAndCache hit 961 vs 1001 ns/iter (**1.04x**) / lookup hit 910 vs 980 ns/iter (**1.08x**) — debug STL 主导绝对值（每 hit 临时 `std::string` 构造 + checked iterators ≈ 900-1000 ns），mutex delta 在噪声以下；**P3 收益结构性**（默认零同步）；lock delta 在 release 构建才显著。测量教训：顺序一次性测量噪声反转比值（0.83x 假象）→ 交错 min-of-5 修复，详见 §4.21.10。**Additive slot dynamic vector (内存复用方向) → §4.22 P4 polish RESOLVED 2026-08-10** |
 | **P4 polish** | **Additive slot 内存回收 + AssetBoneCache transparent hash + 批量 tick 压力测试 ── ✅ SHIP 2026-08-10**：`AnimationPlayer::releaseSlotBuffers(AdditiveSlot&)` 新私有 helper（swap-with-empty 归还 tracks / pendingNotifies / capturedLocal{Pos,Rot,Scl}（n*3/n*4/n*3 floats，setSkeleton 时分配）/ trackWeights；`clearAdditiveLayerSource` + `stop()` 两 callsite；闲置 slot 此前持有这些 multi-KB buffer 直到 player 析构——100-bone ≈ 4KB/slot）+ `AssetBoneCache` inner map 改 `detail::StringViewHash + std::equal_to<>`（`is_transparent` C++14 异构查找，`find(const char*)` 0 临时 string 构造——兑现 §4.21.12 Q3 + §4.21.11 UPGRADE-HOOK(transparent hash)；3 重载（string_view / const string& / 显式 const char* 防 C3066 模糊））+ **0 public API change**（AnimationPlayer / AssetBoneCache 签名 identical；ECS bridge 0 touch；L1/L2/L3 + INV-1..60 全部 preserved）+ **3 new INV**（**INV-61** 闲置 slot heavy buffers 全释放 capacity 0 / **INV-62** `_additiveSlots` vector size 保留 sparse 语义 + re-bind 与 P1.5 逐位一致 / **INV-63** 异构查找 0 临时 string 且三种 key 拼写命中单 entry）+ **4 new unit tests**（`AYTest_P4Stress.cpp` 新 suite P4StressTests：`p4_stress_400_players_share_one_skeleton` 400 player × 200 帧完整帧 tick+evaluate 逐位 memcmp 一致 + AssetBoneCache 单 entry 共享验证 + `p4_stress_bind_clear_cycle_returns_cache_entries` 5 轮 × 40 player 每轮 fresh 40 entry + invalidate 回落 0（无跨轮泄漏）+ `P4_AssetBoneCache_HeterogeneousLookup_SingleEntry` INV-63 pin + `P4_AdditiveSlot_ClearStop_RebindFreshState` INV-61/62 行为验证（clear → 无贡献 → re-bind → 恢复同值 → stop → 全清））；3-run stable AYAnimation 2673/2673 + AYEntity 421/421 + AYResource 1039/1039 × 3，零回归；详见 §4.22 + §11 P4 polish row。**INV-61/62/63** (内存归还 + sparse 保留 + 异构查找) 全部 NEW。教训：`tick()` 只推进时钟不跑渲染评估（压力测试首版只 tick → resolve 未触发 → entry 断言全败 → 每帧 tick+evaluate 完整帧）+ transparent hash 必须显式 `const char*` 重载（string_view/const string& 双重载对 const char* 等权转换 → C3066）+ fresh-round 断言（每轮 invalidate 后 count==0，断言是 kPerRound 非累积）。**setTriggerByHash caller-side cache (P2 polish .A) 仍 deferred** |
@@ -4465,7 +4465,7 @@ polish 阶段收官后用户选定 **IK 作为长线第一刀**（design §6 预
 #### 4.25.3 Data Model
 
 ```cpp
-// include/ayanimation/AnimationPlayer.h（IKChainSpec 在 class 前 + 私有存储）
+// include/AYAnimation/AnimationPlayer.h（IKChainSpec 在 class 前 + 私有存储）
 struct IKChainSpec {
     std::string         rootBone;      // 链根名（hip/shoulder）
     std::string         midBone;       // 中骨名（knee/elbow）
@@ -4615,7 +4615,7 @@ if (!_ikChains.empty()) {
 
 #### 4.25.10 Edge Cases & Lessons
 
-1. **stale .obj（ninja depfile 失效）**：AnimationPlayer.h 成员插在 `_boneMaskWeights` 与 `_world` 之间 → `_world` 偏移移动 → **未重编的 test TU 读旧偏移 → world garbage（值每次运行不同）**。instrumentation 证明 evaluate 内部正确（world0=identity）但测试读 garbage → 矛头指向 test 侧 → 4 个 TU（AYTest_AnimationPlayer/P4Stress/ConditionExpr/main）obj mtime 早于 header → **touch 真实源文件强制重编即愈**。教训：**改 .h 后若出现"内部正确测试 garbage"型怪异回归，先查 test TU 是否重编（obj mtime vs header mtime），不要先加 diagnostic**；且 touch 必须打在 **build.ninja 引用的真实源路径**（绝对路径 D:/Projects/...）而非 build-dir 残留副本（本仓库 CMake 曾留下 0 字节 source 副本，touch 错文件）。
+1. **stale .obj（ninja depfile 失效）**：AYAnimation/AnimationPlayer.h 成员插在 `_boneMaskWeights` 与 `_world` 之间 → `_world` 偏移移动 → **未重编的 test TU 读旧偏移 → world garbage（值每次运行不同）**。instrumentation 证明 evaluate 内部正确（world0=identity）但测试读 garbage → 矛头指向 test 侧 → 4 个 TU（AYTest_AnimationPlayer/P4Stress/ConditionExpr/main）obj mtime 早于 header → **touch 真实源文件强制重编即愈**。教训：**改 .h 后若出现"内部正确测试 garbage"型怪异回归，先查 test TU 是否重编（obj mtime vs header mtime），不要先加 diagnostic**；且 touch 必须打在 **build.ninja 引用的真实源路径**（绝对路径 D:/Projects/...）而非 build-dir 残留副本（本仓库 CMake 曾留下 0 字节 source 副本，touch 错文件）。
 2. **P7 设计缺陷（共享骨链不能同时命中）**：初版 P7 用「链 2 = LMid→LTip→LTipChild」，链 2 的 mid（LTip）== 链 0 的 tip → 链 2 后执行旋转 LTip 把链 0 的 tip 推出目标（FAIL：tip.x=14.66≠0）。**"两 tip 同时命中"对共享 mid/tip 的链在几何上不可能** —— 顺序依赖语义（chainId 升序，后执行者赢）必须文档化而非断言。重写 P7 为锚点场景：链 2 root == 链 0 tip → root 位置永不动 → 两链真同时命中。
 3. **AssetBoneCache 指针复用陈旧命中**：resolveIKChains 初版走 `AssetBoneCache::resolveAndCache`（key = (骨架指针, 名字)）。cache **不跟踪骨架生命周期**：测试中骨架析构后其地址可能被新骨架（make_shared）复用 → 旧条目 (地址, "Root")→0 复活 → P5 换 8-bone 骨架后链误判 active（随机 FAIL，概率 ≈ malloc 是否复用地址）。**修复：resolveIKChains 改 `findBone` 直查** —— IK resolve 仅 bind/换骨架时运行（非每帧），cache 收益为零，直查精确。**同源风险仍存在于 resolveSkeletonMask（P2.2）**：mask 也按 (指针, 名) 缓存，长生命周期资产不受影响；测试期疯狂建/毁骨架才暴露——已文档化（§4.25.12 Q4），不在本刀修。
 4. **fixture 注释与数据不符**：makeThreeBoneSkeleton 初版 Root local=(10,0,0) → rest world 实为 Root(10)/Mid(20)/Tip(20)，**mid 与 tip 重合 → len1=0 → solver noop**。S1-S10 是纯 solver 测试（手传 A/B/C）不经骨架所以全绿——P 测试第一次真正消费该 fixture 才暴露。教训：**fixture 必须先被真实路径消费一次**（写注释时按意图、数据与注释必须一致）。
@@ -4666,7 +4666,7 @@ TwoBone 解析解覆盖膝/肘（2 段）；手指（3-5 段）、脊椎（多�
 #### 4.26.3 Data Model
 
 ```cpp
-// include/ayanimation/AnimationPlayer.h
+// include/AYAnimation/AnimationPlayer.h
 enum class IKSolverType : std::uint8_t {
     TwoBone = 0,   // P4-1 解析解（默认——back-compat，P1-P12 零改动）
     FABRIK  = 1,
@@ -4683,7 +4683,7 @@ struct IKChainSpec {                       // P4-2 字段全部追加在末尾
     uint32_t            iterations = 0;                // 新：0 = solver 默认（FABRIK 4 / CCD 10），clamp ≤ 100
 };
 
-// include/ayanimation/FabrikSolver.h（CcdSolver.h 复用）
+// include/AYAnimation/FabrikSolver.h（AYAnimation/CcdSolver.h 复用）
 constexpr uint32_t kMaxIKChainBones = 32;  // 关节数硬上限——固定数组，零每帧分配
 struct IterativeIKResult {
     FQuaternion worldRot[kMaxIKChainBones];  // worldRot[i] = 关节 i 新世界旋转
@@ -4752,7 +4752,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 #### 4.26.6 ECS Bridge
 
-**0 touch**。AYEntity 的 bridge 只消费 9 个 public API + generation 钩子（§4.25.6），本刀零改动；`IKSolverType` 从 spec 传入即可用。AYEntity 模块下次构建会因 AnimationPlayer.h 结构变更踩 stale .obj（member 偏移变化）——需 touch AYEntity/src/*.cpp（本刀在 AYAnimation 内部已 touch 全 TU，AYEntity 的构建目录下次构建时处理，commit 说明注明）。
+**0 touch**。AYEntity 的 bridge 只消费 9 个 public API + generation 钩子（§4.25.6），本刀零改动；`IKSolverType` 从 spec 传入即可用。AYEntity 模块下次构建会因 AYAnimation/AnimationPlayer.h 结构变更踩 stale .obj（member 偏移变化）——需 touch AYEntity/src/*.cpp（本刀在 AYAnimation 内部已 touch 全 TU，AYEntity 的构建目录下次构建时处理，commit 说明注明）。
 
 #### 4.26.7 Resource Bridge
 
@@ -4781,7 +4781,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 3. **C9/C11 — CCD 共线不对称**：链与目标精确共线 → 每关节零轴 → 输出原样。两个变体分别钉死不可达（reachable=false）与可达（reachable=true，必要条件非充分）。选择 CCD 时注意共线初始化（起始 pose 共线 + 目标在线上 = CCD 不动，FABRIK 可拉直）。
 4. **容差 vs 收敛阶**：CCD 线性收敛（100 次 3 段残差 ~2.2e-3；40 次残差更大）——C1/C6/I2 容差放宽并注释**实测确定性值**；FABRIK 超线性（3 段 4 次 <1e-3；5 段 4 次 ~4e-3，段数越多越慢）——I1/I13 容差 1e-2 注释实测值。不要凭直觉定 1e-3。
 5. **fixture Root local 陷阱**：makeChainSkeleton 初版把 Root 的 localPosition 也设 (10,0,0) → 锚点断言 (0,0,0) 失败 + 所有几何整体偏移 (10,0,0)，I4 的"精确插值点"断言恰好暴露。Root 必须 local (0,0,0)（镜像 ThreeBone fixture）。
-6. **stale .obj 再触发（P4-1 教训 #1 复发预防）**：AnimationPlayer.h 成员/结构改动（三 int32 → vector + 枚举 + spec 字段）→ **touch 全部 include 该 header 的 TU 真实路径**（grep 清单：src/AnimationPlayer.cpp + AYEntity 2 src + 5 unittest + 本模块全部 unittest cpp）。AYEntity 构建目录下次构建会踩同类——commit 注明。
+6. **stale .obj 再触发（P4-1 教训 #1 复发预防）**：AYAnimation/AnimationPlayer.h 成员/结构改动（三 int32 → vector + 枚举 + spec 字段）→ **touch 全部 include 该 header 的 TU 真实路径**（grep 清单：src/AnimationPlayer.cpp + AYEntity 2 src + 5 unittest + 本模块全部 unittest cpp）。AYEntity 构建目录下次构建会踩同类——commit 注明。
 7. **UB 规避**：tip 关节旋转从未被快照赋值——写回循环只读 N-1 骨；初稿误拷贝 `jointRot[cnt-1]`（未初始化读）即删。
 
 #### 4.26.11 Migration Hooks（后续刀）
@@ -4831,8 +4831,8 @@ guard 同 FABRIK；targetEff 同 FABRIK
 | 2026-08-06 | **P3.2 L3 子状态机 ship**：§4.15 全 12-section（StateMachine._children vector<unique_ptr<StateMachine>> + _currentChildIndex + State.isSubMachine/subMachineIndex + StateMachine move-only + 递归 setTrigger/setParam INV-28 + child-first transition fallback INV-29 + getActiveLeafStateName 深度≤2 INV-30 + _currentChildIndex sync INV-31 + INV-27 sub-machine entry clipPath 忽略）+ ECS bridge 兑现 dt plumbing（sm.update(0.0f)→sm.update(dt)）+ AnimationStateMachineComponent.activeSubState read-back + sub-machine entry 不调 player.play + 12 AYAnimation + 4 AYEntity L3 tests + §4.14.11 UPGRADE-HOOK(P3.2) 标 resolved + §11 P3.2 row 勾选 + 状态抬头同步 600/600 + 385/385 + 1044/1044 3-run stable；3 项 deferred（.ayasm loader / 多状态机 / parallel states）|
 | 2026-08-07 | **P3.x L2 Condition DSL ship**：§4.16 全 12-section（Transition 扩展缓存层 4 字段 + 3 API + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + 负数字面量 + lazy parse + dirty cache + parse-fail-soft-false + L1 back-compat 双轨 + ConditionEvalCtx 4 字段留 P3.x刀 N+1 钩子 + Visitor 接口为 P4.x graph-builder 留口）+ 30 AYAnimation unit tests（§8.1.1 Parser 8 + §8.1.2 Evaluator 12 + §8.1.3 Cache 6 + §8.1.4 Back-compat 4）+ 4 AYEntity ECS integration tests（fires / does-not-fire / cache-warm / parse-fail-safe）+ §11 P3.x row ✅ + §13 row 20b ❌→✅ + §11 P3.x row ✅ + 状态抬头同步 703/703 + 401/401 + 1044/1044 3-run stable；4 项 deferred（per-state AnimNotify routing / .ayasm loader / 算术表达式 / 函数调用 & 节点图）|
 | 2026-08-07 | **P3.x刀 N+1.BC Time-in-State Query + Per-state AnimNotify Routing ship**：§4.17 全 12-section（StateMachine._currentStateEnterTime 字段 + getCurrentStateElapsedTime() API + update 顶部 +dt 累加 + 3 处 reset 0.0f + ConditionEvalCtx 兑现 currentStateTime + CondIdentifierExpr reserved-name "CurrentStateTime" pre-check 3 LoC + AnimNotifyRecord/AnimNotifyEvent.fromStateName 字段 default empty + AnimationPlayer._currentStateNameForNotify + setCurrentStateName/getCurrentStateName API + push notify 2-step pattern 修 P1.5 alignment 回归 + AYEntity bridge every-tick setCurrentStateName 1 line 简化）+ 6 TIS unit tests + 4 ANR unit tests（NEW AYTest_AnimNotifyRouting.cpp）+ 4 ECS integration tests（TIS_GT_Fires / ANR_NotifyCarries / ANR_PerStateRoute / TIS_NoRegression）+ §11 P3.x刀 N+1.BC row ✅ + §13 row 20b deferred 兑现 + 统计 26 项 ✅ + 内核 6.9/10 + 完整角色管线 5.3/10 + §11 P3.x刀 N+1.BC row ✅ + 状态抬头同步 752/752 + 421/421 + 1039/1039 3-run stable；**INV-36..39** (time-in-state) + **INV-40..42** (per-state notify) 全部 NEW；5 项 deferred（OnStateEntered/Exited event / 多状态 notify / 算术 / functions / `.ayasm` loader / state-graph UI）|
-| 2026-08-07 | **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry ship**：§4.18 全 12-section（StateMachine._params 从 unordered_map 改 std::vector<ParamEntry> linear scan cache-friendly N ≤ 8 + _triggers 从 unordered_set 改 sorted std::vector<uint32_t> + detail::ParamNameRegistry Meyers singleton FNV-1a 32-bit hash + ParamEntry 结构移到 ConditionExpr.h 避免循环 include + 6 private helpers + StateMachine::getParamName/getParamNameRegistrySize debug read-back + ConditionEvalCtx field types change + CondIdentifierExpr::evaluateAsFloat 改 intern+linear scan + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts 全部 preserved）+ 2 new unit tests（Params_FlatArray_FindByHashReturnsCorrectValue + Triggers_FlatArray_BinarySearchWorks pin INV-43..46）+ 30 L2 tests 通过 makeCtx helper 5-line shift 适配 flat-vector ConditionEvalCtx + micro-benchmark AYAnimation/benchmark/state_machine_params_bench.cpp 4 scenarios（8/1/32 params + triggers, 100K iter, default OFF behind AY_BUILD_BENCHMARKS=OFF cache var）+ 状态抬头同步 759/759 + 421/421 + 1039/1039 3-run stable；**INV-43..46** (flat-array hot-path 契约) 全部 NEW；hot-path speedup debug build：getParam 8 params 271→68 ns/iter (4.0x), 1 param 225→43 ns/iter (5.2x), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。详见 §4.18 + §11 P0 polish row |
-| 2026-08-07 | **P1 polish — Hot-Path Eval Hash Caching ship**：§4.19 全 12-section（Transition 加 triggerHash + conditionParamNameHash 2 字段，addTransition 一次性 intern 缓存 + CondIdentifierExpr ctor 一次性 intern nameHash + 3 hot-path callsite (findEligibleTransition / evaluateCondition L1 / fireTransition) 改 cached hash + lazy fallback 保留 test fixture const_cast mutation back-compat + detail::ParamNameRegistry 拆 leaf header ParamNameRegistry.h 让 ConditionExpr.h ctor 调 intern 无循环 include + kEmpty 在 StateMachine.cpp 定义 + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts preserved）+ 2 new unit tests (P1_Transition_TriggerHash_CachedAtAddTransition 唯一名避 process-global registry 污染 + P1_Transition_ConditionHash_CachedAtAddTransition) + 3 new unit tests (P1_CondIdent_NameHash_NonEmpty + P1_CondIdent_NameHash_EmptyName_HashZero sentinel pre-check + P1_CondIdent_Evaluate_NoIntern 1000x eval registry size 不变) + micro-benchmark 加 Scenario E findEligibleTransition 5 transitions × 100K (scan 1251 ns + scan+fire 2391 ns) + Scenario F DSL evaluate 3-ident × 100K (true path 132 ns + short-circuit 113 ns) + 状态抬头同步 1783/1783 + 421/421 + 1039/1039 3-run stable；**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat) 全部 NEW。详见 §4.19 + §11 P1 polish row |
+| 2026-08-07 | **P0 polish — Flat-array params/triggers + FNV-1a ParamName Registry ship**：§4.18 全 12-section（StateMachine._params 从 unordered_map 改 std::vector<ParamEntry> linear scan cache-friendly N ≤ 8 + _triggers 从 unordered_set 改 sorted std::vector<uint32_t> + detail::ParamNameRegistry Meyers singleton FNV-1a 32-bit hash + ParamEntry 结构移到 AYAnimation/ConditionExpr.h 避免循环 include + 6 private helpers + StateMachine::getParamName/getParamNameRegistrySize debug read-back + ConditionEvalCtx field types change + CondIdentifierExpr::evaluateAsFloat 改 intern+linear scan + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts 全部 preserved）+ 2 new unit tests（Params_FlatArray_FindByHashReturnsCorrectValue + Triggers_FlatArray_BinarySearchWorks pin INV-43..46）+ 30 L2 tests 通过 makeCtx helper 5-line shift 适配 flat-vector ConditionEvalCtx + micro-benchmark AYAnimation/benchmark/state_machine_params_bench.cpp 4 scenarios（8/1/32 params + triggers, 100K iter, default OFF behind AY_BUILD_BENCHMARKS=OFF cache var）+ 状态抬头同步 759/759 + 421/421 + 1039/1039 3-run stable；**INV-43..46** (flat-array hot-path 契约) 全部 NEW；hot-path speedup debug build：getParam 8 params 271→68 ns/iter (4.0x), 1 param 225→43 ns/iter (5.2x), 32 params 265→153 ns/iter (1.7x); setTrigger regression 221→609 ns/iter (0.4x, debug-only, accepted trade-off — production critical path is getParam)。详见 §4.18 + §11 P0 polish row |
+| 2026-08-07 | **P1 polish — Hot-Path Eval Hash Caching ship**：§4.19 全 12-section（Transition 加 triggerHash + conditionParamNameHash 2 字段，addTransition 一次性 intern 缓存 + CondIdentifierExpr ctor 一次性 intern nameHash + 3 hot-path callsite (findEligibleTransition / evaluateCondition L1 / fireTransition) 改 cached hash + lazy fallback 保留 test fixture const_cast mutation back-compat + detail::ParamNameRegistry 拆 leaf header AYAnimation/ParamNameRegistry.h 让 AYAnimation/ConditionExpr.h ctor 调 intern 无循环 include + kEmpty 在 StateMachine.cpp 定义 + public API 0 change + ECS bridge 0 touch + L1/L2/L3 contracts preserved）+ 2 new unit tests (P1_Transition_TriggerHash_CachedAtAddTransition 唯一名避 process-global registry 污染 + P1_Transition_ConditionHash_CachedAtAddTransition) + 3 new unit tests (P1_CondIdent_NameHash_NonEmpty + P1_CondIdent_NameHash_EmptyName_HashZero sentinel pre-check + P1_CondIdent_Evaluate_NoIntern 1000x eval registry size 不变) + micro-benchmark 加 Scenario E findEligibleTransition 5 transitions × 100K (scan 1251 ns + scan+fire 2391 ns) + Scenario F DSL evaluate 3-ident × 100K (true path 132 ns + short-circuit 113 ns) + 状态抬头同步 1783/1783 + 421/421 + 1039/1039 3-run stable；**INV-47..51** (transition hash cache + CondIdentifierExpr nameHash + reserved ident priority + lazy fallback back-compat) 全部 NEW。详见 §4.19 + §11 P1 polish row |
 | 2026-08-08 | **P2 polish — Condition DSL AST → Flat Bytecode ship**：§4.20 全 12-section（CondBytecode program + float literal table 平行缓存 + compileToBytecode post-order walk + program-counter switch evaluator 固定栈数组 + short-circuit relative-jump INV-58 + OP_LOAD_RESERVED INV-55 + Transition.cachedBytecode mutable shared_ptr lazy build INV-52/57 + evaluateBytecode hot path + setConditionExpr invalidate 双清 + AST preserved 供 P4.x Visitor + public API 0 change + ECS bridge 0 touch）+ 4 new unit tests (P2_Bytecode_Parity_3IdentExpr 5 cases + P2_Bytecode_LazyBuild_FirstEvalCompiles + P2_Bytecode_ReservedIdent_CompiledAsOpcode + P2_Bytecode_ParseFail_NullBytecode_ReturnsFalse) + 2 new unit tests (P2_Bytecode_Integration_FindTransitionUsesBytecode + P2_Bytecode_Integration_InvalidateCacheClearsBytecode) + micro-benchmark 加 Scenario G bytecode vs AST 3-ident × 100K (bytecode true 773 ns / short-circuit 800 ns vs AST 1035/1022 = **1.34x / 1.28x**, parity PASS × 2) + §4.19.11 UPGRADE-HOOK(P2 polish) 标 resolved + **§11 P0 polish row 补录**（P0 ship day 2026-08-07 遗漏）+ §11 P2 polish row + 状态抬头同步 1824/1824 + 421/421 + 1039/1039 3-run stable；**INV-52..58** (bytecode 1:1 AST 语义 + lazy build + reserved ident opcode + flat float literal table + shared_ptr copyable + short-circuit relative-jump) 全部 NEW。两个前期 bug 修复（bit-30 IEEE-754 exponent 冲突 literal 编码 → flat float table；per-eval vector 栈 8x 慢 → 固定数组），详见 §4.20.10。详见 §4.20 + §11 P2 polish row |
 | 2026-08-11 | **P4-2 FABRIK + CCD 迭代 IK ship（长线第二刀）**：§4.26 全 12-section（FabrikSolver backward/forward 交替达点 + CcdSolver 逐关节绕锚旋转 + 共享 IterativeIKResult/kMaxIKChainBones=32 + IKSolverType 枚举默认 TwoBone back-compat + IKChainSpec 末尾追加 type/iterations + IKChain 三 int32 → path vector + resolveIKChains 重写（TwoBone 逐位保留 / 迭代型 tip→root 单 walk 自动推导）+ Phase 2.5 统一 applyIKChain pass（N-1 骨统一回写）+ weight 目标点插值语义 + 9 public API 零改动 + 0 ECS bridge change + INV-75/76/77 + 22 solver tests F/C + 13 player tests I 三型共存重钉 P7 锚点教训）+ §6 IKSolver 改「✅ 全 ship」+ §11 Phase 4 row + §14.3 IK 行收口（FABRIK+CCD ✅，约束/pole/局部目标 open）+ 状态抬头同步 **3161/3161** × 3（debug）+ release 3161/3161 × 3 全绿；**INV-75..77** (weight 双门 + 目标空间语义 / 路径自动推导 + 禁用规则 / N-1 骨统一写回泛化 INV-73) 全部 NEW；六 lessons（CCD world 帧旋转累积错误 → 迭代后 fromToRotation 推导 / FABRIK forward 根漂移锁回 / CCD 共线不可拉直不对称 / 容差随收敛阶放宽钉实测 / fixture Root local 陷阱 / stale .obj 再触发 touch 全 TU，AYEntity 构建目录下次构建需 touch 备注）。详见 §4.26 + §6 + §11 P4-2 row |
 | 2026-08-10 | **P4-1 TwoBone IK ship（长线第一刀）**：§4.25 全 12-section（TwoBoneSolver 解析解十二步 + AnimationPlayer Phase 2.5 集成 + INV-71..74 + accumulateWorldFrom(start) 子树重算 + 世界→局部回写 + findBone 直查 resolve + 0 ECS bridge change + 10 S 测试 + 12 P 测试）+ §6 IKSolver 改「✅ TwoBoneSolver ship，FABRIK/CCD 未启动」+ §11 Phase 4 row ✅ + §14.3 IK 行拆开（~~TwoBone~~ ✅ + FABRIK+CCD/约束/pole/局部目标/重定向 open）+ 状态抬头同步 **2999/2999** + 421/421 + 1039/1039 3-run stable（debug）+ release 2999/2999 × 3 全绿；**INV-71..74** (eager resolve + skeleton-swap re-resolve / weight saturate + ≤0 零成本 skip / 只写 root+mid localRot post-mask pre-Phase-3 / solver 纯函数退化→有限或原样永不 NaN) 全部 NEW；三 lessons（stale .obj depfile 失效 → touch 真实源 / P7 共享骨链设计缺陷 → 后执行者赢文档化 / AssetBoneCache 指针复用陈旧命中 → IK resolve 改 findBone 直查，mask 同源风险文档化）。详见 §4.25 + §6 + §11 P4-1 row |

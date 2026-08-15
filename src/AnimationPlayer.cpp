@@ -1,9 +1,9 @@
-#include <ayanimation/AnimationPlayer.h>
-#include <ayanimation/AssetBoneCache.h>   // P1.7 — asset-level boneIdx cache
-#include <ayanimation/KeySampler.h>
-#include <ayanimation/TwoBoneSolver.h>   // P4-1 — two-bone IK analytic core
-#include <ayanimation/FabrikSolver.h>    // P4-2 — FABRIK iterative IK core (multi-joint)
-#include <ayanimation/CcdSolver.h>       // P4-2 — CCD iterative IK core (multi-joint)
+#include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimation/AssetBoneCache.h>   // P1.7 — asset-level boneIdx cache
+#include <AYAnimation/KeySampler.h>
+#include <AYAnimation/TwoBoneSolver.h>   // P4-1 — two-bone IK analytic core
+#include <AYAnimation/FabrikSolver.h>    // P4-2 — FABRIK iterative IK core (multi-joint)
+#include <AYAnimation/CcdSolver.h>       // P4-2 — CCD iterative IK core (multi-joint)
 
 #include <AYMath/MathTypes.h>
 #include <AYMath/MathUtils.h>

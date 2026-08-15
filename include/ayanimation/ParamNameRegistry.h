@@ -1,10 +1,10 @@
-// ParamNameRegistry.h — P0 polish (2026-08-07) +
+// AYAnimation/ParamNameRegistry.h — P0 polish (2026-08-07) +
 //                       P1 polish (2026-08-07) split-out header.
 //
-// Split out from StateMachine.h to break the circular include that
-// would otherwise be needed by ConditionExpr.h's inline ctor for
-// CondIdentifierExpr::nameHash (P1 polish). Both StateMachine.h and
-// ConditionExpr.h now include this header directly; the registry is
+// Split out from AYAnimation/StateMachine.h to break the circular include that
+// would otherwise be needed by AYAnimation/ConditionExpr.h's inline ctor for
+// CondIdentifierExpr::nameHash (P1 polish). Both AYAnimation/StateMachine.h and
+// AYAnimation/ConditionExpr.h now include this header directly; the registry is
 // no longer co-located with StateMachine.
 //
 // INV-43..44 contracts (P0 polish):

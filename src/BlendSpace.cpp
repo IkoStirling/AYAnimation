@@ -1,6 +1,6 @@
 // BlendSpace.cpp — P2.1 (2026-07-27). Linear-simplex Blend Tree impl.
 //
-// See BlendSpace.h for the architecture rationale (owned-player mode +
+// See AYAnimation/BlendSpace.h for the architecture rationale (owned-player mode +
 // library-mode helper, 2D simplex algorithm).
 //
 // Implementation strategy:
@@ -15,14 +15,14 @@
 //     composite. Output is bit-identical to owned-player mode for
 //     identical inputs (verified by test #11).
 
-#include <ayanimation/BlendSpace.h>
-#include <ayanimation/AnimationPlayer.h>
-#include <ayanimation/KeySampler.h>
+#include <AYAnimation/BlendSpace.h>
+#include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimation/KeySampler.h>
 
 #include <AYMath/MathTypes.h>
 
-#include <assetsDefs/IAYAnimation.h>
-#include <assetsDefs/IAYSkeleton.h>
+#include <AYResource/assetsDefs/IAnimation.h>
+#include <AYResource/assetsDefs/ISkeleton.h>
 
 #include <algorithm>
 #include <array>
@@ -711,7 +711,7 @@ void BlendSpace2D::evaluate(
     std::vector<float>& outLocalScl)
 {
     // Identical body to BlendSpace1D::evaluate — copy-paste is intentional
-    // here (P2.x cleanup: extract a free helper in ayanimation/AYAnimation.h).
+    // here (P2.x cleanup: extract a free helper in AYAnimation/AYAnimation.h).
     const size_t n = _skelBoneCount;
     outLocalPos.resize(n * 3, 0.0f);
     outLocalRot.resize(n * 4, 0.0f);

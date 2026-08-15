@@ -25,7 +25,7 @@
 //  11. weight blend in world space: slerp(current, solved, saturate(w))
 //  12. return {finalRoot, finalMid, reachable}
 
-#include "ayanimation/TwoBoneSolver.h"
+#include "AYAnimation/TwoBoneSolver.h"
 
 #include <cmath>
 

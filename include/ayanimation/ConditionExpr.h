@@ -1,9 +1,9 @@
-// ConditionExpr.h — P3.x (2026-08-07) L2 Condition DSL AST +
+// AYAnimation/ConditionExpr.h — P3.x (2026-08-07) L2 Condition DSL AST +
 //                    P3.x刀 N+1.B (2026-08-07) Time-in-State Query.
 //                    P5 polish (2026-08-10) DSL 四则运算 + - * / (INV-64..69).
 //
 // Standalone mini AST for transition condition expressions. Patterned after
-// AYShader's AYAst.h (Visitor mode for P4.x graph-builder hook) and AYScript
+// AYShader's AYShader\Ast.h (Visitor mode for P4.x graph-builder hook) and AYScript
 // (Logia) bool-expression validation; we borrow the precedence-climbing
 // pattern but NOT link/include either module. L2 ships independently.
 //
@@ -70,7 +70,7 @@
 
 #pragma once
 
-#include <ayanimation/ParamNameRegistry.h>
+#include <AYAnimation/ParamNameRegistry.h>
 
 #include <cstdint>
 #include <memory>
@@ -125,8 +125,8 @@ struct ConditionEvalCtx {
 };
 
 // P0 polish (2026-08-07) — flat-array row. Defined here (not in
-// StateMachine.h) so ConditionEvalCtx can use std::vector<ParamEntry>
-// without a circular include. StateMachine.h already includes this
+// AYAnimation/StateMachine.h) so ConditionEvalCtx can use std::vector<ParamEntry>
+// without a circular include. AYAnimation/StateMachine.h already includes this
 // header, so the type is visible transitively.
 struct ParamEntry {
     uint32_t hash;    // 0 reserved (sentinel); consumers must reject hash 0
