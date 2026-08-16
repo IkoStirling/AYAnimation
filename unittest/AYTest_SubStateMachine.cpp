@@ -12,7 +12,7 @@
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYTest.h>
 
-#include <AYAnimation/StateMachine.h>
+#include "StateMachine.h"
 
 #include <memory>
 #include <string>

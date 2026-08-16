@@ -13,7 +13,7 @@
 // Standalone — no AYEntity, no AYAnimation/AnimationPlayer.h facade rebuild. Direct
 // API calls on a hand-built ISkeleton + IAnimation.
 
-#include "AYResource/assetsImpl/Animation.h"
+#include "AYAnimation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
 #include <AYMath/MathUtils.h>

@@ -1396,14 +1396,13 @@ CPU 顶点变形由独立 `CPUSkinningPass` 负责（不在 AYAnimation 模块�
 
 ```
 AYAnimation/
+├── AYAnimation.h                   # umbrella header（模块根目录）
 ├── design.md                       # 本文档
 ├── CMakeLists.txt                  # target_link_libraries(... AYResource)
 ├── include/
 │   └── AYAnimation/
-│       ├── AYAnimation.h           # umbrella header
-│       │
-│       ├── AYAnimation/KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
-│       └── AYAnimation/AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
+│       ├── KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
+│       └── AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
 │
 ├── src/
 │   ├── KeySampler.cpp              # ✅ AN-01 ship: locateSegment + dot<0 slerp 选优 + 单调性 assert

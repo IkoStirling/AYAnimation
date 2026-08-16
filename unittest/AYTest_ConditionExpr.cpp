@@ -31,9 +31,9 @@
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYTest.h>
 
-#include <AYAnimation/ConditionExpr.h>
-#include <AYAnimation/ConditionParser.h>
-#include <AYAnimation/StateMachine.h>
+#include "ConditionExpr.h"
+#include "ConditionParser.h"
+#include "StateMachine.h"
 
 #include <memory>
 #include <string>

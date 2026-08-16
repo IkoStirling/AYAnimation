@@ -10,10 +10,10 @@
 // wiring. AYEntity bridge tests are in
 // AYEntity/unittest/AYTest_SkeletonMaskBridge.cpp.
 
-#include "AYResource/assetsImpl/Animation.h"
+#include "AYAnimation.h"
 #include <AYTest.h>
 
-#include <AYAnimation/AnimationPlayer.h>
+#include "AnimationPlayer.h"
 #include <AYResource/assetsDefs/ISkeletonMask.h>   // P3.x刀1 — formal interface in AYResource
 
 #include <AYResource/assetsImpl/SkeletonMask.h>   // P3.x刀1 — concrete moved to AYResource

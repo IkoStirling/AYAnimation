@@ -11,10 +11,10 @@
 // Geometry convention: bones lie along +X at rest; targets live in the XZ
 // plane so assertions on `y ≈ 0` verify the bend plane.
 
-#include "AYResource/assetsImpl/Animation.h"
+#include "AYAnimation.h"
 #include <AYTest.h>
 #include <AYMath/MathTypes.h>
-#include <AYAnimation/TwoBoneSolver.h>
+#include "TwoBoneSolver.h"
 
 #include <AYResource/assetsDefs/ISkeleton.h>
 #include <AYResource/assetsDefs/IAnimation.h>

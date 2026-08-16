@@ -12,11 +12,11 @@
 // (CHECK / CHECK_FLOAT_EQ / TEST_CASE / TEST_SUITE) — same harness as
 // AYTest_AnimationPlayer.cpp.
 
-#include "AYResource/assetsImpl/Animation.h"
+#include "AYAnimation.h"
 #include <AYTest.h>
 
-#include <AYAnimation/AnimationPlayer.h>
-#include <AYAnimation/BlendSpace.h>
+#include "AnimationPlayer.h"
+#include "BlendSpace.h"
 
 #include <AYMath/MathTypes.h>
 
