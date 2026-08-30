@@ -37,6 +37,9 @@ set(SRC_FILES
     # AnimationPlayer unified-pass integration (INV-75/76/77, N-bone
     # auto-derived path fixture).
     AYTest_IterativeIK.cpp
+    # P4-3 (2026-08-30) — AYHumanoid 57-role contract, empty-by-default
+    # mapping, required-role and semantic-ancestor hierarchy validation.
+    AYTest_HumanoidSkeleton.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

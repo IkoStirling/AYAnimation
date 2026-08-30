@@ -13,6 +13,7 @@
 #include "AYAnimation/TwoBoneSolver.h"   // P4-1 (2026-08-10) — two-bone IK analytic core
 #include "AYAnimation/FabrikSolver.h"    // P4-2 (2026-08-11) — FABRIK iterative IK core (multi-joint)
 #include "AYAnimation/CcdSolver.h"       // P4-2 (2026-08-11) — CCD iterative IK core (multi-joint)
+#include "AYAnimation/HumanoidSkeleton.h" // P4-3 (2026-08-30) — AYHumanoid roles + hierarchy validation
 
 namespace ayt::anim
 {

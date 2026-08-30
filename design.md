@@ -1,6 +1,6 @@
 # AYAnimation Design
 
-> **状态（2026-08-11）**：薄播放内核 **P1.1–P1.7 + P2.2 Skeleton Mask + P3.x刀1 .aymask loader + P3.1 L1 状态机 + P3.2 L3 子状态机 + P3.x L2 Condition DSL + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 TwoBone IK + P4-2 FABRIK + CCD 迭代 IK 全 ship**（Notify、Additive L1/L2、BoneIdx cache、Cross-fade 4-pack、`vector<AdditiveSlot>`≤8 + merged notify/`sourceTag` + `trackWeights` mask + AYEntity `AdditiveLayerSpec` bridge + EventBus `AnimNotifyEvent.sourceTag` pipe + **P1.6 Deprecate Wrapper Cleanup** + **P1.7 Shared Skeleton Tick Cache** + **P2.2 资源级 Skeleton Mask** + **P3.x刀1 .aymask v1 binary loader + `ayt::resource::ISkeletonMask` formal interface** + **P3.1 L1 简单状态机** + **P3.2 L3 子状态机** + **P3.x L2 Condition DSL (Transition 4 字段缓存层 + ConditionExprAst 类族 + ConditionParser mini Lexer + precedence-climbing Parser + 8 算子 + 短路求值 + dirty cache + parse-fail-soft-false + L1 back-compat 双轨)** + **P3.x刀 N+1.B Time-in-State Query (StateMachine._currentStateEnterTime + getCurrentStateElapsedTime() + CondIdentifierExpr reserved "CurrentStateTime" pre-check)** + **P3.x刀 N+1.C Per-state AnimNotify routing (AnimNotifyRecord/AnimNotifyEvent.fromStateName + AnimationPlayer.setCurrentStateName + AYEntity bridge every-tick push)** + **P0 polish (Flat-array params/triggers + FNV-1a ParamNameRegistry + sorted-vector triggers + cache-friendly hot path; INV-43..46; 0 public API change)** + **P1 polish (Transition.triggerHash + Transition.conditionParamNameHash + CondIdentifierExpr.nameHash pre-computed at authoring time; lazy fallback for test fixture const_cast mutation back-compat; ParamNameRegistry split to leaf header AYAnimation/ParamNameRegistry.h; 3 hot-path intern() eliminated; INV-47..51; 0 public API change)** + **P2 polish (Condition DSL AST → 扁平字节码平行缓存：CondBytecode program + float literal table + program-counter switch evaluator + 固定栈数组 + 短路 relative-jump + OP_LOAD_RESERVED + lazy compile + shared_ptr copyable; INV-52..58; 0 public API change; Scenario G 1.34x/1.28x debug-build)** + **P3 polish (AssetBoneCache 默认无锁：setThreadSafe opt-in 双轨 + maybeLock RAII + 7 访问点条件锁; INV-59/60; +2 additive API; 0 bridge change; Scenario H 1.04x/1.08x debug-build 结构性零同步)** + **P4 polish (Additive slot 内存回收：releaseSlotBuffers swap 归还 tracks/capturedLocal*/trackWeights; INV-61/62; + AssetBoneCache transparent hash：StringViewHash 异构查找 0 临时 string; INV-63; + 批量 tick 压力测试 AYTest_P4Stress.cpp 4 cases 400 player × 200 帧逐位一致)** + **P5 polish (DSL 四则运算：CondOp + CondOpByte 各追加 5 值旧值不变; lexer 负号消歧 INV-65; precedence 5/6 INV-69; 一元减 INV-66; 除零 fail-soft INV-67; bytecode parity INV-68; 14 new tests)** + **P6 polish (INV-60 flip debug assert：setThreadSafe 离开 thread-safe 模式 try_lock probe INV-70; + release 配置落地 x64-Release + Scenario G/H 首测 G 18.3ns ~4.7x / H lock-free 1.40x~2.46x)**）。3-run stable：AYAnimation 3161/3161 + AYResource 1039/1039 + AYEntity 421/421 × 3（debug）+ release 3161/3161 × 3 全绿。详见 §4.11 / §4.12 / §4.13 / §4.14 / §4.15 / §4.16 / §4.17 / §4.18 / §4.19 / §4.20 / §4.21 / §4.22 / §4.23 / §4.24 / §4.25 / §4.26 / §11 / §13 / §11 P1.5–P2.2 / P3.x刀1 / P3.1 / P3.2 / P3.x / P3.x刀 N+1 / P0 polish / P1 polish / P2 polish / P3 polish / P4 polish / P5 polish / P6 polish / P4-1 / P4-2 rows。  
+> **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
 > **2026-08-06 设计审计 (二次)**：新增 §4.14 P3.1 L1 状态机 ship 文档；§11 / §13 / §16 勾选同步 P3.1 ship + 3-run 370/370 + 543/543。
@@ -15,6 +15,7 @@
 > **2026-08-10 设计审计 (十一次)**：新增 §4.24 P6 polish 完整 ship 文档（INV-60 flip debug assert + release 配置落地，12-section 全模板）；§4.21.12 Q2 + §4.20.12/§4.21.12/§4.22.12 Q1 标 resolved；§14.2 release-build row 标 ✅；§11 P6 polish row ✅ + roadmap 剩项同步（setTriggerByHash 永久挂起）；§16 changelog 加 P6 polish entry；debug 3-run 421/421 + 2843/2843 + 1039/1039 stable + release 2843/2843 × 3 全绿（release 配置首份证据）；INV-70 NEW（翻转离开 thread-safe 模式 debug assert）；Scenario G/H release 首测（G 18.3ns ~4.7x vs debug；H lock-free 1.40x~2.46x vs debug 1.06x/1.12x）；教训：try_lock probe vs _lockCount 计数权衡 + 单线程 UT 无法构造 assert 路径（由 P3 翻转测试回归兜底）+ run-to-run 噪声 ±2.5x 必须 min-of-5，详见 §4.24.10。
 > **2026-08-10 设计审计 (十二次)**：新增 §4.25 P4-1 TwoBone IK 完整 ship 文档（solver 解析解十二步 + AnimationPlayer Phase 2.5 集成 + 10 new INV-71..74，12-section 全模板）；§6 IKSolver 从「未启动」改 TwoBoneSolver ✅ ship（FABRIK/CCD 未启动）；§11 Phase 4 row ✅ + roadmap 长线开张；§14.3 IK 行拆开（~~TwoBone~~ ✅ + FABRIK+CCD/约束/重定向 open）；§16 changelog 加 P4-1 entry；debug 3-run 421/421 + **2999/2999** + 1039/1039 stable + release 2999/2999 × 3 全绿；INV-71..74 NEW（eager resolve + skeleton-swap re-resolve / weight saturate + ≤0 零成本 skip / IK 只写 root+mid localRot post-mask pre-Phase-3 / solver 纯函数退化→有限或原样永不 NaN）；教训：P7 设计缺陷（共享 mid/tip 的链不能同时命中——后执行者赢）+ AssetBoneCache 指针复用陈旧命中（骨架析构后地址复用 → resolveIKChains 改 findBone 直查）+ 4 test TU depfile 失效 stale .obj（头文件偏移变更 → garbage，touch 真实源文件强制重编），详见 §4.25.10。
 > **2026-08-11 设计审计 (十三次)**：新增 §4.26 P4-2 FABRIK + CCD 迭代 IK 完整 ship 文档（两个迭代解算器 + Phase 2.5 统一 applyIKChain pass + 路径自动推导 + 3 new INV-75..77，12-section 全模板）；§6 IKSolver 改「✅ TwoBoneSolver + FABRIKSolver + CCDSolver 全 ship」；§11 Phase 4 P4-2 row ✅（余项：约束/pole/局部目标/per-chain mask/重定向）；§14.3 IK 行收口（FABRIK+CCD ✅）；§16 changelog 加 P4-2 entry；debug 3-run **3161/3161** × 3 stable + release 3161/3161 × 3 全绿；INV-75..77 NEW（weight 双门 + 目标点插值语义 / 路径自动推导 + 禁用规则 / N-1 骨统一写回泛化 INV-73）；教训：CCD world 帧旋转累积数学错误（迭代后 fromToRotation 推导修复）+ FABRIK forward 根漂移锁回 + CCD 共线不可拉直不对称（C9/C11）+ 容差随收敛阶放宽钉实测 + fixture Root local 陷阱 + stale .obj 再触发（AYEntity 构建目录下次构建需 touch），详见 §4.26.10。
+> **2026-08-30 设计审计 (十四次)**：§7 建立 P4-3 AYHumanoid 语义骨架基线；选择 VRM 1.0 Humanoid 作为角色词表、glTF 2.0/`ISkeleton` 作为实际节点与蒙皮载体，H-Anim 仅作正式标准参考；所有性别与年龄共用一套语义角色，比例留在 bind pose/网格；MMD/Mixamo 内置映射明确保持为空，待真实资产查证后另行提交；新增 10 cases / 40 assertions，AYAnimation debug 3201/3201 × 3 stable。
 
 ---
 
@@ -1369,13 +1370,74 @@ AnimationStateMachine
 
 ---
 
-## 7. 骨骼重定向（Phase 4 ── 未启动）
+## 7. AYHumanoid 语义骨架与重定向（P4-3 基线已 ship，求解器未启动）
 
-离线重定向流程 + `BoneMappingTable` + `AnimationRetargeter` 设计保留，Phase 4 启动后实装。
+### 7.1 选择结论与边界
 
-**注**：当前 AYResource 的 `ISkeleton::getRootBoneIndices()` 已为重定向做预留。
+AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**，不创建“男/女/老/少”四套层级。人物差异属于 bind pose、骨长、关节朝向、网格和变形规则；若把这些差异编码进角色枚举，会把每个动画资产拆成多套不兼容契约，并不能改善动作重定向质量。
 
-**与 MMD 导入的关系（2026-07-27）**：PMX/VMD → 引擎资产属 **AYResource 离线前端**（见 `AYResource/design.md` **§5.7**，拟用 saba 填 `IntermediateAsset` 后复用现有 Converter）。Runtime `AnimationPlayer` **不**依赖 MMD。跨模型骨长/比例问题仍由本 Phase 的 Retarget / 烘到目标骨架解决；与「能否解析 PMX」正交。近期待看效果：Blender → FBX → 现有 `FBXConverter` 即可。
+基线分工如下：
+
+- [VRM 1.0 Humanoid](https://github.com/vrm-c/vrm-specification/blob/master/specification/VRMC_vrm-1.0/humanoid.md) 提供 55 个稳定的人形**语义角色**以及 required/optional 划分；它是 AYHumanoid 的主要语义来源。
+- [glTF 2.0](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html) 与 `ayt::resource::ISkeleton` 承载真实节点、父索引、bind pose 和 skin 数据。glTF 本身不规定唯一的人形骨骼词表，因此不把任一 DCC 的节点名误当作标准。
+- [H-Anim](https://www.web3d.org/documents/specifications/19774/V1.0/HAnim/concepts.html) 是正式的 ISO/Web3D 人体结构参考，但其关节/分段模型不是 MMD、Mixamo、VRM 资产共同使用的最小运行时层级；本阶段不直接采用其完整层级。
+- MMD 与 Mixamo 是重要**来源适配器**，不是 AYAnimation 的权威层级。运行时只认识语义角色和源骨索引，不依赖 PMX/VMD 或 Mixamo 命名。
+
+本刀只交付角色表、空映射容器和结构校验；动画 retarget 求解、比例补偿、rest-pose 旋转补偿、root-motion 提取与离线烘焙仍 deferred。
+
+### 7.2 规范层级
+
+`SceneRoot` 和 `MotionRoot` 是 AY 引擎扩展角色，不计入 VRM 的 55 个 humanoid bones；两者均可不绑定。其余角色沿用 VRM 1.0 语义：
+
+```text
+SceneRoot                         # 坐标系/导入修正；非变形，可选
+└─ MotionRoot                    # 位移与朝向运动；非变形，可选
+   └─ Hips                       # required
+      ├─ Spine                   # required
+      │  └─ Chest                # optional
+      │     └─ UpperChest        # optional
+      │        ├─ Neck           # optional
+      │        │  └─ Head        # required
+      │        │     ├─ LeftEye / RightEye
+      │        │     └─ Jaw
+      │        ├─ LeftShoulder → LeftUpperArm → LeftLowerArm → LeftHand
+      │        └─ RightShoulder → RightUpperArm → RightLowerArm → RightHand
+      ├─ LeftUpperLeg → LeftLowerLeg → LeftFoot → LeftToes
+      └─ RightUpperLeg → RightLowerLeg → RightFoot → RightToes
+
+LeftHand / RightHand
+├─ Thumb:  Metacarpal → Proximal → Distal
+├─ Index:  Proximal → Intermediate → Distal
+├─ Middle: Proximal → Intermediate → Distal
+├─ Ring:   Proximal → Intermediate → Distal
+└─ Little: Proximal → Intermediate → Distal
+```
+
+Required 共 15 个：`Hips`、`Spine`、`Head`，左右 `UpperLeg/LowerLeg/Foot`，左右 `UpperArm/LowerArm/Hand`。肩、胸、上胸、颈、眼、下颌、脚趾和手指均为 optional。扭转骨、IK 控制骨、裙摆、头发、武器挂点等不进入固定角色枚举，但必须原样保留在源 `ISkeleton` 中。
+
+### 7.3 映射与层级校验契约
+
+`HumanoidBoneMap` 是固定大小的“语义角色 → `ISkeleton` 骨索引”容器：默认构造时 57 项全部为 `-1`。本阶段**没有**内置名字匹配、MMD 日文/英文别名、Mixamo 前缀规则或自动猜测；因此仓库中的 MMD/Mixamo 映射关系有意保持为空。只有在代表性 PMX/FBX/VRM 样本、左右手系、rest pose 与辅助骨行为被实际查证后，才为各来源增加独立 adapter 和 fixture。
+
+`validateHumanoidSkeleton()` 执行以下确定性检查：
+
+1. 每个已绑定索引必须落在当前 `ISkeleton` 范围内，且同一源骨不能绑定两个语义角色。
+2. 15 个 required 角色必须全部绑定；引擎根与 optional 角色可以缺失。
+3. 语义父子关系是**祖先约束而非直接父约束**。若某个 optional 语义父未绑定，就向上寻找最近的已绑定语义祖先；源骨架可在两者间保留 MMD/Mixamo twist、grant、IK 或辅助骨。
+4. 已绑定链上的非法父索引、循环和“语义父不是源骨祖先”均返回可定位的错误；校验不改写源骨架。
+
+由此得到四条新增不变量：
+
+- **INV-78**：AYHumanoid 角色枚举固定为 VRM 1.0 的 55 个语义角色 + `SceneRoot`/`MotionRoot` 两个 AY 扩展根。
+- **INV-79**：性别、年龄和体型不改变角色枚举或语义父链；差异只存在于资产变换与后续 retarget profile。
+- **INV-80**：源骨架层级原样保留；校验只要求最近已映射语义祖先成立，允许任意未映射中间骨。
+- **INV-81**：默认映射为空，AYAnimation 不内置未经 fixture 查证的 MMD/Mixamo 名称映射。
+
+**与 MMD 导入的关系（更新于 2026-08-30）**：PMX/VMD → 引擎资产仍属 **AYResource 离线前端**（见 `AYResource/design.md` §5.7）。Runtime `AnimationPlayer` 不依赖 MMD；来源 adapter 只负责填 `HumanoidBoneMap`，跨模型骨长/比例问题仍由后续 Retarget / 烘到目标骨架解决，与“能否解析 PMX”正交。
+
+### 7.4 验证
+
+`AYTest_HumanoidSkeleton.cpp` 覆盖角色数量与 required 集合、默认空映射、显式绑定/解绑、未映射中间骨、最近语义祖先、缺少 required、重复/越界索引、错误父链、非法父索引与循环。新增 10 cases / 40 assertions；AYAnimation debug 全量 **3201/3201 × 3** stable（2026-08-30）。
 
 ---
 
@@ -1402,16 +1464,19 @@ AYAnimation/
 ├── include/
 │   └── AYAnimation/
 │       ├── KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
-│       └── AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
+│       ├── AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
+│       └── HumanoidSkeleton.h      # ✅ P4-3: 57 roles + 空映射容器 + 校验 API
 │
 ├── src/
 │   ├── KeySampler.cpp              # ✅ AN-01 ship: locateSegment + dot<0 slerp 选优 + 单调性 assert
-│   └── AnimationPlayer.cpp        # ✅ AN-01 ship: 消费 ISkeleton/IAnimation + ticks→s 预转换
+│   ├── AnimationPlayer.cpp         # ✅ AN-01 ship: 消费 ISkeleton/IAnimation + ticks→s 预转换
+│   └── HumanoidSkeleton.cpp        # ✅ P4-3: 角色表与层级校验
 │
 └── unittest/
     ├── main.cpp
     ├── AYTest_KeySampler.cpp       # 5+ case: Vec3 lerp / Quat slerp 短弧 / Quat 单 key / Float lerp / dot<0 选优 / 单调性
-    └── AYTest_AnimationPlayer.cpp  # 6+ case: rest pose / position lerp / parent-child 组合 / missing track / loop wrap / skin matrix / Float track sink / topology assert / IBM zero safe
+    ├── AYTest_AnimationPlayer.cpp  # 6+ case: rest pose / position lerp / parent-child 组合 / missing track / loop wrap / skin matrix / Float track sink / topology assert / IBM zero safe
+    └── AYTest_HumanoidSkeleton.cpp # ✅ P4-3: 10 cases / 40 assertions
 ```
 
 **已删除（2026-07-26 P0 修复）**：
@@ -4822,6 +4887,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 | 日期 | 变更 |
 |------|------|
+| 2026-08-30 | **P4-3 AYHumanoid 语义骨架基线 ship**：§7 确立一套跨性别/年龄语义契约；VRM 1.0 的 55 humanoid roles + AY `SceneRoot`/`MotionRoot`；`HumanoidBoneMap` 默认 57 项空映射；`validateHumanoidSkeleton()` 校验索引、唯一性、15 required roles、语义祖先链、非法父索引与循环；源中间辅助骨原样保留；MMD/Mixamo 内置映射刻意留空等待真实 fixture；INV-78..81 NEW；10 cases / 40 assertions，AYAnimation debug 3201/3201 × 3 stable。 |
 | 2026-07-26 | P0–P1.4 多轮 SHIP；工业对照表初版 |
 | 2026-07-27 | **设计审计补丁**：状态抬头；§4.3.1 Hold≠末帧 clamp；§4.7 Override 忽略 weight 陷阱；**§4.8 P1.5 Player SHIP 对齐代码**；§11/§13 勾选与统计修正；Montage Slot 与 AdditiveSlot 对齐约束 |
 | 2026-08-03 | P2.2 Skeleton Mask ship：§4.13 全 12-section + §11 row + §13 row 17h + §11 P2.2 row |
