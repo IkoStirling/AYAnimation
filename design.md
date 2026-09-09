@@ -1385,35 +1385,11 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 
 本刀只交付角色表、空映射容器和结构校验；动画 retarget 求解、比例补偿、rest-pose 旋转补偿、root-motion 提取与离线烘焙仍 deferred。
 
-### 7.2 规范层级
+### 7.2 规范入口与参考资产
 
-`SceneRoot` 和 `MotionRoot` 是 AY 引擎扩展角色，不计入 VRM 的 55 个 humanoid bones；两者均可不绑定。其余角色沿用 VRM 1.0 语义：
+骨架角色、层级、参考尺寸/绑定、根运动、动画兼容、模型与多纹理条件统一维护于 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)。该文档区分现有通用语义的 15 个必需角色与未来参考骨架的完整 57 角色，不改变当前可选角色和祖先校验语义。
 
-```text
-SceneRoot                         # 坐标系/导入修正；非变形，可选
-└─ MotionRoot                    # 位移与朝向运动；非变形，可选
-   └─ Hips                       # required
-      ├─ Spine                   # required
-      │  └─ Chest                # optional
-      │     └─ UpperChest        # optional
-      │        ├─ Neck           # optional
-      │        │  └─ Head        # required
-      │        │     ├─ LeftEye / RightEye
-      │        │     └─ Jaw
-      │        ├─ LeftShoulder → LeftUpperArm → LeftLowerArm → LeftHand
-      │        └─ RightShoulder → RightUpperArm → RightLowerArm → RightHand
-      ├─ LeftUpperLeg → LeftLowerLeg → LeftFoot → LeftToes
-      └─ RightUpperLeg → RightLowerLeg → RightFoot → RightToes
-
-LeftHand / RightHand
-├─ Thumb:  Metacarpal → Proximal → Distal
-├─ Index:  Proximal → Intermediate → Distal
-├─ Middle: Proximal → Intermediate → Distal
-├─ Ring:   Proximal → Intermediate → Distal
-└─ Little: Proximal → Intermediate → Distal
-```
-
-Required 共 15 个：`Hips`、`Spine`、`Head`，左右 `UpperLeg/LowerLeg/Foot`，左右 `UpperArm/LowerArm/Hand`。肩、胸、上胸、颈、眼、下颌、脚趾和手指均为 optional。扭转骨、IK 控制骨、裙摆、头发、武器挂点等不进入固定角色枚举，但必须原样保留在源 `ISkeleton` 中。
+参考骨架将冻结精确绑定数据，模型外观与渲染 fixture 独立版本化；同名骨骼不保证动画可直接共享。低模资产交付步骤见 [实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。标准资产及重定向/根运动提取仍待实施，本节后续不变量描述已实现代码。
 
 ### 7.3 映射与层级校验契约
 

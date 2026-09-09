@@ -5,6 +5,9 @@
 // roots. It deliberately contains no MMD/Mixamo name aliases: source
 // adapters populate HumanoidBoneMap only after their conventions are
 // verified against real assets (design §7, INV-78..81).
+// Asset requirements: AYDocs/AYHUMANOID-STANDARD.md (engine repository root).
+// The planned reference asset uses all 57 roles and versioned bind data;
+// generic validation still permits optional roles to be absent.
 
 #include <array>
 #include <cstddef>
