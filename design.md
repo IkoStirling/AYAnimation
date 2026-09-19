@@ -6,7 +6,7 @@
 **Owner:** AYAnimation
 **Authority:** AYHumanoid 角色表 / AYDocs 的标准骨架与资源管线规范
 
-> **2026-09-19 实现补充**：UI-free `AYAnimationEditorCore` 与 AYEditor 薄适配第一版已落地，覆盖源骨架检查、`.aysmap` 作者资源、57 角色映射、校验/历史、双状态和动画姿势预览。重定向求解、清理烘焙与发布门禁仍待实施，优先级与跨模块验收统一见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)。
+> **2026-09-19 实现补充**：UI-free `AYAnimationEditorCore` 与 AYEditor 薄适配第一版已落地，覆盖源骨架检查、Legacy `.aysmap` 作者资源、57 角色映射、校验/历史、双状态和动画姿势预览。规范作者格式已由 [ADR-0011](../../AYDocs/adr/0011-unified-asset-type-registry-and-rig-profile-extension.md) 确定为 `.ayrig`，reader/writer 迁移尚待实施；重定向求解与完整清理烘焙仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) 推进。
 
 > **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
@@ -1429,7 +1429,7 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 
 编辑器允许保留原始骨架；导入、手工和模板设置保存可绑定骨架的作者配置，不立即改写源资源。
 `HumanoidBoneMap` 仍是已实现的运行时语义映射容器；新增持久化 SkeletonMapping 与 RetargetProfile
-已由 `.aysmap` 第一版承载，但不能用同名映射替代姿态求解。后续重定向核心须处理参考姿势/骨轴和明确的
+当前由 Legacy `.aysmap` 第一版承载，规范容器为待迁移的 `.ayrig`，且不能用同名映射替代姿态求解。后续重定向核心须处理参考姿势/骨轴和明确的
 源/目标绑定，输出可验证的目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图。
 
 AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及后续 SKA-11/12 的根运动、
