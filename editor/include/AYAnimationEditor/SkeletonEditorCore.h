@@ -20,6 +20,7 @@ class Skeleton;
 namespace ayt::anim::editor {
 
 inline constexpr std::uint32_t kSkeletonMappingSchemaVersion = 1u;
+inline constexpr std::uint32_t kSkeletonBakePlanSchemaVersion = 1u;
 inline constexpr const char* kSkeletonMappingExtension = ".aysmap";
 
 enum class SkeletonAdaptationState : std::uint8_t {
@@ -72,6 +73,54 @@ struct SkeletonPreflightReport {
     [[nodiscard]] std::size_t errorCount() const noexcept;
     [[nodiscard]] std::size_t warningCount() const noexcept;
     [[nodiscard]] bool canBake() const noexcept { return errorCount() == 0u; }
+};
+
+enum class SkeletonBakeBoneAction : std::uint8_t {
+    Keep,
+    Rename,
+    Delete,
+};
+
+enum class SkeletonBakeDependencyKind : std::uint8_t {
+    Animation,
+    Mesh,
+};
+
+enum class SkeletonBakeDependencyImpact : std::uint8_t {
+    Affected,
+    RequiresVerification,
+    Blocked,
+};
+
+struct SkeletonBakeBoneOperation {
+    SkeletonBakeBoneAction action = SkeletonBakeBoneAction::Keep;
+    int sourceBoneIndex = -1;
+    int sourceParentIndex = -1;
+    std::string sourceName;
+    std::string targetName;
+    HumanoidBone role = HumanoidBone::Invalid;
+    std::string reason;
+};
+
+struct SkeletonBakeDependency {
+    SkeletonBakeDependencyKind kind = SkeletonBakeDependencyKind::Animation;
+    SkeletonBakeDependencyImpact impact = SkeletonBakeDependencyImpact::Affected;
+    std::string path;
+    std::string message;
+};
+
+struct SkeletonBakeDryRunPlan {
+    std::uint32_t schemaVersion = kSkeletonBakePlanSchemaVersion;
+    std::string skeletonPath;
+    std::string mappingPath;
+    std::string sourceFingerprint;
+    SkeletonPreflightReport preflight;
+    std::vector<SkeletonBakeBoneOperation> boneOperations;
+    std::vector<SkeletonBakeDependency> dependencies;
+
+    [[nodiscard]] std::size_t boneActionCount(
+        SkeletonBakeBoneAction action) const noexcept;
+    [[nodiscard]] bool canBake() const noexcept { return preflight.canBake(); }
 };
 
 struct SkeletonAuthoringStatus {
@@ -142,6 +191,12 @@ public:
     [[nodiscard]] SkeletonAuthoringStatus status() const;
     [[nodiscard]] SkeletonPreflightReport preflight(
         const std::vector<std::string>& animationPaths = {}) const;
+    [[nodiscard]] SkeletonBakeDryRunPlan dryRunBake(
+        const std::vector<std::string>& animationPaths = {},
+        const std::vector<std::string>& meshPaths = {}) const;
+    bool writeDryRunManifest(const SkeletonBakeDryRunPlan& plan,
+                             const std::string& path,
+                             std::string* error = nullptr) const;
     [[nodiscard]] bool isDirty() const noexcept;
     [[nodiscard]] bool canUndo() const noexcept;
     [[nodiscard]] bool canRedo() const noexcept;
@@ -173,11 +228,19 @@ public:
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
 
     static std::string defaultMappingPath(const std::string& skeletonPath);
+    static std::string defaultDryRunManifestPath(const std::string& mappingPath);
+    static std::string dryRunManifestJson(const SkeletonBakeDryRunPlan& plan);
     static SkeletonAuthoringStatus inspectStatus(
         const std::string& skeletonPath) noexcept;
     static const char* adaptationStateName(SkeletonAdaptationState state) noexcept;
     static const char* bakeStateName(SkeletonBakeState state) noexcept;
     static const char* preflightCodeName(SkeletonPreflightCode code) noexcept;
+    static const char* bakeBoneActionName(
+        SkeletonBakeBoneAction action) noexcept;
+    static const char* bakeDependencyKindName(
+        SkeletonBakeDependencyKind kind) noexcept;
+    static const char* bakeDependencyImpactName(
+        SkeletonBakeDependencyImpact impact) noexcept;
 
 private:
     struct Snapshot {

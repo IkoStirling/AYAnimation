@@ -4,6 +4,7 @@
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYResource/assetsImpl/Skeleton.h>
 #include <AYTest.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -23,12 +24,14 @@ std::filesystem::path fixtureRoot()
     return path;
 }
 
-std::filesystem::path writeSkeleton()
+std::filesystem::path writeSkeleton(bool addHelper = false,
+                                    bool renameHead = false)
 {
     Skeleton skeleton;
     const struct BoneDef { const char* name; int parent; float x; float y; } defs[] = {
         {"sceneRoot", -1, 0, 0}, {"motionRoot", 0, 0, 0},
-        {"hips", 1, 0, 1}, {"spine", 2, 0, 1}, {"head", 3, 0, 1},
+        {"hips", 1, 0, 1}, {"spine", 2, 0, 1},
+        {renameHead ? "characterHead" : "head", 3, 0, 1},
         {"leftUpperArm", 3, -1, 0}, {"leftLowerArm", 5, -1, 0},
         {"leftHand", 6, -1, 0}, {"rightUpperArm", 3, 1, 0},
         {"rightLowerArm", 8, 1, 0}, {"rightHand", 9, 1, 0},
@@ -45,6 +48,16 @@ std::filesystem::path writeSkeleton()
         bone.localScale = {1, 1, 1};
         bone.inverseBindMatrix = ayt::math::Float4x4::identity();
         skeleton.addBone(bone);
+    }
+    if (addHelper) {
+        Bone helper;
+        helper.name = "headAccessoryHelper";
+        helper.parentIndex = 4;
+        helper.localPosition = {0, 0.25f, 0};
+        helper.localRotation = ayt::math::FQuaternion::identity();
+        helper.localScale = {1, 1, 1};
+        helper.inverseBindMatrix = ayt::math::Float4x4::identity();
+        skeleton.addBone(helper);
     }
     std::vector<ayt::math::UInt8> bytes;
     CHECK(skeleton.saveToBinary(bytes));
@@ -217,6 +230,40 @@ TEST_CASE(skeleton_preflight_detects_source_change_after_mapping_save)
         [](const SkeletonPreflightIssue& issue) {
             return issue.code == SkeletonPreflightCode::SourceSkeletonChanged;
         }));
+}
+
+TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
+{
+    const auto skeletonPath = writeSkeleton(true, true);
+    const auto animationPath = writeAnimationForNode();
+    const auto sourceBefore = ayt::io::File::readAllBytes(skeletonPath.string());
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(skeletonPath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.bind(HumanoidBone::Head, 4));
+    CHECK(core.validation().isValid());
+
+    const auto plan = core.dryRunBake(
+        {animationPath.string()}, {(fixtureRoot() / "character.aymesh").string()});
+    CHECK(plan.canBake());
+    CHECK(plan.boneActionCount(SkeletonBakeBoneAction::Rename) == 1u);
+    CHECK(plan.boneActionCount(SkeletonBakeBoneAction::Delete) == 1u);
+    CHECK(plan.boneActionCount(SkeletonBakeBoneAction::Keep) == 16u);
+    CHECK(plan.dependencies.size() == 2u);
+    CHECK(plan.dependencies[0].kind == SkeletonBakeDependencyKind::Animation);
+    CHECK(plan.dependencies[1].kind == SkeletonBakeDependencyKind::Mesh);
+
+    const auto manifestPath = fixtureRoot() / "synthetic.aysmap.bake-plan.json";
+    CHECK(core.writeDryRunManifest(plan, manifestPath.string(), &error));
+    const auto manifest = nlohmann::json::parse(
+        ayt::io::File::readAllText(manifestPath.string()));
+    CHECK(manifest["type"] == "SkeletonBakeDryRun");
+    CHECK(manifest["version"] == kSkeletonBakePlanSchemaVersion);
+    CHECK(manifest["summary"]["rename"] == 1u);
+    CHECK(manifest["summary"]["delete"] == 1u);
+    CHECK(manifest["bones"].size() == 18u);
+    CHECK(ayt::io::File::readAllBytes(skeletonPath.string()) == sourceBefore);
 }
 
 TEST_SUITE_END

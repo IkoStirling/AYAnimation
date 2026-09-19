@@ -78,6 +78,16 @@ std::size_t SkeletonPreflightReport::warningCount() const noexcept
         }));
 }
 
+std::size_t SkeletonBakeDryRunPlan::boneActionCount(
+    SkeletonBakeBoneAction action) const noexcept
+{
+    return static_cast<std::size_t>(std::count_if(
+        boneOperations.begin(), boneOperations.end(),
+        [action](const SkeletonBakeBoneOperation& operation) {
+            return operation.action == action;
+        }));
+}
+
 const SkeletonEditorCore::Snapshot& SkeletonEditorCore::current() const noexcept
 {
     return _history[_historyCursor];
@@ -93,6 +103,13 @@ std::string SkeletonEditorCore::defaultMappingPath(const std::string& skeletonPa
     std::filesystem::path path(skeletonPath);
     path.replace_extension(kSkeletonMappingExtension);
     return normalizedPath(path);
+}
+
+std::string SkeletonEditorCore::defaultDryRunManifestPath(
+    const std::string& mappingPath)
+{
+    return normalizedPath(std::filesystem::path(mappingPath).concat(
+        ".bake-plan.json"));
 }
 
 bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
@@ -565,6 +582,200 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
     return report;
 }
 
+SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
+    const std::vector<std::string>& animationPaths,
+    const std::vector<std::string>& meshPaths) const
+{
+    SkeletonBakeDryRunPlan plan;
+    plan.skeletonPath = _skeletonPath;
+    plan.mappingPath = _mappingPath;
+    plan.sourceFingerprint = skeletonFingerprint();
+
+    std::vector<std::string> animations = animationPaths;
+    if (!_animationPath.empty()) animations.push_back(_animationPath);
+    const auto normalizeUnique = [](std::vector<std::string>& paths) {
+        for (std::string& path : paths) {
+            std::error_code error;
+            const auto absolute = std::filesystem::absolute(path, error);
+            path = normalizedPath(error ? std::filesystem::path(path) : absolute);
+        }
+        std::sort(paths.begin(), paths.end());
+        paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    };
+    normalizeUnique(animations);
+    std::vector<std::string> meshes = meshPaths;
+    normalizeUnique(meshes);
+    plan.preflight = preflight(animations);
+
+    std::vector<HumanoidBone> roleByBone(_bones.size(), HumanoidBone::Invalid);
+    std::vector<std::uint8_t> retained(_bones.size(), 0u);
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const int mapped = current().mapping.getSourceBoneIndex(spec.role);
+        if (mapped < 0 || mapped >= static_cast<int>(_bones.size())) continue;
+        if (roleByBone[static_cast<std::size_t>(mapped)] == HumanoidBone::Invalid) {
+            roleByBone[static_cast<std::size_t>(mapped)] = spec.role;
+        }
+        int cursor = mapped;
+        std::size_t guard = 0u;
+        while (cursor >= 0 && cursor < static_cast<int>(_bones.size())
+               && guard++ < _bones.size()) {
+            retained[static_cast<std::size_t>(cursor)] = 1u;
+            cursor = _bones[static_cast<std::size_t>(cursor)].parentIndex;
+        }
+    }
+
+    plan.boneOperations.reserve(_bones.size());
+    for (const SkeletonBoneView& bone : _bones) {
+        SkeletonBakeBoneOperation operation;
+        operation.sourceBoneIndex = bone.index;
+        operation.sourceParentIndex = bone.parentIndex;
+        operation.sourceName = bone.name;
+        operation.targetName = bone.name;
+        operation.role = roleByBone[static_cast<std::size_t>(bone.index)];
+        if (operation.role != HumanoidBone::Invalid) {
+            operation.targetName = std::string(getHumanoidBoneName(operation.role));
+            if (operation.targetName.empty()) operation.targetName = bone.name;
+            operation.action = operation.targetName == operation.sourceName
+                ? SkeletonBakeBoneAction::Keep
+                : SkeletonBakeBoneAction::Rename;
+            operation.reason = operation.action == SkeletonBakeBoneAction::Rename
+                ? "Mapped bone will use its canonical AYHumanoid name."
+                : "Mapped AYHumanoid bone is already canonical.";
+        } else if (retained[static_cast<std::size_t>(bone.index)] != 0u) {
+            operation.action = SkeletonBakeBoneAction::Keep;
+            operation.reason = "Unmapped ancestor is required to preserve mapped hierarchy.";
+        } else {
+            operation.action = SkeletonBakeBoneAction::Delete;
+            operation.targetName.clear();
+            operation.reason = "Unmapped bone is not required by the mapped hierarchy.";
+        }
+        plan.boneOperations.push_back(std::move(operation));
+    }
+
+    const auto dependencyBlocked = [&plan](const std::string& path) {
+        return std::any_of(plan.preflight.issues.begin(), plan.preflight.issues.end(),
+            [&path](const SkeletonPreflightIssue& issue) {
+                return issue.severity == SkeletonPreflightSeverity::Error
+                    && issue.resourcePath == path;
+            });
+    };
+    for (const std::string& path : animations) {
+        const bool blocked = dependencyBlocked(path);
+        plan.dependencies.push_back({SkeletonBakeDependencyKind::Animation,
+            blocked ? SkeletonBakeDependencyImpact::Blocked
+                    : SkeletonBakeDependencyImpact::Affected,
+            path, blocked ? "Animation failed preflight validation."
+                          : "Animation tracks are affected by skeleton cleanup and renaming."});
+    }
+    for (const std::string& path : meshes) {
+        plan.dependencies.push_back({SkeletonBakeDependencyKind::Mesh,
+            SkeletonBakeDependencyImpact::RequiresVerification, path,
+            "Mesh skin bindings must be rewritten and verified during bake."});
+    }
+    return plan;
+}
+
+std::string SkeletonEditorCore::dryRunManifestJson(
+    const SkeletonBakeDryRunPlan& plan)
+{
+    Json operations = Json::array();
+    for (const SkeletonBakeBoneOperation& operation : plan.boneOperations) {
+        Json item = {
+            {"action", bakeBoneActionName(operation.action)},
+            {"sourceIndex", operation.sourceBoneIndex},
+            {"sourceParentIndex", operation.sourceParentIndex},
+            {"sourceName", operation.sourceName},
+            {"targetName", operation.targetName},
+            {"reason", operation.reason},
+        };
+        if (operation.role != HumanoidBone::Invalid) {
+            item["role"] = getHumanoidBoneName(operation.role);
+        }
+        operations.push_back(std::move(item));
+    }
+    Json dependencies = Json::array();
+    for (const SkeletonBakeDependency& dependency : plan.dependencies) {
+        dependencies.push_back({
+            {"kind", bakeDependencyKindName(dependency.kind)},
+            {"impact", bakeDependencyImpactName(dependency.impact)},
+            {"path", dependency.path},
+            {"message", dependency.message},
+        });
+    }
+    Json issues = Json::array();
+    for (const SkeletonPreflightIssue& issue : plan.preflight.issues) {
+        issues.push_back({
+            {"severity", issue.severity == SkeletonPreflightSeverity::Error
+                ? "error" : "warning"},
+            {"code", preflightCodeName(issue.code)},
+            {"message", issue.message},
+            {"resource", issue.resourcePath},
+            {"boneIndex", issue.boneIndex},
+            {"trackIndex", issue.trackIndex},
+        });
+    }
+    const Json root = {
+        {"type", "SkeletonBakeDryRun"},
+        {"version", plan.schemaVersion},
+        {"source", {{"skeleton", plan.skeletonPath},
+                    {"mapping", plan.mappingPath},
+                    {"fingerprint", plan.sourceFingerprint}}},
+        {"canBake", plan.canBake()},
+        {"summary", {
+            {"keep", plan.boneActionCount(SkeletonBakeBoneAction::Keep)},
+            {"rename", plan.boneActionCount(SkeletonBakeBoneAction::Rename)},
+            {"delete", plan.boneActionCount(SkeletonBakeBoneAction::Delete)},
+            {"dependencies", plan.dependencies.size()},
+            {"errors", plan.preflight.errorCount()},
+            {"warnings", plan.preflight.warningCount()},
+        }},
+        {"bones", std::move(operations)},
+        {"dependencies", std::move(dependencies)},
+        {"preflight", std::move(issues)},
+    };
+    return root.dump(2) + "\n";
+}
+
+bool SkeletonEditorCore::writeDryRunManifest(
+    const SkeletonBakeDryRunPlan& plan, const std::string& path,
+    std::string* error) const
+{
+    if (path.empty()) {
+        setError(error, "Bake dry-run manifest path is empty.");
+        return false;
+    }
+    const std::filesystem::path destination(path);
+    std::error_code directoryError;
+    if (!destination.parent_path().empty()) {
+        std::filesystem::create_directories(destination.parent_path(), directoryError);
+    }
+    if (directoryError) {
+        setError(error, "Unable to create bake dry-run manifest directory.");
+        return false;
+    }
+    const std::filesystem::path temporary = destination.string() + ".tmp";
+    if (!ayt::io::File::writeAllText(temporary.string(), dryRunManifestJson(plan))) {
+        setError(error, "Unable to write bake dry-run manifest temporary file.");
+        return false;
+    }
+    std::error_code renameError;
+    std::filesystem::rename(temporary, destination, renameError);
+    if (renameError) {
+        std::error_code removeError;
+        std::filesystem::remove(destination, removeError);
+        renameError.clear();
+        std::filesystem::rename(temporary, destination, renameError);
+    }
+    if (renameError) {
+        std::error_code cleanupError;
+        std::filesystem::remove(temporary, cleanupError);
+        setError(error, "Unable to commit bake dry-run manifest.");
+        return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+}
+
 bool SkeletonEditorCore::isDirty() const noexcept
 {
     return _savedCursor == kNoSavedCursor || _historyCursor != _savedCursor;
@@ -835,6 +1046,39 @@ const char* SkeletonEditorCore::preflightCodeName(
     case SkeletonPreflightCode::AnimationTrackBoneMissing: return "animationTrackBoneMissing";
     }
     return "unknown";
+}
+
+const char* SkeletonEditorCore::bakeBoneActionName(
+    SkeletonBakeBoneAction action) noexcept
+{
+    switch (action) {
+    case SkeletonBakeBoneAction::Keep: return "keep";
+    case SkeletonBakeBoneAction::Rename: return "rename";
+    case SkeletonBakeBoneAction::Delete: return "delete";
+    }
+    return "keep";
+}
+
+const char* SkeletonEditorCore::bakeDependencyKindName(
+    SkeletonBakeDependencyKind kind) noexcept
+{
+    switch (kind) {
+    case SkeletonBakeDependencyKind::Animation: return "animation";
+    case SkeletonBakeDependencyKind::Mesh: return "mesh";
+    }
+    return "animation";
+}
+
+const char* SkeletonEditorCore::bakeDependencyImpactName(
+    SkeletonBakeDependencyImpact impact) noexcept
+{
+    switch (impact) {
+    case SkeletonBakeDependencyImpact::Affected: return "affected";
+    case SkeletonBakeDependencyImpact::RequiresVerification:
+        return "requiresVerification";
+    case SkeletonBakeDependencyImpact::Blocked: return "blocked";
+    }
+    return "blocked";
 }
 
 } // namespace ayt::anim::editor
