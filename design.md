@@ -1,5 +1,13 @@
 # AYAnimation Design
 
+**Version:** 1.0.0（文档版本，不是模块或骨架版本）
+**Date:** 2026-09-18
+**Status:** Active — 现有运行时与骨骼作者核心第一版已实现；重定向/烘焙管线继续建设
+**Owner:** AYAnimation
+**Authority:** AYHumanoid 角色表 / AYDocs 的标准骨架与资源管线规范
+
+> **2026-09-19 实现补充**：UI-free `AYAnimationEditorCore` 与 AYEditor 薄适配第一版已落地，覆盖源骨架检查、`.aysmap` 作者资源、57 角色映射、校验/历史、双状态和动画姿势预览。重定向求解、清理烘焙与发布门禁仍待实施，优先级与跨模块验收统一见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)。
+
 > **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
 > 工业级对标：Unreal Animation / Unity Animator / Godot AnimationTree / O3DE Animation Graph。  
@@ -1415,6 +1423,25 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 
 `AYTest_HumanoidSkeleton.cpp` 覆盖角色数量与 required 集合、默认空映射、显式绑定/解绑、未映射中间骨、最近语义祖先、缺少 required、重复/越界索引、错误父链、非法父索引与循环。新增 10 cases / 40 assertions；AYAnimation debug 全量 **3201/3201 × 3** stable（2026-08-30）。
 
+### 7.5 骨骼动画资源管线（2026-09-19，第一版作者核心已实现）
+
+完整设计和 SKA-01～16 的 owner、优先级、依赖及验收以 [跨模块资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) 为唯一队列入口。
+
+编辑器允许保留原始骨架；导入、手工和模板设置保存可绑定骨架的作者配置，不立即改写源资源。
+`HumanoidBoneMap` 仍是已实现的运行时语义映射容器；新增持久化 SkeletonMapping 与 RetargetProfile
+已由 `.aysmap` 第一版承载，但不能用同名映射替代姿态求解。后续重定向核心须处理参考姿势/骨轴和明确的
+源/目标绑定，输出可验证的目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图。
+
+AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及后续 SKA-11/12 的根运动、
+分链比例和 Twist 策略。资源 IO、全引用清理、构建摘要与发布门禁归 AYResource/离线编排层；
+不将 AYAnimation 链接回 AYResource 核心形成循环。预览和离线烘焙使用相同转换核心。
+
+语义标准化保留源骨长/绑定，不能承诺标准动画库直接兼容；精确目标烘焙必须绑定目标版本/摘要，
+若用于角色 mesh，还须验证蒙皮适配。根轨迹保留与运行时提取/消费分开验收；不允许同时施加实体位移。
+
+规划验收：同骨架恒等、不同参考姿势、非标准原始名称、可选/中间骨、根保留、目标变更失效、
+数值有限性与规定误差预算。测试与首次完整闭环为 SKA-09，分项编码时持续补充，当前未执行新增功能测试。
+
 ---
 
 ## 8. 自适应压缩（Phase 5 ── 未启动）
@@ -1535,7 +1562,9 @@ AYAnimation/
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] Pole vector / 局部空间目标 / per-chain mask 门控
-- [ ] 骨骼重定向（BoneMappingTable + AnimationRetargeter）
+- [ ] **P0 / SKA-01～09**：源/配置资源、统一映射校验、编辑器作者工作区与双标志、最小离线重定向、派生清理、CLI 发布门禁及全程回归；跨模块职责与依赖见 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7.1。
+- [ ] **P1 / SKA-10～13**：批量 clip 与经真实资产验证的模板、根运动提取/消费、分链比例与 Twist、动画库兼容和迁移；见统一队列 §7.2。
+- [ ] **P2 / SKA-14～16**：接触修正、可选运行时重定向、骨骼 LOD/平台压缩；见统一队列 §7.3。默认发布采用离线烘焙，不要求首版实现运行时重定向。
 
 ### Phase 5: 优化 + 压缩 ── ⏳ 排队
 
@@ -4863,6 +4892,8 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 | 日期 | 变更 |
 |------|------|
+| 2026-09-19 | `AYAnimationEditorCore` 第一版 ship：源 `.ayskel` 只读检查、绑定 `.aysmap`、57 角色手工/规范名模板映射、校验/撤销/保存、适配与烘焙状态、`.ayanm` 姿势预览；AYEditor 仅通过薄适配消费。 |
+| 2026-09-18 | **后续设计，非实现完成**：新增 §7.5 与 Phase 4 的 SKA-01～16 导航；统一源保留、映射/profile 资源、编辑器双标志、派生烘焙清理和发布门禁，区分 P0/P1/P2 与验收依赖；不修改现有 INV-78～81 或测试历史。 |
 | 2026-08-30 | **P4-3 AYHumanoid 语义骨架基线 ship**：§7 确立一套跨性别/年龄语义契约；VRM 1.0 的 55 humanoid roles + AY `SceneRoot`/`MotionRoot`；`HumanoidBoneMap` 默认 57 项空映射；`validateHumanoidSkeleton()` 校验索引、唯一性、15 required roles、语义祖先链、非法父索引与循环；源中间辅助骨原样保留；MMD/Mixamo 内置映射刻意留空等待真实 fixture；INV-78..81 NEW；10 cases / 40 assertions，AYAnimation debug 3201/3201 × 3 stable。 |
 | 2026-07-26 | P0–P1.4 多轮 SHIP；工业对照表初版 |
 | 2026-07-27 | **设计审计补丁**：状态抬头；§4.3.1 Hold≠末帧 clamp；§4.7 Override 忽略 weight 陷阱；**§4.8 P1.5 Player SHIP 对齐代码**；§11/§13 勾选与统计修正；Montage Slot 与 AdditiveSlot 对齐约束 |

@@ -17,6 +17,8 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 当前已实现显式映射和 15 个必需角色的语义祖先校验，默认映射为空；标准资产生成、MMD/Mixamo 内置映射、自动重定向与根运动提取尚未交付。实现不变量与测试历史见 [design.md](design.md) §7。
 
+已提供 UI-free `AYAnimationEditorCore`：源骨架保持只读，映射作为可绑定的 `.aysmap` 作者资源保存，并支持手工/规范名模板映射、校验、历史和动画姿势预览；AYEditor 通过薄适配接入。实际重定向求解、清理烘焙和发布门禁仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 后续实施，模块职责见 [design.md](design.md) §7.5。
+
 ## 公开接口
 
 ```cpp

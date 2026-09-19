@@ -1,0 +1,187 @@
+#pragma once
+
+#include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimation/HumanoidSkeleton.h>
+#include <AYMath/MathTypes.h>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace ayt::resource {
+class Animation;
+class IAnimation;
+class Skeleton;
+}
+
+namespace ayt::anim::editor {
+
+inline constexpr std::uint32_t kSkeletonMappingSchemaVersion = 1u;
+inline constexpr const char* kSkeletonMappingExtension = ".aysmap";
+
+enum class SkeletonAdaptationState : std::uint8_t {
+    Unmapped,
+    Incomplete,
+    Validated,
+    Native,
+};
+
+enum class SkeletonBakeState : std::uint8_t {
+    NotBaked,
+    Stale,
+    Ready,
+    Failed,
+};
+
+struct SkeletonAuthoringStatus {
+    SkeletonAdaptationState adaptation = SkeletonAdaptationState::Unmapped;
+    SkeletonBakeState bake = SkeletonBakeState::NotBaked;
+    std::string message;
+};
+
+struct SkeletonBoneView {
+    int index = -1;
+    int parentIndex = -1;
+    int depth = 0;
+    std::string name;
+    ayt::math::FVector3 localPosition{};
+    ayt::math::FQuaternion localRotation{};
+    ayt::math::FVector3 localScale{1.0f, 1.0f, 1.0f};
+    ayt::math::Float4x4 inverseBindMatrix = ayt::math::Float4x4::identity();
+};
+
+// UI-free authoring model shared by AYEditor and future command-line tools.
+// The source .ayskel is never modified: authored mapping data is stored in a
+// sibling .aysmap resource and can be rebound to a skeleton explicitly.
+class SkeletonEditorCore final {
+public:
+    SkeletonEditorCore();
+    ~SkeletonEditorCore();
+    SkeletonEditorCore(const SkeletonEditorCore&) = delete;
+    SkeletonEditorCore& operator=(const SkeletonEditorCore&) = delete;
+
+    bool open(const std::string& skeletonOrMappingPath,
+              std::string* error = nullptr);
+    bool reload(std::string* error = nullptr);
+    bool saveMapping(std::string* error = nullptr);
+    bool saveMappingAs(const std::string& path,
+                       std::string* error = nullptr);
+
+    [[nodiscard]] const std::string& skeletonPath() const noexcept {
+        return _skeletonPath;
+    }
+    [[nodiscard]] const std::string& mappingPath() const noexcept {
+        return _mappingPath;
+    }
+    [[nodiscard]] const std::vector<SkeletonBoneView>& bones() const noexcept {
+        return _bones;
+    }
+    [[nodiscard]] std::shared_ptr<const ayt::resource::Skeleton>
+        skeleton() const noexcept { return _skeleton; }
+
+    [[nodiscard]] int selectedBone() const noexcept { return _selectedBone; }
+    bool selectBone(int boneIndex) noexcept;
+
+    [[nodiscard]] HumanoidBone selectedRole() const noexcept {
+        return _selectedRole;
+    }
+    bool selectRole(HumanoidBone role) noexcept;
+
+    [[nodiscard]] const HumanoidBoneMap& mapping() const noexcept {
+        return current().mapping;
+    }
+    bool bind(HumanoidBone role, int sourceBoneIndex);
+    bool unbind(HumanoidBone role);
+    bool clearMapping();
+    bool applyCanonicalNameTemplate();
+    bool setNative(bool nativeSkeleton);
+    [[nodiscard]] bool isNative() const noexcept { return current().nativeSkeleton; }
+
+    [[nodiscard]] HumanoidValidationResult validation() const noexcept;
+    [[nodiscard]] SkeletonAuthoringStatus status() const;
+    [[nodiscard]] bool isDirty() const noexcept;
+    [[nodiscard]] bool canUndo() const noexcept;
+    [[nodiscard]] bool canRedo() const noexcept;
+    bool undo();
+    bool redo();
+
+    bool attachAnimation(const std::string& path,
+                         std::string* error = nullptr);
+    void detachAnimation();
+    [[nodiscard]] const std::string& animationPath() const noexcept {
+        return _animationPath;
+    }
+    [[nodiscard]] const ayt::resource::IAnimation* animation() const noexcept;
+    [[nodiscard]] bool hasAnimation() const noexcept;
+    void play();
+    void pause();
+    void stop();
+    [[nodiscard]] bool isPlaying() const noexcept { return _playing; }
+    void tick(float dt);
+    bool setTime(float seconds);
+    [[nodiscard]] float time() const noexcept;
+    [[nodiscard]] float duration() const noexcept;
+
+    // World-space pose used by the editor wireframe. Falls back to bind pose
+    // when no clip is attached.
+    [[nodiscard]] const std::vector<ayt::math::Float4x4>&
+        poseWorldMatrices() const noexcept { return _poseWorld; }
+
+    [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
+
+    static std::string defaultMappingPath(const std::string& skeletonPath);
+    static SkeletonAuthoringStatus inspectStatus(
+        const std::string& skeletonPath) noexcept;
+    static const char* adaptationStateName(SkeletonAdaptationState state) noexcept;
+    static const char* bakeStateName(SkeletonBakeState state) noexcept;
+
+private:
+    struct Snapshot {
+        HumanoidBoneMap mapping;
+        bool nativeSkeleton = false;
+        SkeletonBakeState bake = SkeletonBakeState::NotBaked;
+        std::string bakedFingerprint;
+    };
+
+    [[nodiscard]] const Snapshot& current() const noexcept;
+    [[nodiscard]] Snapshot& current() noexcept;
+    void commit(Snapshot next);
+    bool loadSkeleton(const std::string& path, std::string* error);
+    bool loadMappingFile(const std::string& path,
+                         std::string& skeletonReference,
+                         Snapshot& snapshot,
+                         std::string& sourceFingerprint,
+                         std::string* error) const;
+    bool writeMappingFile(const std::string& path,
+                          const Snapshot& snapshot,
+                          std::string* error) const;
+    void rebuildBoneViews();
+    void rebuildBindPose();
+    void rebuildPoseFromPlayer();
+    [[nodiscard]] std::string skeletonFingerprint() const;
+    [[nodiscard]] bool sourceMappingIsStale() const;
+
+    std::string _skeletonPath;
+    std::string _mappingPath;
+    std::string _loadedSourceFingerprint;
+    std::shared_ptr<ayt::resource::Skeleton> _skeleton;
+    std::vector<SkeletonBoneView> _bones;
+    std::vector<ayt::math::Float4x4> _bindWorld;
+    std::vector<ayt::math::Float4x4> _poseWorld;
+    std::vector<Snapshot> _history;
+    std::size_t _historyCursor = 0u;
+    std::size_t _savedCursor = 0u;
+    int _selectedBone = -1;
+    HumanoidBone _selectedRole = HumanoidBone::Hips;
+
+    std::string _animationPath;
+    std::shared_ptr<ayt::resource::Animation> _animation;
+    AnimationPlayer _player;
+    bool _playing = false;
+    std::uint64_t _revision = 1u;
+};
+
+} // namespace ayt::anim::editor

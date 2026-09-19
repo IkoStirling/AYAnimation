@@ -60,6 +60,11 @@ target_link_libraries(${MODULE_NAME} PUBLIC AYMath AYResource)
 enable_testing()
 add_subdirectory(unittest)
 
+# Editor-facing authoring logic is kept in a separate, UI-free target.  It is
+# consumed by AYEditor through a thin document/view adapter and remains usable
+# from tests and future command-line tools without pulling in AYUI.
+add_subdirectory(editor)
+
 # P0 polish (2026-08-07) — micro-benchmark for params/triggers lookup
 # performance. Default OFF; build with -DAY_BUILD_BENCHMARKS=ON to
 # verify pre/post-refactor speedup numbers. NOT in PR-gate.
