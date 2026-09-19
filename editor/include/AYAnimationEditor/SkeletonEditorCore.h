@@ -36,6 +36,44 @@ enum class SkeletonBakeState : std::uint8_t {
     Failed,
 };
 
+enum class SkeletonPreflightSeverity : std::uint8_t {
+    Warning,
+    Error,
+};
+
+enum class SkeletonPreflightCode : std::uint8_t {
+    NoSkeleton,
+    MappingMissing,
+    RequiredRoleMissing,
+    MappedBoneOutOfRange,
+    DuplicateMappedBone,
+    SourceParentOutOfRange,
+    SourceHierarchyCycle,
+    SemanticParentMismatch,
+    SourceSkeletonChanged,
+    AnimationUnreadable,
+    AnimationTrackBoneMissing,
+};
+
+struct SkeletonPreflightIssue {
+    SkeletonPreflightSeverity severity = SkeletonPreflightSeverity::Error;
+    SkeletonPreflightCode code = SkeletonPreflightCode::NoSkeleton;
+    std::string message;
+    std::string resourcePath;
+    HumanoidBone role = HumanoidBone::Invalid;
+    HumanoidBone relatedRole = HumanoidBone::Invalid;
+    int boneIndex = -1;
+    int trackIndex = -1;
+};
+
+struct SkeletonPreflightReport {
+    std::vector<SkeletonPreflightIssue> issues;
+
+    [[nodiscard]] std::size_t errorCount() const noexcept;
+    [[nodiscard]] std::size_t warningCount() const noexcept;
+    [[nodiscard]] bool canBake() const noexcept { return errorCount() == 0u; }
+};
+
 struct SkeletonAuthoringStatus {
     SkeletonAdaptationState adaptation = SkeletonAdaptationState::Unmapped;
     SkeletonBakeState bake = SkeletonBakeState::NotBaked;
@@ -102,6 +140,8 @@ public:
 
     [[nodiscard]] HumanoidValidationResult validation() const noexcept;
     [[nodiscard]] SkeletonAuthoringStatus status() const;
+    [[nodiscard]] SkeletonPreflightReport preflight(
+        const std::vector<std::string>& animationPaths = {}) const;
     [[nodiscard]] bool isDirty() const noexcept;
     [[nodiscard]] bool canUndo() const noexcept;
     [[nodiscard]] bool canRedo() const noexcept;
@@ -137,6 +177,7 @@ public:
         const std::string& skeletonPath) noexcept;
     static const char* adaptationStateName(SkeletonAdaptationState state) noexcept;
     static const char* bakeStateName(SkeletonBakeState state) noexcept;
+    static const char* preflightCodeName(SkeletonPreflightCode code) noexcept;
 
 private:
     struct Snapshot {

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <limits>
 #include <system_error>
+#include <unordered_set>
 
 namespace ayt::anim::editor {
 namespace {
@@ -60,6 +61,22 @@ SkeletonEditorCore::SkeletonEditorCore()
 }
 
 SkeletonEditorCore::~SkeletonEditorCore() = default;
+
+std::size_t SkeletonPreflightReport::errorCount() const noexcept
+{
+    return static_cast<std::size_t>(std::count_if(
+        issues.begin(), issues.end(), [](const SkeletonPreflightIssue& issue) {
+            return issue.severity == SkeletonPreflightSeverity::Error;
+        }));
+}
+
+std::size_t SkeletonPreflightReport::warningCount() const noexcept
+{
+    return static_cast<std::size_t>(std::count_if(
+        issues.begin(), issues.end(), [](const SkeletonPreflightIssue& issue) {
+            return issue.severity == SkeletonPreflightSeverity::Warning;
+        }));
+}
 
 const SkeletonEditorCore::Snapshot& SkeletonEditorCore::current() const noexcept
 {
@@ -407,6 +424,147 @@ SkeletonAuthoringStatus SkeletonEditorCore::status() const
     return result;
 }
 
+SkeletonPreflightReport SkeletonEditorCore::preflight(
+    const std::vector<std::string>& animationPaths) const
+{
+    SkeletonPreflightReport report;
+    const auto add = [&report](SkeletonPreflightCode code, std::string message,
+                               std::string resourcePath = {},
+                               HumanoidBone role = HumanoidBone::Invalid,
+                               HumanoidBone related = HumanoidBone::Invalid,
+                               int boneIndex = -1, int trackIndex = -1) {
+        report.issues.push_back({SkeletonPreflightSeverity::Error, code,
+            std::move(message), std::move(resourcePath), role, related,
+            boneIndex, trackIndex});
+    };
+
+    if (_skeleton == nullptr) {
+        add(SkeletonPreflightCode::NoSkeleton,
+            "No source skeleton is open.");
+        return report;
+    }
+
+    if (current().mapping.empty()) {
+        add(SkeletonPreflightCode::MappingMissing,
+            "No humanoid mapping is configured.", _mappingPath);
+    }
+
+    std::vector<int> mappedOwner(_bones.size(), -1);
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const int mapped = current().mapping.getSourceBoneIndex(spec.role);
+        if (mapped < 0) {
+            if (spec.requirement == HumanoidBoneRequirement::Required) {
+                add(SkeletonPreflightCode::RequiredRoleMissing,
+                    "Required role is not mapped: "
+                        + std::string(spec.canonicalName),
+                    _mappingPath, spec.role);
+            }
+            continue;
+        }
+        if (mapped >= static_cast<int>(_bones.size())) {
+            add(SkeletonPreflightCode::MappedBoneOutOfRange,
+                "Mapped bone index is outside the source skeleton for role: "
+                    + std::string(spec.canonicalName),
+                _mappingPath, spec.role, HumanoidBone::Invalid, mapped);
+            continue;
+        }
+        if (mappedOwner[static_cast<std::size_t>(mapped)] >= 0) {
+            const HumanoidBone other = static_cast<HumanoidBone>(
+                mappedOwner[static_cast<std::size_t>(mapped)]);
+            add(SkeletonPreflightCode::DuplicateMappedBone,
+                "Source bone is assigned to more than one humanoid role: "
+                    + _bones[static_cast<std::size_t>(mapped)].name,
+                _mappingPath, spec.role, other, mapped);
+        } else {
+            mappedOwner[static_cast<std::size_t>(mapped)] =
+                static_cast<int>(spec.role);
+        }
+    }
+
+    bool cycleReported = false;
+    for (std::size_t index = 0; index < _bones.size(); ++index) {
+        const int parent = _bones[index].parentIndex;
+        if (parent < -1 || parent >= static_cast<int>(_bones.size())) {
+            add(SkeletonPreflightCode::SourceParentOutOfRange,
+                "Source bone has an invalid parent index: " + _bones[index].name,
+                _skeletonPath, HumanoidBone::Invalid, HumanoidBone::Invalid,
+                static_cast<int>(index));
+            continue;
+        }
+        if (cycleReported) continue;
+        std::vector<std::uint8_t> visited(_bones.size(), 0u);
+        int cursor = static_cast<int>(index);
+        while (cursor >= 0 && cursor < static_cast<int>(_bones.size())) {
+            if (visited[static_cast<std::size_t>(cursor)] != 0u) {
+                add(SkeletonPreflightCode::SourceHierarchyCycle,
+                    "Source skeleton hierarchy contains a cycle at bone: "
+                        + _bones[static_cast<std::size_t>(cursor)].name,
+                    _skeletonPath, HumanoidBone::Invalid,
+                    HumanoidBone::Invalid, cursor);
+                cycleReported = true;
+                break;
+            }
+            visited[static_cast<std::size_t>(cursor)] = 1u;
+            cursor = _bones[static_cast<std::size_t>(cursor)].parentIndex;
+        }
+    }
+
+    const HumanoidValidationResult semantic = validation();
+    if (semantic.error == HumanoidValidationError::SemanticParentMismatch) {
+        add(SkeletonPreflightCode::SemanticParentMismatch,
+            "Mapped humanoid ancestry does not match the source hierarchy.",
+            _mappingPath, semantic.role, semantic.relatedRole,
+            semantic.sourceBoneIndex);
+    }
+    if (sourceMappingIsStale()) {
+        add(SkeletonPreflightCode::SourceSkeletonChanged,
+            "The source skeleton changed after the mapping was saved.",
+            _skeletonPath);
+    }
+
+    const auto inspectAnimation = [this, &add](
+        const ayt::resource::IAnimation& animation, const std::string& path) {
+        for (std::uint32_t track = 0; track < animation.getTrackCount(); ++track) {
+            if (animation.getTrackType(track) == ayt::resource::AnimTrackType::Float) {
+                continue;
+            }
+            const char* rawName = animation.getTrackNodeName(track);
+            const std::string name = rawName != nullptr ? rawName : "";
+            if (name.empty() || _skeleton->findBone(name.c_str()) < 0) {
+                add(SkeletonPreflightCode::AnimationTrackBoneMissing,
+                    "Animation track targets a bone missing from the source skeleton: "
+                        + (name.empty() ? std::string("<empty>") : name),
+                    path, HumanoidBone::Invalid, HumanoidBone::Invalid,
+                    -1, static_cast<int>(track));
+            }
+        }
+    };
+
+    std::unordered_set<std::string> visitedAnimations;
+    if (_animation != nullptr) {
+        visitedAnimations.insert(_animationPath);
+        inspectAnimation(*_animation, _animationPath);
+    }
+    for (const std::string& path : animationPaths) {
+        std::error_code absoluteError;
+        const std::filesystem::path absolute = std::filesystem::absolute(
+            path, absoluteError);
+        const std::string normalized = normalizedPath(
+            absoluteError ? std::filesystem::path(path) : absolute);
+        if (!visitedAnimations.insert(normalized).second) continue;
+        const std::vector<std::uint8_t> bytes = ayt::io::File::readAllBytes(path);
+        ayt::resource::Animation animation;
+        if (bytes.empty()
+            || !animation.loadFromBinary(bytes.data(), bytes.size())) {
+            add(SkeletonPreflightCode::AnimationUnreadable,
+                "Animation is empty, unreadable, or invalid.", normalized);
+            continue;
+        }
+        inspectAnimation(animation, normalized);
+    }
+    return report;
+}
+
 bool SkeletonEditorCore::isDirty() const noexcept
 {
     return _savedCursor == kNoSavedCursor || _historyCursor != _savedCursor;
@@ -658,6 +816,25 @@ const char* SkeletonEditorCore::bakeStateName(SkeletonBakeState state) noexcept
     case SkeletonBakeState::Failed: return "failed";
     }
     return "notBaked";
+}
+
+const char* SkeletonEditorCore::preflightCodeName(
+    SkeletonPreflightCode code) noexcept
+{
+    switch (code) {
+    case SkeletonPreflightCode::NoSkeleton: return "noSkeleton";
+    case SkeletonPreflightCode::MappingMissing: return "mappingMissing";
+    case SkeletonPreflightCode::RequiredRoleMissing: return "requiredRoleMissing";
+    case SkeletonPreflightCode::MappedBoneOutOfRange: return "mappedBoneOutOfRange";
+    case SkeletonPreflightCode::DuplicateMappedBone: return "duplicateMappedBone";
+    case SkeletonPreflightCode::SourceParentOutOfRange: return "sourceParentOutOfRange";
+    case SkeletonPreflightCode::SourceHierarchyCycle: return "sourceHierarchyCycle";
+    case SkeletonPreflightCode::SemanticParentMismatch: return "semanticParentMismatch";
+    case SkeletonPreflightCode::SourceSkeletonChanged: return "sourceSkeletonChanged";
+    case SkeletonPreflightCode::AnimationUnreadable: return "animationUnreadable";
+    case SkeletonPreflightCode::AnimationTrackBoneMissing: return "animationTrackBoneMissing";
+    }
+    return "unknown";
 }
 
 } // namespace ayt::anim::editor

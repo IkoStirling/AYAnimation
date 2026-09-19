@@ -5,6 +5,7 @@
 #include <AYResource/assetsImpl/Skeleton.h>
 #include <AYTest.h>
 
+#include <algorithm>
 #include <filesystem>
 
 using namespace ayt::anim;
@@ -56,14 +57,15 @@ std::filesystem::path writeSkeleton()
     return path;
 }
 
-std::filesystem::path writeAnimation()
+std::filesystem::path writeAnimationForNode(
+    const char* nodeName = "hips", const char* fileName = "synthetic.ayanm")
 {
     Animation animation;
     animation.setName("synthetic");
     animation.setDuration(1.0f);
     animation.setTicksPerSecond(1.0f);
     AnimTrack track;
-    track.nodeName = "hips";
+    track.nodeName = nodeName;
     track.property = "position";
     track.valueType = AnimTrackType::Vector3;
     track.times = {0.0f, 1.0f};
@@ -71,7 +73,7 @@ std::filesystem::path writeAnimation()
     animation.addTrack(track);
     std::vector<ayt::math::UInt8> bytes;
     CHECK(animation.saveToBinary(bytes));
-    const auto path = fixtureRoot() / "synthetic.ayanm";
+    const auto path = fixtureRoot() / fileName;
     CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
     return path;
 }
@@ -126,7 +128,7 @@ TEST_CASE(skeleton_editor_core_animation_updates_wire_pose)
     SkeletonEditorCore core;
     std::string error;
     CHECK(core.open(writeSkeleton().string(), &error));
-    CHECK(core.attachAnimation(writeAnimation().string(), &error));
+    CHECK(core.attachAnimation(writeAnimationForNode().string(), &error));
     CHECK(core.duration() == 1.0f);
     CHECK(core.setTime(0.5f));
     const auto hips = core.poseWorldMatrices()[2].transformPoint({0, 0, 0});
@@ -147,6 +149,74 @@ TEST_CASE(skeleton_editor_core_reload_uses_source_before_sidecar_exists)
     CHECK(core.reload(&error));
     CHECK(error.empty());
     CHECK(core.bones().size() == 17u);
+}
+
+TEST_CASE(skeleton_preflight_reports_mapping_completeness)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    const SkeletonPreflightReport report = core.preflight();
+    CHECK_FALSE(report.canBake());
+    CHECK(report.errorCount() >= 2u);
+    CHECK(std::any_of(report.issues.begin(), report.issues.end(),
+        [](const SkeletonPreflightIssue& issue) {
+            return issue.code == SkeletonPreflightCode::MappingMissing;
+        }));
+    CHECK(std::any_of(report.issues.begin(), report.issues.end(),
+        [](const SkeletonPreflightIssue& issue) {
+            return issue.code == SkeletonPreflightCode::RequiredRoleMissing;
+        }));
+}
+
+TEST_CASE(skeleton_preflight_accepts_valid_mapping_and_animation)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.attachAnimation(writeAnimationForNode().string(), &error));
+    const SkeletonPreflightReport report = core.preflight();
+    CHECK(report.canBake());
+    CHECK(report.errorCount() == 0u);
+}
+
+TEST_CASE(skeleton_preflight_finds_orphan_animation_tracks)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.attachAnimation(writeAnimationForNode(
+        "missingBone", "orphan.ayanm").string(), &error));
+    const SkeletonPreflightReport report = core.preflight();
+    CHECK_FALSE(report.canBake());
+    CHECK(std::any_of(report.issues.begin(), report.issues.end(),
+        [](const SkeletonPreflightIssue& issue) {
+            return issue.code
+                == SkeletonPreflightCode::AnimationTrackBoneMissing
+                && issue.trackIndex == 0;
+        }));
+}
+
+TEST_CASE(skeleton_preflight_detects_source_change_after_mapping_save)
+{
+    const auto skeletonPath = writeSkeleton();
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(skeletonPath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.saveMapping(&error));
+    std::vector<ayt::math::UInt8> bytes =
+        ayt::io::File::readAllBytes(skeletonPath.string());
+    bytes.push_back(0u);
+    CHECK(ayt::io::File::writeAllBytes(skeletonPath.string(), bytes));
+    const SkeletonPreflightReport report = core.preflight();
+    CHECK_FALSE(report.canBake());
+    CHECK(std::any_of(report.issues.begin(), report.issues.end(),
+        [](const SkeletonPreflightIssue& issue) {
+            return issue.code == SkeletonPreflightCode::SourceSkeletonChanged;
+        }));
 }
 
 TEST_SUITE_END
