@@ -243,6 +243,9 @@ public:
         poseWorldMatrices() const noexcept { return _poseWorld; }
 
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
+    [[nodiscard]] std::uint64_t poseRevision() const noexcept {
+        return _poseRevision;
+    }
 
     static std::string defaultMappingPath(const std::string& skeletonPath);
     static std::string defaultLegacyMappingPath(const std::string& skeletonPath);
@@ -316,6 +319,7 @@ private:
     AnimationPlayer _player;
     bool _playing = false;
     std::uint64_t _revision = 1u;
+    std::uint64_t _poseRevision = 1u;
 };
 
 } // namespace ayt::anim::editor

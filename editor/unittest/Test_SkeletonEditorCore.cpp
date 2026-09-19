@@ -204,14 +204,23 @@ TEST_CASE(skeleton_editor_core_animation_updates_wire_pose)
     CHECK(core.open(writeSkeleton().string(), &error));
     CHECK(core.attachAnimation(writeAnimationForNode().string(), &error));
     CHECK(core.duration() == 1.0f);
+    const std::uint64_t contentRevision = core.revision();
+    const std::uint64_t initialPoseRevision = core.poseRevision();
     CHECK(core.setTime(0.5f));
+    CHECK(core.revision() == contentRevision);
+    CHECK(core.poseRevision() > initialPoseRevision);
     const auto hips = core.poseWorldMatrices()[2].transformPoint({0, 0, 0});
     CHECK(hips.y > 1.0f);
     core.play();
     CHECK(core.isPlaying());
+    const std::uint64_t poseBeforeTick = core.poseRevision();
     core.tick(0.1f);
+    CHECK(core.revision() == contentRevision);
+    CHECK(core.poseRevision() > poseBeforeTick);
     core.pause();
     CHECK_FALSE(core.isPlaying());
+    core.stop();
+    CHECK(core.revision() == contentRevision);
 }
 
 TEST_CASE(skeleton_editor_core_reload_uses_source_before_sidecar_exists)

@@ -1005,6 +1005,7 @@ void SkeletonEditorCore::detachAnimation()
     _animationPath.clear();
     _playing = false;
     _poseWorld = _bindWorld;
+    ++_poseRevision;
     ++_revision;
 }
 
@@ -1040,7 +1041,6 @@ void SkeletonEditorCore::stop()
     _player.evaluate();
     _playing = false;
     rebuildPoseFromPlayer();
-    ++_revision;
 }
 
 void SkeletonEditorCore::tick(float dt)
@@ -1049,7 +1049,6 @@ void SkeletonEditorCore::tick(float dt)
     _player.tick(dt);
     _player.evaluate();
     rebuildPoseFromPlayer();
-    ++_revision;
 }
 
 bool SkeletonEditorCore::setTime(float seconds)
@@ -1058,7 +1057,6 @@ bool SkeletonEditorCore::setTime(float seconds)
     _player.setTime(std::clamp(seconds, 0.0f, duration()));
     _player.evaluate();
     rebuildPoseFromPlayer();
-    ++_revision;
     return true;
 }
 
@@ -1122,6 +1120,7 @@ void SkeletonEditorCore::rebuildBindPose()
         build(build, index);
     }
     _poseWorld = _bindWorld;
+    ++_poseRevision;
 }
 
 void SkeletonEditorCore::rebuildPoseFromPlayer()
@@ -1130,9 +1129,11 @@ void SkeletonEditorCore::rebuildPoseFromPlayer()
     const std::size_t count = _player.getBoneCount();
     if (world == nullptr || count != _bones.size()) {
         _poseWorld = _bindWorld;
+        ++_poseRevision;
         return;
     }
     _poseWorld.assign(world, world + count);
+    ++_poseRevision;
 }
 
 std::string SkeletonEditorCore::bonePath(int boneIndex) const
