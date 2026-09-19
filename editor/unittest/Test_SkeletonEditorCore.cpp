@@ -180,12 +180,14 @@ TEST_CASE(skeleton_editor_core_migrates_legacy_mapping_non_destructively)
     std::string error;
     CHECK(core.open(legacyPath.string(), &error));
     CHECK(core.openedLegacyMapping());
+    CHECK(core.isDirty());
     CHECK(core.legacyMappingPath() == legacyPath.generic_string());
     CHECK(std::filesystem::path(core.mappingPath()).extension() == ".ayrig");
     CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Hips) == 2);
     CHECK(core.status().bake == SkeletonBakeState::NotBaked);
     CHECK(core.saveMapping(&error));
     CHECK_FALSE(core.openedLegacyMapping());
+    CHECK_FALSE(core.isDirty());
     CHECK(std::filesystem::exists(legacyPath));
     CHECK(std::filesystem::exists(core.mappingPath()));
     const auto migrated = nlohmann::json::parse(

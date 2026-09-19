@@ -942,7 +942,8 @@ bool SkeletonEditorCore::recordBakeResult(
 
 bool SkeletonEditorCore::isDirty() const noexcept
 {
-    return _savedCursor == kNoSavedCursor || _historyCursor != _savedCursor;
+    return !_legacyMappingPath.empty()
+        || _savedCursor == kNoSavedCursor || _historyCursor != _savedCursor;
 }
 
 bool SkeletonEditorCore::canUndo() const noexcept { return _historyCursor > 0u; }
