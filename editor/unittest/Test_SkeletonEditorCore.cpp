@@ -1,4 +1,5 @@
 #include <AYAnimationEditor/SkeletonEditorCore.h>
+#include <AYAnimationEditor/SkeletonBakeJob.h>
 
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
@@ -8,6 +9,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <chrono>
+#include <thread>
 
 using namespace ayt::anim;
 using namespace ayt::anim::editor;
@@ -264,6 +267,77 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
     CHECK(manifest["summary"]["delete"] == 1u);
     CHECK(manifest["bones"].size() == 18u);
     CHECK(ayt::io::File::readAllBytes(skeletonPath.string()) == sourceBefore);
+}
+
+TEST_SUITE_END
+
+TEST_SUITE(SkeletonBakeJobTests)
+
+TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_ready_state)
+{
+    const auto skeletonPath = writeSkeleton(true, true);
+    const auto animationPath = writeAnimationForNode(
+        "characterHead", "head_motion.ayanm");
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(skeletonPath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.bind(HumanoidBone::Head, 4));
+    const auto plan = core.dryRunBake({animationPath.string()});
+    CHECK(plan.canBake());
+
+    SkeletonBakeJob job;
+    const auto output = fixtureRoot() / "baked";
+    const std::uint64_t generation = job.start(plan, output.string());
+    SkeletonBakeJobSnapshot snapshot;
+    for (int attempt = 0; attempt < 400; ++attempt) {
+        snapshot = job.poll();
+        if (snapshot.finished()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(snapshot.generation == generation);
+    CHECK(snapshot.state == SkeletonBakeJobState::Succeeded);
+    CHECK(snapshot.progress == 1.0f);
+    CHECK(snapshot.outputPaths.size() == 3u);
+
+    Skeleton baked;
+    CHECK(baked.load((output / "synthetic.baked.ayskel").string()));
+    CHECK(baked.getBoneCount() == 17u);
+    CHECK(baked.findBone("head") == 4);
+    CHECK(baked.findBone("headAccessoryHelper") == -1);
+    Animation animation;
+    const auto bakedAnimationBytes = ayt::io::File::readAllBytes(
+        (output / "head_motion.baked.ayanm").string());
+    CHECK(animation.loadFromBinary(
+        bakedAnimationBytes.data(), bakedAnimationBytes.size()));
+    CHECK(animation.getTrackNodeName(0) != nullptr);
+    if (animation.getTrackNodeName(0) != nullptr) {
+        CHECK(std::string(animation.getTrackNodeName(0)) == "head");
+    }
+    CHECK(core.recordBakeResult(true, snapshot.sourceFingerprint, &error));
+    CHECK(core.status().bake == SkeletonBakeState::Ready);
+}
+
+TEST_CASE(skeleton_bake_job_rejects_blocked_and_isolates_generations)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    const auto blocked = core.dryRunBake();
+    SkeletonBakeJob job;
+    const auto output = (fixtureRoot() / "blocked").string();
+    const std::uint64_t first = job.start(blocked, output);
+    const std::uint64_t second = job.start(blocked, output);
+    CHECK(second > first);
+    SkeletonBakeJobSnapshot snapshot;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        snapshot = job.poll();
+        if (snapshot.finished()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(snapshot.generation == second);
+    CHECK(snapshot.state == SkeletonBakeJobState::Failed);
+    CHECK(snapshot.message.find("preflight") != std::string::npos);
 }
 
 TEST_SUITE_END

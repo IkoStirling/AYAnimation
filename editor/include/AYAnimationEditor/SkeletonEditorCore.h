@@ -197,6 +197,9 @@ public:
     bool writeDryRunManifest(const SkeletonBakeDryRunPlan& plan,
                              const std::string& path,
                              std::string* error = nullptr) const;
+    bool recordBakeResult(bool succeeded,
+                          const std::string& sourceFingerprint,
+                          std::string* error = nullptr);
     [[nodiscard]] bool isDirty() const noexcept;
     [[nodiscard]] bool canUndo() const noexcept;
     [[nodiscard]] bool canRedo() const noexcept;
@@ -252,7 +255,7 @@ private:
 
     [[nodiscard]] const Snapshot& current() const noexcept;
     [[nodiscard]] Snapshot& current() noexcept;
-    void commit(Snapshot next);
+    void commit(Snapshot next, bool invalidateReady = true);
     bool loadSkeleton(const std::string& path, std::string* error);
     bool loadMappingFile(const std::string& path,
                          std::string& skeletonReference,

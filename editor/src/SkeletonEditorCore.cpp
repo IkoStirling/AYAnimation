@@ -316,14 +316,16 @@ bool SkeletonEditorCore::saveMappingAs(const std::string& path,
     return true;
 }
 
-void SkeletonEditorCore::commit(Snapshot next)
+void SkeletonEditorCore::commit(Snapshot next, bool invalidateReady)
 {
     if (_historyCursor + 1u < _history.size()) {
         if (_savedCursor > _historyCursor) _savedCursor = kNoSavedCursor;
         _history.erase(_history.begin()
             + static_cast<std::ptrdiff_t>(_historyCursor + 1u), _history.end());
     }
-    if (next.bake == SkeletonBakeState::Ready) next.bake = SkeletonBakeState::Stale;
+    if (invalidateReady && next.bake == SkeletonBakeState::Ready) {
+        next.bake = SkeletonBakeState::Stale;
+    }
     _history.push_back(std::move(next));
     _historyCursor = _history.size() - 1u;
     ++_revision;
@@ -772,6 +774,23 @@ bool SkeletonEditorCore::writeDryRunManifest(
         setError(error, "Unable to commit bake dry-run manifest.");
         return false;
     }
+    if (error != nullptr) error->clear();
+    return true;
+}
+
+bool SkeletonEditorCore::recordBakeResult(
+    bool succeeded, const std::string& sourceFingerprint, std::string* error)
+{
+    if (_skeleton == nullptr || sourceFingerprint.empty()
+        || sourceFingerprint != skeletonFingerprint()) {
+        setError(error,
+            "Bake result was produced from a different source skeleton revision.");
+        return false;
+    }
+    Snapshot next = current();
+    next.bake = succeeded ? SkeletonBakeState::Ready : SkeletonBakeState::Failed;
+    next.bakedFingerprint = succeeded ? sourceFingerprint : std::string{};
+    commit(std::move(next), false);
     if (error != nullptr) error->clear();
     return true;
 }

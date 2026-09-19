@@ -1,6 +1,7 @@
 find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(AYAnimationEditorCore STATIC
+    src/SkeletonBakeJob.cpp
     src/SkeletonEditorCore.cpp
 )
 
