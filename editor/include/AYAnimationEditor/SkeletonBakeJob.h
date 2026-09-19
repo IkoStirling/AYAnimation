@@ -23,6 +23,7 @@ struct SkeletonBakeJobSnapshot {
     float progress = 0.0f;
     std::string message;
     std::string sourceFingerprint;
+    std::string profileFingerprint;
     std::vector<std::string> outputPaths;
 
     [[nodiscard]] bool finished() const noexcept {

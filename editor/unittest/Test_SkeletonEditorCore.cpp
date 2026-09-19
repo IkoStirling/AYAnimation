@@ -65,10 +65,14 @@ std::filesystem::path writeSkeleton(bool addHelper = false,
     std::vector<ayt::math::UInt8> bytes;
     CHECK(skeleton.saveToBinary(bytes));
     const auto path = fixtureRoot() / "synthetic.ayskel";
-    auto mappingPath = path;
-    mappingPath.replace_extension(".aysmap");
     std::error_code ignored;
-    std::filesystem::remove(mappingPath, ignored);
+    auto rigPath = path;
+    rigPath.replace_extension(".ayrig");
+    std::filesystem::remove(rigPath, ignored);
+    auto legacyPath = path;
+    legacyPath.replace_extension(".aysmap");
+    std::filesystem::remove(legacyPath, ignored);
+    std::filesystem::remove_all(path.parent_path() / "Baked", ignored);
     CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
     return path;
 }
@@ -115,7 +119,7 @@ TEST_CASE(skeleton_editor_core_opens_synthetic_hierarchy)
 TEST_CASE(skeleton_editor_core_mapping_is_undoable_and_persistent)
 {
     const auto skeletonPath = writeSkeleton();
-    const auto mappingPath = fixtureRoot() / "synthetic.aysmap";
+    const auto mappingPath = fixtureRoot() / "synthetic.ayrig";
     std::error_code ignored;
     std::filesystem::remove(mappingPath, ignored);
     SkeletonEditorCore core;
@@ -131,12 +135,64 @@ TEST_CASE(skeleton_editor_core_mapping_is_undoable_and_persistent)
     CHECK(core.validation().isValid());
     CHECK(core.saveMappingAs(mappingPath.string(), &error));
     CHECK_FALSE(core.isDirty());
+    const auto encoded = nlohmann::json::parse(
+        ayt::io::File::readAllText(mappingPath.string()));
+    CHECK(encoded["type"] == "RigProfile");
+    CHECK(encoded["version"] == kRigProfileSchemaVersion);
+    CHECK(encoded["kind"] == "mapping");
+    CHECK(encoded.contains("id"));
+    CHECK(encoded["roles"]["hips"]["bonePath"]
+        == "sceneRoot/motionRoot/hips");
+    CHECK_FALSE(encoded.contains("bakeState"));
+    CHECK_FALSE(encoded.contains("bakedFingerprint"));
+
+    auto reordered = encoded;
+    reordered["roles"]["hips"]["sourceIndex"] = 999;
+    CHECK(ayt::io::File::writeAllText(
+        mappingPath.string(), reordered.dump(2) + "\n"));
 
     SkeletonEditorCore reopened;
     CHECK(reopened.open(mappingPath.string(), &error));
     CHECK(reopened.validation().isValid());
     CHECK(reopened.mapping().getBoundCount() == 17u);
+    CHECK(reopened.mapping().getSourceBoneIndex(HumanoidBone::Hips) == 2);
     CHECK(reopened.status().adaptation == SkeletonAdaptationState::Validated);
+}
+
+TEST_CASE(skeleton_editor_core_migrates_legacy_mapping_non_destructively)
+{
+    const auto skeletonPath = writeSkeleton();
+    const auto legacyPath = fixtureRoot() / "synthetic.aysmap";
+    const nlohmann::json legacy = {
+        {"type", "SkeletonMapping"},
+        {"version", kLegacySkeletonMappingSchemaVersion},
+        {"skeleton", skeletonPath.filename().generic_string()},
+        {"sourceFingerprint", "legacy-fingerprint"},
+        {"native", false},
+        {"bakeState", "ready"},
+        {"bakedFingerprint", "legacy-bake"},
+        {"roles", {{"hips", 2}}},
+    };
+    CHECK(ayt::io::File::writeAllText(
+        legacyPath.string(), legacy.dump(2) + "\n"));
+
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(legacyPath.string(), &error));
+    CHECK(core.openedLegacyMapping());
+    CHECK(core.legacyMappingPath() == legacyPath.generic_string());
+    CHECK(std::filesystem::path(core.mappingPath()).extension() == ".ayrig");
+    CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Hips) == 2);
+    CHECK(core.status().bake == SkeletonBakeState::NotBaked);
+    CHECK(core.saveMapping(&error));
+    CHECK_FALSE(core.openedLegacyMapping());
+    CHECK(std::filesystem::exists(legacyPath));
+    CHECK(std::filesystem::exists(core.mappingPath()));
+    const auto migrated = nlohmann::json::parse(
+        ayt::io::File::readAllText(core.mappingPath()));
+    CHECK(migrated["type"] == "RigProfile");
+    CHECK(migrated["kind"] == "mapping");
+    CHECK_FALSE(migrated.contains("bakeState"));
 }
 
 TEST_CASE(skeleton_editor_core_animation_updates_wire_pose)
@@ -257,7 +313,7 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
     CHECK(plan.dependencies[0].kind == SkeletonBakeDependencyKind::Animation);
     CHECK(plan.dependencies[1].kind == SkeletonBakeDependencyKind::Mesh);
 
-    const auto manifestPath = fixtureRoot() / "synthetic.aysmap.bake-plan.json";
+    const auto manifestPath = fixtureRoot() / "synthetic.ayrig.bake-plan.json";
     CHECK(core.writeDryRunManifest(plan, manifestPath.string(), &error));
     const auto manifest = nlohmann::json::parse(
         ayt::io::File::readAllText(manifestPath.string()));
@@ -283,11 +339,12 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_ready_state)
     CHECK(core.open(skeletonPath.string(), &error));
     CHECK(core.applyCanonicalNameTemplate());
     CHECK(core.bind(HumanoidBone::Head, 4));
+    CHECK(core.saveMapping(&error));
     const auto plan = core.dryRunBake({animationPath.string()});
     CHECK(plan.canBake());
 
     SkeletonBakeJob job;
-    const auto output = fixtureRoot() / "baked";
+    const auto output = fixtureRoot() / "Baked";
     const std::uint64_t generation = job.start(plan, output.string());
     SkeletonBakeJobSnapshot snapshot;
     for (int attempt = 0; attempt < 400; ++attempt) {
@@ -314,8 +371,24 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_ready_state)
     if (animation.getTrackNodeName(0) != nullptr) {
         CHECK(std::string(animation.getTrackNodeName(0)) == "head");
     }
-    CHECK(core.recordBakeResult(true, snapshot.sourceFingerprint, &error));
+    CHECK(core.setNative(true));
+    CHECK_FALSE(core.recordBakeResult(true, snapshot.sourceFingerprint,
+        snapshot.profileFingerprint, &error));
+    CHECK(error.find("RigProfile revision") != std::string::npos);
+    CHECK(core.setNative(false));
+    CHECK(core.recordBakeResult(true, snapshot.sourceFingerprint,
+        snapshot.profileFingerprint, &error));
     CHECK(core.status().bake == SkeletonBakeState::Ready);
+    CHECK(core.saveMapping(&error));
+
+    SkeletonEditorCore reopened;
+    CHECK(reopened.open(skeletonPath.string(), &error));
+    CHECK(reopened.status().bake == SkeletonBakeState::Ready);
+    CHECK(reopened.setNative(true));
+    CHECK(reopened.saveMapping(&error));
+    SkeletonEditorCore stale;
+    CHECK(stale.open(skeletonPath.string(), &error));
+    CHECK(stale.status().bake == SkeletonBakeState::Stale);
 }
 
 TEST_CASE(skeleton_bake_job_rejects_blocked_and_isolates_generations)

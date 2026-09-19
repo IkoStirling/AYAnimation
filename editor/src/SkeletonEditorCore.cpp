@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <system_error>
 #include <unordered_set>
 
@@ -51,6 +53,35 @@ const char* validationErrorName(HumanoidValidationError error) noexcept
 std::string normalizedPath(const std::filesystem::path& path)
 {
     return path.lexically_normal().generic_string();
+}
+
+std::string lowerExtension(const std::filesystem::path& path)
+{
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    return extension;
+}
+
+std::string fnvHex(const char* prefix, const std::string& value)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= prime;
+    }
+    std::ostringstream text;
+    text << prefix << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return text.str();
+}
+
+std::string stableProfileId(const std::filesystem::path& path)
+{
+    return fnvHex("rig-", normalizedPath(std::filesystem::absolute(path)));
 }
 
 } // namespace
@@ -101,7 +132,15 @@ SkeletonEditorCore::Snapshot& SkeletonEditorCore::current() noexcept
 std::string SkeletonEditorCore::defaultMappingPath(const std::string& skeletonPath)
 {
     std::filesystem::path path(skeletonPath);
-    path.replace_extension(kSkeletonMappingExtension);
+    path.replace_extension(kRigProfileExtension);
+    return normalizedPath(path);
+}
+
+std::string SkeletonEditorCore::defaultLegacyMappingPath(
+    const std::string& skeletonPath)
+{
+    std::filesystem::path path(skeletonPath);
+    path.replace_extension(kLegacySkeletonMappingExtension);
     return normalizedPath(path);
 }
 
@@ -119,38 +158,84 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
         return false;
     }
 
-    std::filesystem::path requested(inputPath);
-    std::string extension = requested.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char value) {
-                       return static_cast<char>(std::tolower(value));
-                   });
-    const bool mappingFirst = extension == kSkeletonMappingExtension;
+    const std::filesystem::path requested(inputPath);
+    const std::string extension = lowerExtension(requested);
+    const bool mappingFirst = extension == kRigProfileExtension
+        || extension == kLegacySkeletonMappingExtension;
     Snapshot loaded;
     std::string skeletonReference;
     std::string sourceFingerprint;
+    std::string profileId;
+    std::array<std::string, kHumanoidBoneCount> bonePaths{};
+    std::filesystem::path loadedMappingPath;
+    _legacyMappingPath.clear();
     if (mappingFirst) {
+        loadedMappingPath = requested;
         if (!loadMappingFile(inputPath, skeletonReference, loaded,
-                             sourceFingerprint, error)) {
+                             sourceFingerprint, profileId, bonePaths, error)) {
             return false;
         }
         std::filesystem::path skeletonPath(skeletonReference);
         if (skeletonPath.is_relative()) {
             skeletonPath = requested.parent_path() / skeletonPath;
         }
-        _mappingPath = normalizedPath(std::filesystem::absolute(requested));
+        const std::filesystem::path absoluteRequested =
+            std::filesystem::absolute(requested);
+        if (extension == kLegacySkeletonMappingExtension) {
+            _legacyMappingPath = normalizedPath(absoluteRequested);
+            _mappingPath = defaultMappingPath(_legacyMappingPath);
+        } else {
+            _mappingPath = normalizedPath(absoluteRequested);
+        }
         if (!loadSkeleton(normalizedPath(skeletonPath), error)) return false;
     } else {
         if (!loadSkeleton(inputPath, error)) return false;
         _mappingPath = defaultMappingPath(_skeletonPath);
         std::error_code existsError;
         if (std::filesystem::exists(_mappingPath, existsError)) {
+            loadedMappingPath = _mappingPath;
             if (!loadMappingFile(_mappingPath, skeletonReference, loaded,
-                                 sourceFingerprint, error)) {
+                                 sourceFingerprint, profileId, bonePaths, error)) {
                 return false;
+            }
+        } else {
+            const std::string legacyPath = defaultLegacyMappingPath(_skeletonPath);
+            existsError.clear();
+            if (std::filesystem::exists(legacyPath, existsError)) {
+                loadedMappingPath = legacyPath;
+                if (!loadMappingFile(legacyPath, skeletonReference, loaded,
+                                     sourceFingerprint, profileId, bonePaths,
+                                     error)) {
+                    return false;
+                }
+                _legacyMappingPath = legacyPath;
             }
         }
     }
+
+    if (!mappingFirst && !skeletonReference.empty()) {
+        std::filesystem::path referencedSkeleton(skeletonReference);
+        if (referencedSkeleton.is_relative()) {
+            referencedSkeleton = loadedMappingPath.parent_path()
+                / referencedSkeleton;
+        }
+        const std::string boundPath = normalizedPath(
+            std::filesystem::absolute(referencedSkeleton));
+        std::error_code equivalentError;
+        const bool sameSkeleton = std::filesystem::equivalent(
+            std::filesystem::path(boundPath),
+            std::filesystem::path(_skeletonPath), equivalentError);
+        if (equivalentError || !sameSkeleton) {
+            setError(error,
+                "RigProfile is bound to a different source skeleton: "
+                    + boundPath);
+            return false;
+        }
+    }
+
+    resolveBonePaths(loaded, bonePaths);
+    _profileId = profileId.empty() ? stableProfileId(_mappingPath) : profileId;
+    loadBakeReceipt(loaded);
 
     _history.assign(1u, std::move(loaded));
     _historyCursor = 0u;
@@ -191,6 +276,8 @@ bool SkeletonEditorCore::loadSkeleton(const std::string& path, std::string* erro
 bool SkeletonEditorCore::loadMappingFile(
     const std::string& path, std::string& skeletonReference,
     Snapshot& snapshot, std::string& sourceFingerprint,
+    std::string& profileId,
+    std::array<std::string, kHumanoidBoneCount>& bonePaths,
     std::string* error) const
 {
     const std::string text = ayt::io::File::readAllText(path);
@@ -200,31 +287,60 @@ bool SkeletonEditorCore::loadMappingFile(
     }
     try {
         const Json root = Json::parse(text);
-        if (root.value("type", std::string{}) != "SkeletonMapping"
-            || root.value("version", 0u) != kSkeletonMappingSchemaVersion) {
+        const std::string type = root.value("type", std::string{});
+        const std::uint32_t version = root.value("version", 0u);
+        const bool legacy = type == "SkeletonMapping"
+            && version == kLegacySkeletonMappingSchemaVersion;
+        const bool rigProfile = type == "RigProfile"
+            && version == kRigProfileSchemaVersion;
+        if (!legacy && !rigProfile) {
             setError(error, "Unsupported skeleton mapping schema.");
             return false;
         }
-        skeletonReference = root.value("skeleton", std::string{});
+        if (rigProfile && root.value("kind", std::string{}) != "mapping") {
+            setError(error, "This skeleton editor only supports mapping RigProfiles.");
+            return false;
+        }
+        if (rigProfile) {
+            profileId = root.value("id", std::string{});
+            const auto source = root.find("source");
+            if (source == root.end() || !source->is_object()) {
+                setError(error, "RigProfile does not contain a source object.");
+                return false;
+            }
+            skeletonReference = source->value("skeleton", std::string{});
+            sourceFingerprint = source->value("fingerprint", std::string{});
+        } else {
+            skeletonReference = root.value("skeleton", std::string{});
+            sourceFingerprint = root.value("sourceFingerprint", std::string{});
+        }
         if (skeletonReference.empty()) {
             setError(error, "Skeleton mapping does not reference a skeleton.");
             return false;
         }
-        sourceFingerprint = root.value("sourceFingerprint", std::string{});
         snapshot.nativeSkeleton = root.value("native", false);
-        const std::string bake = root.value("bakeState", std::string{"notBaked"});
-        snapshot.bake = bake == "ready" ? SkeletonBakeState::Ready
-            : bake == "stale" ? SkeletonBakeState::Stale
-            : bake == "failed" ? SkeletonBakeState::Failed
-            : SkeletonBakeState::NotBaked;
-        snapshot.bakedFingerprint = root.value("bakedFingerprint", std::string{});
         if (const auto roles = root.find("roles"); roles != root.end()
             && roles->is_object()) {
             for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
                 const auto value = roles->find(std::string(spec.canonicalName));
-                if (value != roles->end() && value->is_number_integer()) {
+                if (value == roles->end()) continue;
+                if (legacy && value->is_number_integer()) {
                     const int index = value->get<int>();
                     if (index >= 0) (void)snapshot.mapping.bind(spec.role, index);
+                } else if (rigProfile && value->is_object()) {
+                    const int index = value->value("sourceIndex", -1);
+                    if (index >= 0) (void)snapshot.mapping.bind(spec.role, index);
+                    bonePaths[static_cast<std::size_t>(spec.role)] =
+                        value->value("bonePath", std::string{});
+                    if (bonePaths[static_cast<std::size_t>(spec.role)].empty()) {
+                        setError(error, "RigProfile role is missing bonePath: "
+                            + std::string(spec.canonicalName));
+                        return false;
+                    }
+                } else {
+                    setError(error, "RigProfile role has an invalid value: "
+                        + std::string(spec.canonicalName));
+                    return false;
                 }
             }
         }
@@ -252,16 +368,23 @@ bool SkeletonEditorCore::writeMappingFile(
     Json roles = Json::object();
     for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
         const int index = snapshot.mapping.getSourceBoneIndex(spec.role);
-        if (index >= 0) roles[std::string(spec.canonicalName)] = index;
+        if (index >= 0) {
+            roles[std::string(spec.canonicalName)] = {
+                {"bonePath", bonePath(index)},
+                {"sourceIndex", index},
+            };
+        }
     }
     Json root = {
-        {"type", "SkeletonMapping"},
-        {"version", kSkeletonMappingSchemaVersion},
-        {"skeleton", normalizedPath(reference)},
-        {"sourceFingerprint", skeletonFingerprint()},
+        {"type", "RigProfile"},
+        {"version", kRigProfileSchemaVersion},
+        {"id", _profileId.empty() ? stableProfileId(destination) : _profileId},
+        {"kind", "mapping"},
+        {"source", {
+            {"skeleton", normalizedPath(reference)},
+            {"fingerprint", skeletonFingerprint()},
+        }},
         {"native", snapshot.nativeSkeleton},
-        {"bakeState", bakeStateName(snapshot.bake)},
-        {"bakedFingerprint", snapshot.bakedFingerprint},
         {"roles", std::move(roles)},
     };
 
@@ -306,9 +429,22 @@ bool SkeletonEditorCore::saveMappingAs(const std::string& path,
         setError(error, "Skeleton mapping path is empty.");
         return false;
     }
-    const std::string absolutePath = normalizedPath(std::filesystem::absolute(path));
+    std::filesystem::path destination(path);
+    const std::string extension = lowerExtension(destination);
+    if (extension == kLegacySkeletonMappingExtension) {
+        destination.replace_extension(kRigProfileExtension);
+    } else if (extension != kRigProfileExtension) {
+        setError(error, "RigProfile files must use the .ayrig extension.");
+        return false;
+    } else if (destination.extension().string() != kRigProfileExtension) {
+        destination.replace_extension(kRigProfileExtension);
+    }
+    const std::string absolutePath = normalizedPath(
+        std::filesystem::absolute(destination));
     if (!writeMappingFile(absolutePath, current(), error)) return false;
     _mappingPath = absolutePath;
+    _legacyMappingPath.clear();
+    if (_profileId.empty()) _profileId = stableProfileId(_mappingPath);
     _loadedSourceFingerprint = skeletonFingerprint();
     _savedCursor = _historyCursor;
     ++_revision;
@@ -592,6 +728,7 @@ SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
     plan.skeletonPath = _skeletonPath;
     plan.mappingPath = _mappingPath;
     plan.sourceFingerprint = skeletonFingerprint();
+    plan.profileFingerprint = rigProfileFingerprint();
 
     std::vector<std::string> animations = animationPaths;
     if (!_animationPath.empty()) animations.push_back(_animationPath);
@@ -721,7 +858,8 @@ std::string SkeletonEditorCore::dryRunManifestJson(
         {"version", plan.schemaVersion},
         {"source", {{"skeleton", plan.skeletonPath},
                     {"mapping", plan.mappingPath},
-                    {"fingerprint", plan.sourceFingerprint}}},
+                    {"fingerprint", plan.sourceFingerprint},
+                    {"profileFingerprint", plan.profileFingerprint}}},
         {"canBake", plan.canBake()},
         {"summary", {
             {"keep", plan.boneActionCount(SkeletonBakeBoneAction::Keep)},
@@ -779,12 +917,19 @@ bool SkeletonEditorCore::writeDryRunManifest(
 }
 
 bool SkeletonEditorCore::recordBakeResult(
-    bool succeeded, const std::string& sourceFingerprint, std::string* error)
+    bool succeeded, const std::string& sourceFingerprint,
+    const std::string& profileFingerprint, std::string* error)
 {
     if (_skeleton == nullptr || sourceFingerprint.empty()
         || sourceFingerprint != skeletonFingerprint()) {
         setError(error,
             "Bake result was produced from a different source skeleton revision.");
+        return false;
+    }
+    if (profileFingerprint.empty()
+        || profileFingerprint != rigProfileFingerprint()) {
+        setError(error,
+            "Bake result was produced from a different RigProfile revision.");
         return false;
     }
     Snapshot next = current();
@@ -989,6 +1134,109 @@ void SkeletonEditorCore::rebuildPoseFromPlayer()
     _poseWorld.assign(world, world + count);
 }
 
+std::string SkeletonEditorCore::bonePath(int boneIndex) const
+{
+    if (boneIndex < 0 || boneIndex >= static_cast<int>(_bones.size())) return {};
+    std::vector<std::string> segments;
+    std::vector<std::uint8_t> visited(_bones.size(), 0u);
+    int cursor = boneIndex;
+    while (cursor >= 0 && cursor < static_cast<int>(_bones.size())) {
+        if (visited[static_cast<std::size_t>(cursor)] != 0u) return {};
+        visited[static_cast<std::size_t>(cursor)] = 1u;
+        segments.push_back(_bones[static_cast<std::size_t>(cursor)].name);
+        cursor = _bones[static_cast<std::size_t>(cursor)].parentIndex;
+    }
+    std::reverse(segments.begin(), segments.end());
+    std::string result;
+    for (const std::string& segment : segments) {
+        if (!result.empty()) result.push_back('/');
+        result += segment;
+    }
+    return result;
+}
+
+void SkeletonEditorCore::resolveBonePaths(
+    Snapshot& snapshot,
+    const std::array<std::string, kHumanoidBoneCount>& bonePaths) const
+{
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const std::size_t roleIndex = static_cast<std::size_t>(spec.role);
+        const std::string& expected = bonePaths[roleIndex];
+        if (expected.empty()) continue;
+        const int storedIndex = snapshot.mapping.getSourceBoneIndex(spec.role);
+        if (storedIndex >= 0 && bonePath(storedIndex) == expected) continue;
+
+        int resolved = -1;
+        for (std::size_t index = 0; index < _bones.size(); ++index) {
+            if (bonePath(static_cast<int>(index)) != expected) continue;
+            if (resolved >= 0) {
+                resolved = -1;
+                break;
+            }
+            resolved = static_cast<int>(index);
+        }
+        (void)snapshot.mapping.unbind(spec.role);
+        if (resolved >= 0) (void)snapshot.mapping.bind(spec.role, resolved);
+    }
+}
+
+void SkeletonEditorCore::loadBakeReceipt(Snapshot& snapshot) const
+{
+    snapshot.bake = SkeletonBakeState::NotBaked;
+    snapshot.bakedFingerprint.clear();
+    if (_skeletonPath.empty() || snapshot.mapping.empty()) return;
+
+    const std::filesystem::path skeleton(_skeletonPath);
+    const std::filesystem::path receipt = skeleton.parent_path() / "Baked"
+        / (skeleton.stem().string() + ".bake-result.json");
+    std::error_code existsError;
+    if (!std::filesystem::exists(receipt, existsError) || existsError) return;
+
+    try {
+        const std::string text = ayt::io::File::readAllText(receipt.string());
+        const Json root = Json::parse(text);
+        if (root.value("type", std::string{}) != "SkeletonBakeResult"
+            || root.value("version", 0u) != 1u) {
+            snapshot.bake = SkeletonBakeState::Failed;
+            return;
+        }
+        snapshot.bakedFingerprint = root.value(
+            "sourceFingerprint", std::string{});
+        if (snapshot.bakedFingerprint.empty()
+            || snapshot.bakedFingerprint != skeletonFingerprint()) {
+            snapshot.bake = SkeletonBakeState::Stale;
+            return;
+        }
+        if (root.value("profileFingerprint", std::string{})
+            != rigProfileFingerprint(snapshot)) {
+            snapshot.bake = SkeletonBakeState::Stale;
+            return;
+        }
+        const auto outputs = root.find("outputs");
+        if (outputs == root.end() || !outputs->is_array()
+            || outputs->empty()) {
+            snapshot.bake = SkeletonBakeState::Failed;
+            return;
+        }
+        for (const Json& output : *outputs) {
+            if (!output.is_string()) {
+                snapshot.bake = SkeletonBakeState::Failed;
+                return;
+            }
+            std::filesystem::path outputPath(output.get<std::string>());
+            if (outputPath.is_relative()) outputPath = receipt.parent_path() / outputPath;
+            existsError.clear();
+            if (!std::filesystem::exists(outputPath, existsError) || existsError) {
+                snapshot.bake = SkeletonBakeState::Stale;
+                return;
+            }
+        }
+        snapshot.bake = SkeletonBakeState::Ready;
+    } catch (...) {
+        snapshot.bake = SkeletonBakeState::Failed;
+    }
+}
+
 std::string SkeletonEditorCore::skeletonFingerprint() const
 {
     if (_skeletonPath.empty()) return {};
@@ -999,6 +1247,26 @@ std::string SkeletonEditorCore::skeletonFingerprint() const
     if (error) return std::to_string(size);
     return std::to_string(size) + ":"
         + std::to_string(modified.time_since_epoch().count());
+}
+
+std::string SkeletonEditorCore::rigProfileFingerprint() const
+{
+    return rigProfileFingerprint(current());
+}
+
+std::string SkeletonEditorCore::rigProfileFingerprint(
+    const Snapshot& snapshot) const
+{
+    std::string canonical = "v1|" + skeletonFingerprint()
+        + "|native=" + (snapshot.nativeSkeleton ? "1" : "0");
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const int index = snapshot.mapping.getSourceBoneIndex(spec.role);
+        canonical += "|";
+        canonical += spec.canonicalName;
+        canonical += "=";
+        canonical += index >= 0 ? bonePath(index) : "-";
+    }
+    return fnvHex("rig-input-", canonical);
 }
 
 bool SkeletonEditorCore::sourceMappingIsStale() const

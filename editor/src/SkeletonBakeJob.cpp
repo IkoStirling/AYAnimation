@@ -31,6 +31,7 @@ struct RunState {
     std::mutex detailsMutex;
     std::string message = "Preparing skeleton bake.";
     std::string sourceFingerprint;
+    std::string profileFingerprint;
     std::vector<std::string> outputPaths;
 };
 
@@ -148,6 +149,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
                  std::string outputDirectory)
 {
     run->sourceFingerprint = plan.sourceFingerprint;
+    run->profileFingerprint = plan.profileFingerprint;
     if (!plan.canBake()) {
         fail(run, "Bake preflight contains blocking errors.");
         return;
@@ -277,6 +279,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
         {"version", 1u},
         {"generation", run->generation},
         {"sourceFingerprint", plan.sourceFingerprint},
+        {"profileFingerprint", plan.profileFingerprint},
         {"outputs", outputs},
         {"dryRun", Json::parse(SkeletonEditorCore::dryRunManifestJson(plan))},
     };
@@ -343,6 +346,7 @@ std::uint64_t SkeletonBakeJob::start(SkeletonBakeDryRunPlan plan,
     auto run = std::make_shared<RunState>();
     run->generation = _impl->nextGeneration++;
     run->sourceFingerprint = plan.sourceFingerprint;
+    run->profileFingerprint = plan.profileFingerprint;
     _impl->current = run;
     _impl->workers.push_back(std::async(std::launch::async,
         [run, plan = std::move(plan), output = std::move(outputDirectory)]() mutable {
@@ -382,6 +386,7 @@ SkeletonBakeJobSnapshot SkeletonBakeJob::poll() const
     snapshot.state = run->state.load();
     snapshot.progress = run->progress.load();
     snapshot.sourceFingerprint = run->sourceFingerprint;
+    snapshot.profileFingerprint = run->profileFingerprint;
     {
         std::lock_guard lock(run->detailsMutex);
         snapshot.message = run->message;

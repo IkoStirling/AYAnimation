@@ -19,9 +19,11 @@ class Skeleton;
 
 namespace ayt::anim::editor {
 
-inline constexpr std::uint32_t kSkeletonMappingSchemaVersion = 1u;
+inline constexpr std::uint32_t kRigProfileSchemaVersion = 1u;
+inline constexpr std::uint32_t kLegacySkeletonMappingSchemaVersion = 1u;
 inline constexpr std::uint32_t kSkeletonBakePlanSchemaVersion = 1u;
-inline constexpr const char* kSkeletonMappingExtension = ".aysmap";
+inline constexpr const char* kRigProfileExtension = ".ayrig";
+inline constexpr const char* kLegacySkeletonMappingExtension = ".aysmap";
 
 enum class SkeletonAdaptationState : std::uint8_t {
     Unmapped,
@@ -114,6 +116,7 @@ struct SkeletonBakeDryRunPlan {
     std::string skeletonPath;
     std::string mappingPath;
     std::string sourceFingerprint;
+    std::string profileFingerprint;
     SkeletonPreflightReport preflight;
     std::vector<SkeletonBakeBoneOperation> boneOperations;
     std::vector<SkeletonBakeDependency> dependencies;
@@ -142,7 +145,8 @@ struct SkeletonBoneView {
 
 // UI-free authoring model shared by AYEditor and future command-line tools.
 // The source .ayskel is never modified: authored mapping data is stored in a
-// sibling .aysmap resource and can be rebound to a skeleton explicitly.
+// .ayrig RigProfile. Legacy .aysmap files are read only and migrate to .ayrig
+// on save without deleting the source file.
 class SkeletonEditorCore final {
 public:
     SkeletonEditorCore();
@@ -162,6 +166,15 @@ public:
     }
     [[nodiscard]] const std::string& mappingPath() const noexcept {
         return _mappingPath;
+    }
+    [[nodiscard]] const std::string& legacyMappingPath() const noexcept {
+        return _legacyMappingPath;
+    }
+    [[nodiscard]] bool openedLegacyMapping() const noexcept {
+        return !_legacyMappingPath.empty();
+    }
+    [[nodiscard]] const std::string& profileId() const noexcept {
+        return _profileId;
     }
     [[nodiscard]] const std::vector<SkeletonBoneView>& bones() const noexcept {
         return _bones;
@@ -199,6 +212,7 @@ public:
                              std::string* error = nullptr) const;
     bool recordBakeResult(bool succeeded,
                           const std::string& sourceFingerprint,
+                          const std::string& profileFingerprint,
                           std::string* error = nullptr);
     [[nodiscard]] bool isDirty() const noexcept;
     [[nodiscard]] bool canUndo() const noexcept;
@@ -231,6 +245,7 @@ public:
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
 
     static std::string defaultMappingPath(const std::string& skeletonPath);
+    static std::string defaultLegacyMappingPath(const std::string& skeletonPath);
     static std::string defaultDryRunManifestPath(const std::string& mappingPath);
     static std::string dryRunManifestJson(const SkeletonBakeDryRunPlan& plan);
     static SkeletonAuthoringStatus inspectStatus(
@@ -261,6 +276,8 @@ private:
                          std::string& skeletonReference,
                          Snapshot& snapshot,
                          std::string& sourceFingerprint,
+                         std::string& profileId,
+                         std::array<std::string, kHumanoidBoneCount>& bonePaths,
                          std::string* error) const;
     bool writeMappingFile(const std::string& path,
                           const Snapshot& snapshot,
@@ -268,11 +285,21 @@ private:
     void rebuildBoneViews();
     void rebuildBindPose();
     void rebuildPoseFromPlayer();
+    void resolveBonePaths(Snapshot& snapshot,
+                          const std::array<std::string,
+                              kHumanoidBoneCount>& bonePaths) const;
+    void loadBakeReceipt(Snapshot& snapshot) const;
+    [[nodiscard]] std::string bonePath(int boneIndex) const;
     [[nodiscard]] std::string skeletonFingerprint() const;
+    [[nodiscard]] std::string rigProfileFingerprint() const;
+    [[nodiscard]] std::string rigProfileFingerprint(
+        const Snapshot& snapshot) const;
     [[nodiscard]] bool sourceMappingIsStale() const;
 
     std::string _skeletonPath;
     std::string _mappingPath;
+    std::string _legacyMappingPath;
+    std::string _profileId;
     std::string _loadedSourceFingerprint;
     std::shared_ptr<ayt::resource::Skeleton> _skeleton;
     std::vector<SkeletonBoneView> _bones;
