@@ -28,7 +28,8 @@ std::filesystem::path fixtureRoot()
 }
 
 std::filesystem::path writeSkeleton(bool addHelper = false,
-                                    bool renameHead = false)
+                                    bool renameHead = false,
+                                    const char* fileName = "synthetic.ayskel")
 {
     Skeleton skeleton;
     const struct BoneDef { const char* name; int parent; float x; float y; } defs[] = {
@@ -64,7 +65,7 @@ std::filesystem::path writeSkeleton(bool addHelper = false,
     }
     std::vector<ayt::math::UInt8> bytes;
     CHECK(skeleton.saveToBinary(bytes));
-    const auto path = fixtureRoot() / "synthetic.ayskel";
+    const auto path = fixtureRoot() / fileName;
     std::error_code ignored;
     auto rigPath = path;
     rigPath.replace_extension(".ayrig");
@@ -140,6 +141,7 @@ TEST_CASE(skeleton_editor_core_mapping_is_undoable_and_persistent)
     CHECK(encoded["type"] == "RigProfile");
     CHECK(encoded["version"] == kRigProfileSchemaVersion);
     CHECK(encoded["kind"] == "mapping");
+    CHECK(encoded["strategy"] == "humanoid");
     CHECK(encoded.contains("id"));
     CHECK(encoded["roles"]["hips"]["bonePath"]
         == "sceneRoot/motionRoot/hips");
@@ -234,6 +236,51 @@ TEST_CASE(skeleton_editor_core_reload_uses_source_before_sidecar_exists)
     CHECK(core.bones().size() == 17u);
 }
 
+TEST_CASE(skeleton_editor_core_applies_ayrig_template_without_overwriting_manual_roles)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.bind(HumanoidBone::Hips, 2));
+
+    const auto templatePath = fixtureRoot() / "canonical_template.ayrig";
+    const nlohmann::json rigTemplate = {
+        {"type", "RigProfile"},
+        {"version", kRigProfileSchemaVersion},
+        {"id", "template-canonical-test"},
+        {"kind", "template"},
+        {"name", "Canonical Test"},
+        {"roles", {
+            {"hips", {{"candidates", {"pelvis", "hips"}}}},
+            {"spine", "spine"},
+            {"head", {{"sourceName", "head"}}},
+            {"leftEye", {{"candidates", {"eye_l", "leftEye"}}}},
+        }},
+    };
+    CHECK(ayt::io::File::writeAllText(
+        templatePath.string(), rigTemplate.dump(2) + "\n"));
+
+    SkeletonTemplateApplyReport report;
+    CHECK(core.previewRigTemplate(templatePath.string(), &report, &error));
+    CHECK(report.appliedCount == 2u);
+    CHECK(core.mapping().getBoundCount() == 1u);
+    CHECK(core.applyRigTemplate(templatePath.string(), &report, &error));
+    CHECK(error.empty());
+    CHECK(report.templateName == "Canonical Test");
+    CHECK(report.preservedCount == 1u);
+    CHECK(report.appliedCount == 2u);
+    CHECK(report.missingCount == 1u);
+    CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Hips) == 2);
+    CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Spine) == 3);
+    CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Head) == 4);
+
+    RigProfileInfo info;
+    CHECK(SkeletonEditorCore::inspectRigProfile(
+        templatePath.string(), info, &error));
+    CHECK(info.kind == RigProfileKind::Template);
+    CHECK(info.name == "Canonical Test");
+}
+
 TEST_CASE(skeleton_preflight_reports_mapping_completeness)
 {
     SkeletonEditorCore core;
@@ -302,6 +349,79 @@ TEST_CASE(skeleton_preflight_detects_source_change_after_mapping_save)
         }));
 }
 
+TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
+{
+    const auto sourcePath = writeSkeleton();
+    const auto targetPath = writeSkeleton(false, false, "target.ayskel");
+    const auto profilePath = fixtureRoot() / "synthetic-retarget.ayrig";
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(sourcePath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.configureRetarget(targetPath.string(), "windows-d3d12", &error));
+    CHECK(core.profileKind() == RigProfileKind::Retarget);
+    CHECK(core.targetSkeletonPath() == targetPath.generic_string());
+    CHECK(core.bakePlatform() == "windows-d3d12");
+    CHECK(core.outputMode() == "BakeToTarget");
+    CHECK(core.saveMappingAs(profilePath.string(), &error));
+
+    const auto encoded = nlohmann::json::parse(
+        ayt::io::File::readAllText(profilePath.string()));
+    CHECK(encoded["kind"] == "retarget");
+    CHECK(encoded["target"]["skeleton"] == "target.ayskel");
+    CHECK(encoded["output"]["mode"] == "BakeToTarget");
+    CHECK(encoded["output"]["platform"] == "windows-d3d12");
+
+    RigProfileInfo info;
+    CHECK(SkeletonEditorCore::inspectRigProfile(
+        profilePath.string(), info, &error));
+    CHECK(info.kind == RigProfileKind::Retarget);
+    CHECK(info.targetSkeletonPath == targetPath.generic_string());
+    CHECK(info.platform == "windows-d3d12");
+
+    auto unsupported = encoded;
+    unsupported["output"]["mode"] = "UnknownRetargetMode";
+    const auto unsupportedPath = fixtureRoot() / "unsupported-retarget.ayrig";
+    CHECK(ayt::io::File::writeAllText(
+        unsupportedPath.string(), unsupported.dump(2) + "\n"));
+    SkeletonEditorCore rejected;
+    CHECK_FALSE(rejected.open(unsupportedPath.string(), &error));
+    CHECK(error.find("unsupported") != std::string::npos);
+
+    SkeletonEditorCore reopened;
+    CHECK(reopened.open(profilePath.string(), &error));
+    CHECK(reopened.profileKind() == RigProfileKind::Retarget);
+    const auto plan = reopened.dryRunBake();
+    CHECK_FALSE(plan.canBake());
+    CHECK_FALSE(plan.scopeTag.empty());
+    CHECK(plan.receiptPath.find(plan.scopeTag) != std::string::npos);
+    CHECK(std::any_of(plan.preflight.issues.begin(), plan.preflight.issues.end(),
+        [](const SkeletonPreflightIssue& issue) {
+            return issue.code
+                == SkeletonPreflightCode::RetargetSolverUnavailable;
+        }));
+    CHECK(reopened.clearRetarget());
+    CHECK(reopened.profileKind() == RigProfileKind::Mapping);
+    CHECK(reopened.targetSkeletonPath().empty());
+}
+
+TEST_CASE(skeleton_editor_core_exposes_complete_authoring_statuses)
+{
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.bind(HumanoidBone::Hips, 2));
+    CHECK(core.status().adaptation == SkeletonAdaptationState::Incomplete);
+    CHECK(core.bind(HumanoidBone::Spine, 2));
+    CHECK(core.status().adaptation == SkeletonAdaptationState::Invalid);
+    CHECK(core.setNotApplicable(true));
+    CHECK(core.status().adaptation == SkeletonAdaptationState::NotApplicable);
+    core.setBakeInProgress(true);
+    CHECK(core.status().bake == SkeletonBakeState::Baking);
+    core.setBakeInProgress(false);
+    CHECK(core.status().bake == SkeletonBakeState::NotBaked);
+}
+
 TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
 {
     const auto skeletonPath = writeSkeleton(true, true);
@@ -340,7 +460,7 @@ TEST_SUITE_END
 
 TEST_SUITE(SkeletonBakeJobTests)
 
-TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_ready_state)
+TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
 {
     const auto skeletonPath = writeSkeleton(true, true);
     const auto animationPath = writeAnimationForNode(
@@ -389,12 +509,12 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_ready_state)
     CHECK(core.setNative(false));
     CHECK(core.recordBakeResult(true, snapshot.sourceFingerprint,
         snapshot.profileFingerprint, &error));
-    CHECK(core.status().bake == SkeletonBakeState::Ready);
+    CHECK(core.status().bake == SkeletonBakeState::Current);
     CHECK(core.saveMapping(&error));
 
     SkeletonEditorCore reopened;
     CHECK(reopened.open(skeletonPath.string(), &error));
-    CHECK(reopened.status().bake == SkeletonBakeState::Ready);
+    CHECK(reopened.status().bake == SkeletonBakeState::Current);
     CHECK(reopened.setNative(true));
     CHECK(reopened.saveMapping(&error));
     SkeletonEditorCore stale;

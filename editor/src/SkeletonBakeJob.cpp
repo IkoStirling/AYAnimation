@@ -232,7 +232,10 @@ void executeBake(const std::shared_ptr<RunState>& run,
     const std::string suffix = ".g" + std::to_string(run->generation) + ".tmp";
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> files;
     const std::string skeletonStem = std::filesystem::path(plan.skeletonPath).stem().string();
-    const auto skeletonOutput = outputRoot / (skeletonStem + ".baked.ayskel");
+    const std::string scopeSuffix = plan.scopeTag.empty()
+        ? std::string{} : "." + plan.scopeTag;
+    const auto skeletonOutput = outputRoot
+        / (skeletonStem + scopeSuffix + ".baked.ayskel");
     files.emplace_back(skeletonOutput.string() + suffix, skeletonOutput);
     if (!writeBytes(files.back().first, skeletonBytes)) {
         fail(run, "Unable to write baked skeleton temporary file.");
@@ -258,7 +261,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
         }
         const auto sourcePath = std::filesystem::path(dependency.path);
         const auto output = outputRoot
-            / (sourcePath.stem().string() + ".baked.ayanm");
+            / (sourcePath.stem().string() + scopeSuffix + ".baked.ayanm");
         files.emplace_back(output.string() + suffix, output);
         if (!writeBytes(files.back().first, animationBytes)) {
             std::vector<std::filesystem::path> temps;
@@ -273,13 +276,19 @@ void executeBake(const std::shared_ptr<RunState>& run,
 
     std::vector<std::string> outputs;
     for (const auto& file : files) outputs.push_back(normalizedPath(file.second));
-    const auto receiptOutput = outputRoot / (skeletonStem + ".bake-result.json");
+    const auto receiptOutput = plan.receiptPath.empty()
+        ? outputRoot / (skeletonStem + scopeSuffix + ".bake-result.json")
+        : std::filesystem::path(plan.receiptPath);
     Json receipt = {
         {"type", "SkeletonBakeResult"},
         {"version", 1u},
         {"generation", run->generation},
         {"sourceFingerprint", plan.sourceFingerprint},
         {"profileFingerprint", plan.profileFingerprint},
+        {"targetSkeleton", plan.targetSkeletonPath},
+        {"outputMode", plan.outputMode},
+        {"platform", plan.platform},
+        {"scope", plan.scopeTag},
         {"outputs", outputs},
         {"dryRun", Json::parse(SkeletonEditorCore::dryRunManifestJson(plan))},
     };

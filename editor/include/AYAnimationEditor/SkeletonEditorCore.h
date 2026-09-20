@@ -28,14 +28,17 @@ inline constexpr const char* kLegacySkeletonMappingExtension = ".aysmap";
 enum class SkeletonAdaptationState : std::uint8_t {
     Unmapped,
     Incomplete,
+    Invalid,
     Validated,
     Native,
+    NotApplicable,
 };
 
 enum class SkeletonBakeState : std::uint8_t {
     NotBaked,
+    Baking,
     Stale,
-    Ready,
+    Current,
     Failed,
 };
 
@@ -54,6 +57,9 @@ enum class SkeletonPreflightCode : std::uint8_t {
     SourceHierarchyCycle,
     SemanticParentMismatch,
     SourceSkeletonChanged,
+    TargetSkeletonMissing,
+    TargetSkeletonChanged,
+    RetargetSolverUnavailable,
     AnimationUnreadable,
     AnimationTrackBoneMissing,
 };
@@ -117,6 +123,11 @@ struct SkeletonBakeDryRunPlan {
     std::string mappingPath;
     std::string sourceFingerprint;
     std::string profileFingerprint;
+    std::string targetSkeletonPath;
+    std::string outputMode = "SemanticNormalize";
+    std::string platform;
+    std::string scopeTag;
+    std::string receiptPath;
     SkeletonPreflightReport preflight;
     std::vector<SkeletonBakeBoneOperation> boneOperations;
     std::vector<SkeletonBakeDependency> dependencies;
@@ -130,6 +141,35 @@ struct SkeletonAuthoringStatus {
     SkeletonAdaptationState adaptation = SkeletonAdaptationState::Unmapped;
     SkeletonBakeState bake = SkeletonBakeState::NotBaked;
     std::string message;
+};
+
+enum class RigProfileKind : std::uint8_t {
+    Unknown,
+    Mapping,
+    Retarget,
+    Template,
+};
+
+struct RigProfileInfo {
+    std::string path;
+    std::string id;
+    std::string name;
+    std::string sourceSkeletonPath;
+    std::string targetSkeletonPath;
+    std::string outputMode;
+    std::string platform;
+    RigProfileKind kind = RigProfileKind::Unknown;
+};
+
+struct SkeletonTemplateApplyReport {
+    std::string templatePath;
+    std::string templateName;
+    std::size_t appliedCount = 0u;
+    std::size_t preservedCount = 0u;
+    std::size_t missingCount = 0u;
+    std::size_t ambiguousCount = 0u;
+
+    [[nodiscard]] bool changed() const noexcept { return appliedCount != 0u; }
 };
 
 struct SkeletonBoneView {
@@ -197,8 +237,35 @@ public:
     bool unbind(HumanoidBone role);
     bool clearMapping();
     bool applyCanonicalNameTemplate();
+    bool previewRigTemplate(const std::string& path,
+                            SkeletonTemplateApplyReport* report,
+                            std::string* error = nullptr);
+    bool applyRigTemplate(const std::string& path,
+                          SkeletonTemplateApplyReport* report = nullptr,
+                          std::string* error = nullptr);
     bool setNative(bool nativeSkeleton);
+    bool setNotApplicable(bool notApplicable);
     [[nodiscard]] bool isNative() const noexcept { return current().nativeSkeleton; }
+    [[nodiscard]] bool isNotApplicable() const noexcept {
+        return current().notApplicable;
+    }
+    void setBakeInProgress(bool baking) noexcept;
+    bool configureRetarget(const std::string& targetSkeletonPath,
+                           const std::string& platform,
+                           std::string* error = nullptr);
+    bool clearRetarget();
+    [[nodiscard]] RigProfileKind profileKind() const noexcept {
+        return current().profileKind;
+    }
+    [[nodiscard]] const std::string& targetSkeletonPath() const noexcept {
+        return current().targetSkeletonPath;
+    }
+    [[nodiscard]] const std::string& bakePlatform() const noexcept {
+        return current().platform;
+    }
+    [[nodiscard]] const std::string& outputMode() const noexcept {
+        return current().outputMode;
+    }
 
     [[nodiscard]] HumanoidValidationResult validation() const noexcept;
     [[nodiscard]] SkeletonAuthoringStatus status() const;
@@ -253,6 +320,10 @@ public:
     static std::string dryRunManifestJson(const SkeletonBakeDryRunPlan& plan);
     static SkeletonAuthoringStatus inspectStatus(
         const std::string& skeletonPath) noexcept;
+    static bool inspectRigProfile(const std::string& path,
+                                  RigProfileInfo& info,
+                                  std::string* error = nullptr) noexcept;
+    static const char* rigProfileKindName(RigProfileKind kind) noexcept;
     static const char* adaptationStateName(SkeletonAdaptationState state) noexcept;
     static const char* bakeStateName(SkeletonBakeState state) noexcept;
     static const char* preflightCodeName(SkeletonPreflightCode code) noexcept;
@@ -267,8 +338,15 @@ private:
     struct Snapshot {
         HumanoidBoneMap mapping;
         bool nativeSkeleton = false;
+        bool notApplicable = false;
+        RigProfileKind profileKind = RigProfileKind::Mapping;
+        std::string targetSkeletonPath;
+        std::string targetFingerprint;
+        std::string outputMode = "SemanticNormalize";
+        std::string platform;
         SkeletonBakeState bake = SkeletonBakeState::NotBaked;
         std::string bakedFingerprint;
+        std::string bakedProfileFingerprint;
     };
 
     [[nodiscard]] const Snapshot& current() const noexcept;
@@ -285,6 +363,10 @@ private:
     bool writeMappingFile(const std::string& path,
                           const Snapshot& snapshot,
                           std::string* error) const;
+    bool evaluateRigTemplate(const std::string& path,
+                             SkeletonTemplateApplyReport* report,
+                             bool apply,
+                             std::string* error);
     void rebuildBoneViews();
     void rebuildBindPose();
     void rebuildPoseFromPlayer();
@@ -294,6 +376,9 @@ private:
     void loadBakeReceipt(Snapshot& snapshot) const;
     [[nodiscard]] std::string bonePath(int boneIndex) const;
     [[nodiscard]] std::string skeletonFingerprint() const;
+    [[nodiscard]] static std::string fileFingerprint(const std::string& path);
+    [[nodiscard]] std::string bakeScopeTag(const Snapshot& snapshot) const;
+    [[nodiscard]] std::string bakeReceiptPath(const Snapshot& snapshot) const;
     [[nodiscard]] std::string rigProfileFingerprint() const;
     [[nodiscard]] std::string rigProfileFingerprint(
         const Snapshot& snapshot) const;
@@ -318,6 +403,7 @@ private:
     std::shared_ptr<ayt::resource::Animation> _animation;
     AnimationPlayer _player;
     bool _playing = false;
+    bool _bakeInProgress = false;
     std::uint64_t _revision = 1u;
     std::uint64_t _poseRevision = 1u;
 };
