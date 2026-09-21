@@ -3,7 +3,9 @@
 
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
+#include <AYResource/assetsImpl/Mesh.h>
 #include <AYResource/assetsImpl/Skeleton.h>
+#include <AYResource/assetsImpl/SkeletonMask.h>
 #include <AYTest.h>
 #include <nlohmann/json.hpp>
 
@@ -95,6 +97,48 @@ std::filesystem::path writeAnimationForNode(
     animation.addTrack(track);
     std::vector<ayt::math::UInt8> bytes;
     CHECK(animation.saveToBinary(bytes));
+    const auto path = fixtureRoot() / fileName;
+    CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
+    return path;
+}
+
+std::filesystem::path writeSkinnedMesh(
+    ayt::math::UInt32 sourceJoint,
+    const char* fileName = "character.aymesh")
+{
+    Mesh mesh;
+    mesh.createCube(1.0f);
+    std::vector<VertexSkinWeight> weights(mesh.getVertexCount());
+    for (auto& weight : weights) {
+        weight.boneIndex[0] = 0u;
+        weight.boneWeight[0] = 1.0f;
+    }
+    mesh.debugSetSkinWeights(weights);
+    std::vector<SkinPalette> palettes;
+    std::vector<ayt::math::UInt32> joints;
+    for (ayt::math::UInt32 section = 0;
+         section < mesh.getSubmeshCount(); ++section) {
+        palettes.push_back({static_cast<ayt::math::UInt32>(joints.size()), 1u});
+        joints.push_back(sourceJoint);
+    }
+    mesh._setForTestSkinPalettes(palettes, joints);
+    std::vector<ayt::math::UInt8> bytes;
+    CHECK(mesh.saveToBinary(bytes));
+    const auto path = fixtureRoot() / fileName;
+    CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
+    return path;
+}
+
+std::filesystem::path writeSkeletonMask(
+    const char* boneName,
+    const char* fileName = "upper_body.aymask")
+{
+    SkeletonMask mask;
+    mask.setDebugName("upper body");
+    mask.addEntry(boneName, 0.75f);
+    mask.addEntry("", 0.25f);
+    std::vector<ayt::math::UInt8> bytes;
+    CHECK(mask.saveToBinary(bytes));
     const auto path = fixtureRoot() / fileName;
     CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
     return path;
@@ -476,6 +520,7 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
 {
     const auto skeletonPath = writeSkeleton(true, true);
     const auto animationPath = writeAnimationForNode();
+    const auto meshPath = writeSkinnedMesh(4u, "dry-run.aymesh");
     const auto sourceBefore = ayt::io::File::readAllBytes(skeletonPath.string());
     SkeletonEditorCore core;
     std::string error;
@@ -485,7 +530,7 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
     CHECK(core.validation().isValid());
 
     const auto plan = core.dryRunBake(
-        {animationPath.string()}, {(fixtureRoot() / "character.aymesh").string()});
+        {animationPath.string()}, {meshPath.string()});
     CHECK(plan.canBake());
     CHECK(plan.boneActionCount(SkeletonBakeBoneAction::Rename) == 1u);
     CHECK(plan.boneActionCount(SkeletonBakeBoneAction::Delete) == 1u);
@@ -515,14 +560,18 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     const auto skeletonPath = writeSkeleton(true, true);
     const auto animationPath = writeAnimationForNode(
         "characterHead", "head_motion.ayanm");
+    const auto meshPath = writeSkinnedMesh(4u);
+    const auto maskPath = writeSkeletonMask("characterHead");
     SkeletonEditorCore core;
     std::string error;
     CHECK(core.open(skeletonPath.string(), &error));
     CHECK(core.applyCanonicalNameTemplate());
     CHECK(core.bind(HumanoidBone::Head, 4));
     CHECK(core.saveMapping(&error));
-    const auto plan = core.dryRunBake({animationPath.string()});
+    const auto plan = core.dryRunBake(
+        {animationPath.string()}, {meshPath.string()}, {maskPath.string()});
     CHECK(plan.canBake());
+    CHECK(plan.dependencies.size() == 3u);
 
     SkeletonBakeJob job;
     const auto output = fixtureRoot() / "Baked";
@@ -536,7 +585,7 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     CHECK(snapshot.generation == generation);
     CHECK(snapshot.state == SkeletonBakeJobState::Succeeded);
     CHECK(snapshot.progress == 1.0f);
-    CHECK(snapshot.outputPaths.size() == 3u);
+    CHECK(snapshot.outputPaths.size() == 5u);
 
     Skeleton baked;
     CHECK(baked.load((output / "synthetic.baked.ayskel").string()));
@@ -552,6 +601,25 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     if (animation.getTrackNodeName(0) != nullptr) {
         CHECK(std::string(animation.getTrackNodeName(0)) == "head");
     }
+    Mesh mesh;
+    CHECK(mesh.load((output / "character.baked.aymesh").string()));
+    CHECK(mesh.getSkinPaletteJointCount() == mesh.getSubmeshCount());
+    CHECK(mesh.getSkinPaletteJointCount() > 0u);
+    if (mesh.getSkinPaletteJointCount() > 0u) {
+        CHECK(mesh.getSkinPaletteJoints()[0] == 4u);
+    }
+    SkeletonMask mask;
+    CHECK(mask.load((output / "upper_body.baked.aymask").string()));
+    CHECK(mask.getAuthoredBoneCount() == 1u);
+    if (mask.getAuthoredBoneCount() == 1u) {
+        CHECK(mask.getEntries()[0].name == "head");
+        CHECK_FLOAT_EQ(mask.getEntries()[0].weight, 0.75f, 1.0e-6f);
+    }
+    CHECK(mask.hasWildcard());
+    const auto receipt = nlohmann::json::parse(ayt::io::File::readAllText(
+        (output / "synthetic.bake-result.json").string()));
+    CHECK(receipt["version"] == 2u);
+    CHECK(receipt["artifacts"].size() == 4u);
     CHECK(core.setNative(true));
     CHECK_FALSE(core.recordBakeResult(true, snapshot.sourceFingerprint,
         snapshot.profileFingerprint, &error));
@@ -570,6 +638,32 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     SkeletonEditorCore stale;
     CHECK(stale.open(skeletonPath.string(), &error));
     CHECK(stale.status().bake == SkeletonBakeState::Stale);
+}
+
+TEST_CASE(skeleton_bake_preflight_blocks_dangling_mesh_and_unsafe_retarget_mesh)
+{
+    const auto sourcePath = writeSkeleton(true, false);
+    const auto helperMesh = writeSkinnedMesh(17u, "helper-bound.aymesh");
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(sourcePath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto semantic = core.dryRunBake({}, {helperMesh.string()});
+    CHECK_FALSE(semantic.canBake());
+    CHECK(std::any_of(semantic.preflight.issues.begin(),
+        semantic.preflight.issues.end(), [](const SkeletonPreflightIssue& issue) {
+            return issue.code == SkeletonPreflightCode::MeshSkinBindingInvalid;
+        }));
+
+    const auto targetPath = writeSkeleton(
+        false, false, "mesh-target.ayskel", 2.0f);
+    CHECK(core.configureRetarget(targetPath.string(), "test", &error));
+    const auto retarget = core.dryRunBake({}, {helperMesh.string()});
+    CHECK_FALSE(retarget.canBake());
+    CHECK(std::any_of(retarget.preflight.issues.begin(),
+        retarget.preflight.issues.end(), [](const SkeletonPreflightIssue& issue) {
+            return issue.code == SkeletonPreflightCode::RetargetMeshUnsupported;
+        }));
 }
 
 TEST_CASE(skeleton_bake_job_retargets_animation_to_target_skeleton)

@@ -1,5 +1,7 @@
 #include <AYAnimationEditor/SkeletonEditorCore.h>
 
+#include "SkeletonBakeReferences.h"
+
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYResource/assetsImpl/Skeleton.h>
@@ -1395,7 +1397,8 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
 
 SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
     const std::vector<std::string>& animationPaths,
-    const std::vector<std::string>& meshPaths) const
+    const std::vector<std::string>& meshPaths,
+    const std::vector<std::string>& skeletonMaskPaths) const
 {
     SkeletonBakeDryRunPlan plan;
     plan.skeletonPath = _skeletonPath;
@@ -1425,6 +1428,8 @@ SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
     normalizeUnique(animations);
     std::vector<std::string> meshes = meshPaths;
     normalizeUnique(meshes);
+    std::vector<std::string> masks = skeletonMaskPaths;
+    normalizeUnique(masks);
     plan.preflight = preflight(animations);
 
     std::vector<HumanoidBone> roleByBone(_bones.size(), HumanoidBone::Invalid);
@@ -1487,10 +1492,76 @@ SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
             path, blocked ? "Animation failed preflight validation."
                           : "Animation tracks are affected by skeleton cleanup and renaming."});
     }
+    if (_skeleton == nullptr) {
+        for (const std::string& path : meshes) {
+            plan.dependencies.push_back({SkeletonBakeDependencyKind::Mesh,
+                SkeletonBakeDependencyImpact::Blocked, path,
+                "Open a source skeleton before validating mesh references."});
+        }
+        for (const std::string& path : masks) {
+            plan.dependencies.push_back({SkeletonBakeDependencyKind::SkeletonMask,
+                SkeletonBakeDependencyImpact::Blocked, path,
+                "Open a source skeleton before validating mask references."});
+        }
+        return plan;
+    }
+    const SkeletonBakeReferenceContext referenceContext{
+        *_skeleton,
+        current().profileKind == RigProfileKind::Retarget
+            ? _targetSkeleton.get() : nullptr,
+        plan.boneOperations,
+        current().profileKind == RigProfileKind::Retarget
+            ? &plan.retargetDefinition : nullptr,
+        current().profileKind == RigProfileKind::Retarget,
+    };
     for (const std::string& path : meshes) {
+        std::vector<ayt::math::UInt8> ignored;
+        std::string validationError;
+        const bool valid = rewriteMeshDependency(
+            path, referenceContext, ignored, validationError);
+        if (!valid) {
+            SkeletonPreflightIssue issue;
+            issue.severity = SkeletonPreflightSeverity::Error;
+            issue.code = current().profileKind == RigProfileKind::Retarget
+                    && validationError.find("different target skeleton")
+                        != std::string::npos
+                    ? SkeletonPreflightCode::RetargetMeshUnsupported
+                    : validationError.find("Unable to load") != std::string::npos
+                        ? SkeletonPreflightCode::MeshUnreadable
+                        : SkeletonPreflightCode::MeshSkinBindingInvalid;
+            issue.message = validationError;
+            issue.resourcePath = path;
+            plan.preflight.issues.push_back(std::move(issue));
+        }
         plan.dependencies.push_back({SkeletonBakeDependencyKind::Mesh,
-            SkeletonBakeDependencyImpact::RequiresVerification, path,
-            "Mesh skin bindings must be rewritten and verified during bake."});
+            valid ? SkeletonBakeDependencyImpact::Affected
+                  : SkeletonBakeDependencyImpact::Blocked,
+            path, valid
+                ? "Mesh skin palettes and active joint indices will be rewritten."
+                : validationError});
+    }
+    for (const std::string& path : masks) {
+        std::vector<ayt::math::UInt8> ignored;
+        std::string validationError;
+        const bool valid = rewriteSkeletonMaskDependency(
+            path, referenceContext, ignored, validationError);
+        if (!valid) {
+            SkeletonPreflightIssue issue;
+            issue.severity = SkeletonPreflightSeverity::Error;
+            issue.code = validationError.find("Unable to load")
+                != std::string::npos
+                ? SkeletonPreflightCode::SkeletonMaskUnreadable
+                : SkeletonPreflightCode::SkeletonMaskBoneMissing;
+            issue.message = validationError;
+            issue.resourcePath = path;
+            plan.preflight.issues.push_back(std::move(issue));
+        }
+        plan.dependencies.push_back({SkeletonBakeDependencyKind::SkeletonMask,
+            valid ? SkeletonBakeDependencyImpact::Affected
+                  : SkeletonBakeDependencyImpact::Blocked,
+            path, valid
+                ? "Skeleton-mask bone references will be rewritten."
+                : validationError});
     }
     return plan;
 }
@@ -2120,8 +2191,9 @@ void SkeletonEditorCore::loadBakeReceipt(Snapshot& snapshot) const
     try {
         const std::string text = ayt::io::File::readAllText(receipt.string());
         const Json root = Json::parse(text);
+        const std::uint32_t receiptVersion = root.value("version", 0u);
         if (root.value("type", std::string{}) != "SkeletonBakeResult"
-            || root.value("version", 0u) != 1u) {
+            || (receiptVersion != 1u && receiptVersion != 2u)) {
             snapshot.bake = SkeletonBakeState::Failed;
             return;
         }
@@ -2393,6 +2465,11 @@ const char* SkeletonEditorCore::preflightCodeName(
     case SkeletonPreflightCode::RetargetAdditiveTrackUnsupported: return "retargetAdditiveTrackUnsupported";
     case SkeletonPreflightCode::AnimationUnreadable: return "animationUnreadable";
     case SkeletonPreflightCode::AnimationTrackBoneMissing: return "animationTrackBoneMissing";
+    case SkeletonPreflightCode::MeshUnreadable: return "meshUnreadable";
+    case SkeletonPreflightCode::MeshSkinBindingInvalid: return "meshSkinBindingInvalid";
+    case SkeletonPreflightCode::RetargetMeshUnsupported: return "retargetMeshUnsupported";
+    case SkeletonPreflightCode::SkeletonMaskUnreadable: return "skeletonMaskUnreadable";
+    case SkeletonPreflightCode::SkeletonMaskBoneMissing: return "skeletonMaskBoneMissing";
     }
     return "unknown";
 }
@@ -2414,6 +2491,7 @@ const char* SkeletonEditorCore::bakeDependencyKindName(
     switch (kind) {
     case SkeletonBakeDependencyKind::Animation: return "animation";
     case SkeletonBakeDependencyKind::Mesh: return "mesh";
+    case SkeletonBakeDependencyKind::SkeletonMask: return "skeletonMask";
     }
     return "animation";
 }

@@ -70,6 +70,11 @@ enum class SkeletonPreflightCode : std::uint8_t {
     RetargetAdditiveTrackUnsupported,
     AnimationUnreadable,
     AnimationTrackBoneMissing,
+    MeshUnreadable,
+    MeshSkinBindingInvalid,
+    RetargetMeshUnsupported,
+    SkeletonMaskUnreadable,
+    SkeletonMaskBoneMissing,
 };
 
 struct SkeletonPreflightIssue {
@@ -100,6 +105,7 @@ enum class SkeletonBakeBoneAction : std::uint8_t {
 enum class SkeletonBakeDependencyKind : std::uint8_t {
     Animation,
     Mesh,
+    SkeletonMask,
 };
 
 enum class SkeletonBakeDependencyImpact : std::uint8_t {
@@ -298,7 +304,8 @@ public:
         const std::vector<std::string>& animationPaths = {}) const;
     [[nodiscard]] SkeletonBakeDryRunPlan dryRunBake(
         const std::vector<std::string>& animationPaths = {},
-        const std::vector<std::string>& meshPaths = {}) const;
+        const std::vector<std::string>& meshPaths = {},
+        const std::vector<std::string>& skeletonMaskPaths = {}) const;
     bool writeDryRunManifest(const SkeletonBakeDryRunPlan& plan,
                              const std::string& path,
                              std::string* error = nullptr) const;
