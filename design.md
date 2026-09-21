@@ -7,6 +7,7 @@
 **Authority:** AYHumanoid 角色表 / AYDocs 的标准骨架与资源管线规范
 
 > **2026-09-21 实现补充**：UI-free `HumanoidRetarget` 已同时提供完整局部姿势和离线 clip 的 source→target 转换，并接入 `SkeletonBakeJob` 的 `BakeToTarget`；目标 Bind Pose、逐角色源/目标参考坐标、骨轴修正、身高比例根位移与缩放差值均进入实际输出。未映射动画骨、未知 TRS 组合和加法轨道显式失败。`SkeletonEditorCore` 以正式转换 clip 驱动目标 `AnimationPlayer`，源/目标 pose 在播放、暂停、停止、拖动和逐帧更新时保持同一时间点。引用安全烘焙覆盖当前正式资源集中的骨架、动画、蒙皮 palette/joint 与 Skeleton Mask，采用事务式暂存、验证、回滚和最后切换 receipt v2；AYResource 发布门禁核对完整闭包及源修订指纹。跨骨架蒙皮几何空间 rebind 尚未实现，因此相关 `BakeToTarget` 会显式阻止而不会生成伪正确结果。
+> **2026-09-21 动画作者预览补充**：`AnimationPreviewSession` 支持以编辑器持有的内存 clip revision 替换当前动画，保留播放位置、骨架/网格绑定和播放状态，并立即重绑 `AnimationPlayer`、重建姿势与诊断；磁盘写入和 Undo/Redo 仍由 AYEditor 文档层负责，预览核心不直接修改文件。
 
 > **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
@@ -4896,6 +4897,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 | 日期 | 变更 |
 |------|------|
+| 2026-09-21 | `AnimationPreviewSession` 增加编辑器内存 clip revision 热替换：保留时间和绑定、立即刷新正式播放器姿势，为 `.ayanm` 轨道/关键帧作者功能提供 UI-free 预览边界；3 个预览用例纳入作者核心 354/354。 |
 | 2026-09-21 | **P4-6 / SKA-07～08 引用安全烘焙与发布闭环 ship**：骨架、动画、网格 palette/joint 和 Mask 以事务方式整组改写；receipt v2 记录精确依赖/产物及源修订指纹；AYResource 在构建执行时复验 scope、目标、profile、闭包和所有输入，排除作者源及陈旧产物。跨骨架蒙皮几何 rebind 未实现时明确阻止。作者核心 338/338、AYResource 2495/2495、编辑器骨骼扩展 86/86。 |
 | 2026-09-19 | `AYAnimationEditorCore` 第一版 ship：源 `.ayskel` 只读检查、绑定 `.aysmap`、57 角色手工/规范名模板映射、校验/撤销/保存、适配与烘焙状态、`.ayanm` 姿势预览；AYEditor 仅通过薄适配消费。 |
 | 2026-09-19 | Rig Profile 迁移：writer 只写 `.ayrig` `RigProfile` v1，角色同时持久化层级路径和迁移索引；reader 兼容 `.aysmap` v1 并非破坏迁移；作者文件不再保存权威 bakeState，状态从 `.bake-result.json` 及输出恢复。 |
