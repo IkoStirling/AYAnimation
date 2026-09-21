@@ -333,6 +333,14 @@ public:
     // when no clip is attached.
     [[nodiscard]] const std::vector<ayt::math::Float4x4>&
         poseWorldMatrices() const noexcept { return _poseWorld; }
+    [[nodiscard]] const std::vector<ayt::math::Float4x4>&
+        targetPoseWorldMatrices() const noexcept { return _targetPoseWorld; }
+    [[nodiscard]] bool hasTargetPreview() const noexcept {
+        return _targetSkeleton != nullptr && !_targetPoseWorld.empty();
+    }
+    [[nodiscard]] const std::string& targetPreviewError() const noexcept {
+        return _targetPreviewError;
+    }
 
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
     [[nodiscard]] std::uint64_t poseRevision() const noexcept {
@@ -398,6 +406,8 @@ private:
                              std::string* error);
     void rebuildBoneViews();
     void rebuildBindPose();
+    void rebuildTargetBindPose();
+    void rebuildTargetPreviewAnimation();
     void rebuildPoseFromPlayer();
     void resolveBonePaths(Snapshot& snapshot,
                           const std::array<std::string,
@@ -428,6 +438,8 @@ private:
     std::vector<SkeletonBoneView> _targetBones;
     std::vector<ayt::math::Float4x4> _bindWorld;
     std::vector<ayt::math::Float4x4> _poseWorld;
+    std::vector<ayt::math::Float4x4> _targetBindWorld;
+    std::vector<ayt::math::Float4x4> _targetPoseWorld;
     std::vector<Snapshot> _history;
     std::size_t _historyCursor = 0u;
     std::size_t _savedCursor = 0u;
@@ -436,7 +448,10 @@ private:
 
     std::string _animationPath;
     std::shared_ptr<ayt::resource::Animation> _animation;
+    std::shared_ptr<ayt::resource::Animation> _targetAnimation;
     AnimationPlayer _player;
+    AnimationPlayer _targetPlayer;
+    std::string _targetPreviewError;
     bool _playing = false;
     bool _bakeInProgress = false;
     std::uint64_t _revision = 1u;

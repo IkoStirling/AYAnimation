@@ -327,6 +327,7 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
     _history.assign(1u, std::move(loaded));
     _historyCursor = 0u;
     _savedCursor = 0u;
+    syncTargetSkeleton();
     _loadedSourceFingerprint = std::move(sourceFingerprint);
     _selectedBone = _bones.empty() ? -1 : 0;
     _selectedRole = HumanoidBone::Hips;
@@ -1706,6 +1707,7 @@ bool SkeletonEditorCore::attachAnimation(const std::string& path,
     _player.setTime(0.0f);
     _player.evaluate();
     _playing = false;
+    rebuildTargetPreviewAnimation();
     rebuildPoseFromPlayer();
     ++_revision;
     if (error != nullptr) error->clear();
@@ -1715,10 +1717,14 @@ bool SkeletonEditorCore::attachAnimation(const std::string& path,
 void SkeletonEditorCore::detachAnimation()
 {
     _player.stop();
+    _targetPlayer.stop();
     _animation.reset();
+    _targetAnimation.reset();
     _animationPath.clear();
+    _targetPreviewError.clear();
     _playing = false;
     _poseWorld = _bindWorld;
+    _targetPoseWorld = _targetBindWorld;
     ++_poseRevision;
     ++_revision;
 }
@@ -1736,6 +1742,10 @@ void SkeletonEditorCore::play()
     const float resumeTime = time();
     _player.play(_animation.get());
     _player.setTime(std::min(resumeTime, duration()));
+    if (_targetAnimation != nullptr) {
+        _targetPlayer.play(_targetAnimation.get());
+        _targetPlayer.setTime(std::min(resumeTime, duration()));
+    }
     _playing = true;
 }
 
@@ -1743,6 +1753,7 @@ void SkeletonEditorCore::pause()
 {
     if (_animation == nullptr) return;
     _player.pause();
+    _targetPlayer.pause();
     _playing = false;
 }
 
@@ -1753,6 +1764,12 @@ void SkeletonEditorCore::stop()
     _player.play(_animation.get());
     _player.setTime(0.0f);
     _player.evaluate();
+    if (_targetAnimation != nullptr) {
+        _targetPlayer.stop();
+        _targetPlayer.play(_targetAnimation.get());
+        _targetPlayer.setTime(0.0f);
+        _targetPlayer.evaluate();
+    }
     _playing = false;
     rebuildPoseFromPlayer();
 }
@@ -1762,6 +1779,10 @@ void SkeletonEditorCore::tick(float dt)
     if (!_playing || _animation == nullptr || dt <= 0.0f) return;
     _player.tick(dt);
     _player.evaluate();
+    if (_targetAnimation != nullptr) {
+        _targetPlayer.setTime(_player.getTime());
+        _targetPlayer.evaluate();
+    }
     rebuildPoseFromPlayer();
 }
 
@@ -1770,6 +1791,10 @@ bool SkeletonEditorCore::setTime(float seconds)
     if (_animation == nullptr) return false;
     _player.setTime(std::clamp(seconds, 0.0f, duration()));
     _player.evaluate();
+    if (_targetAnimation != nullptr) {
+        _targetPlayer.setTime(_player.getTime());
+        _targetPlayer.evaluate();
+    }
     rebuildPoseFromPlayer();
     return true;
 }
@@ -1837,6 +1862,71 @@ void SkeletonEditorCore::rebuildBindPose()
     ++_poseRevision;
 }
 
+void SkeletonEditorCore::rebuildTargetBindPose()
+{
+    _targetBindWorld.assign(
+        _targetBones.size(), ayt::math::Float4x4::identity());
+    std::vector<std::uint8_t> state(_targetBones.size(), 0u);
+    const auto build = [&](auto&& self, std::size_t index) -> void {
+        if (state[index] == 2u) return;
+        if (state[index] == 1u) {
+            _targetBindWorld[index] = ayt::math::Float4x4::identity();
+            state[index] = 2u;
+            return;
+        }
+        state[index] = 1u;
+        const SkeletonBoneView& bone = _targetBones[index];
+        const ayt::math::Float4x4 local = ayt::math::Float4x4::fromTRS(
+            bone.localPosition, bone.localRotation, bone.localScale);
+        if (bone.parentIndex >= 0
+            && bone.parentIndex < static_cast<int>(_targetBones.size())) {
+            self(self, static_cast<std::size_t>(bone.parentIndex));
+            _targetBindWorld[index] =
+                _targetBindWorld[static_cast<std::size_t>(bone.parentIndex)]
+                * local;
+        } else {
+            _targetBindWorld[index] = local;
+        }
+        state[index] = 2u;
+    };
+    for (std::size_t index = 0; index < _targetBones.size(); ++index) {
+        build(build, index);
+    }
+    _targetPoseWorld = _targetBindWorld;
+}
+
+void SkeletonEditorCore::rebuildTargetPreviewAnimation()
+{
+    _targetPlayer.stop();
+    _targetAnimation.reset();
+    _targetPreviewError.clear();
+    _targetPoseWorld = _targetBindWorld;
+    if (_animation == nullptr || _skeleton == nullptr
+        || _targetSkeleton == nullptr
+        || current().profileKind != RigProfileKind::Retarget) return;
+
+    HumanoidRetargetDefinition definition;
+    definition.sourceMapping = current().mapping;
+    definition.targetMapping = current().targetMapping;
+    definition.corrections = current().corrections;
+    auto converted = std::make_shared<ayt::resource::Animation>();
+    const HumanoidRetargetResult result = retargetHumanoidAnimation(
+        *_skeleton, *_targetSkeleton, definition, *_animation, *converted);
+    if (!result) {
+        _targetPreviewError = humanoidRetargetErrorName(result.error);
+        if (!result.message.empty()) {
+            _targetPreviewError += ": " + result.message;
+        }
+        return;
+    }
+    _targetAnimation = std::move(converted);
+    _targetPlayer.setSkeleton(_targetSkeleton);
+    _targetPlayer.play(_targetAnimation.get());
+    _targetPlayer.setLoop(true);
+    _targetPlayer.setTime(_player.getTime());
+    _targetPlayer.evaluate();
+}
+
 void SkeletonEditorCore::rebuildPoseFromPlayer()
 {
     const ayt::math::Float4x4* world = _player.getBoneWorldMatrices();
@@ -1847,6 +1937,18 @@ void SkeletonEditorCore::rebuildPoseFromPlayer()
         return;
     }
     _poseWorld.assign(world, world + count);
+    if (_targetAnimation != nullptr) {
+        const ayt::math::Float4x4* targetWorld =
+            _targetPlayer.getBoneWorldMatrices();
+        const std::size_t targetCount = _targetPlayer.getBoneCount();
+        if (targetWorld != nullptr && targetCount == _targetBones.size()) {
+            _targetPoseWorld.assign(targetWorld, targetWorld + targetCount);
+        } else {
+            _targetPoseWorld = _targetBindWorld;
+        }
+    } else {
+        _targetPoseWorld = _targetBindWorld;
+    }
     ++_poseRevision;
 }
 
@@ -1949,44 +2051,59 @@ void SkeletonEditorCore::syncTargetSkeleton()
 {
     if (current().profileKind != RigProfileKind::Retarget
         || current().targetSkeletonPath.empty()) {
+        _targetPlayer.stop();
+        _targetAnimation.reset();
         _targetSkeleton.reset();
         _targetBones.clear();
+        _targetBindWorld.clear();
+        _targetPoseWorld.clear();
+        _targetPreviewError.clear();
         return;
     }
-    if (_targetSkeleton != nullptr
+    const bool alreadyLoaded = _targetSkeleton != nullptr
         && normalizedPath(_targetSkeleton->getPath())
-            == normalizedPath(current().targetSkeletonPath)) {
-        return;
-    }
-    auto target = std::make_shared<ayt::resource::Skeleton>();
-    if (!target->load(current().targetSkeletonPath)) {
-        _targetSkeleton.reset();
-        _targetBones.clear();
-        return;
-    }
-    _targetSkeleton = std::move(target);
-    _targetBones.clear();
-    const ayt::resource::Bone* bones = _targetSkeleton->getBones();
-    _targetBones.reserve(_targetSkeleton->getBoneCount());
-    for (std::size_t index = 0; index < _targetSkeleton->getBoneCount(); ++index) {
-        SkeletonBoneView view;
-        view.index = static_cast<int>(index);
-        view.parentIndex = bones[index].parentIndex;
-        view.name = bones[index].name;
-        view.localPosition = bones[index].localPosition;
-        view.localRotation = bones[index].localRotation;
-        view.localScale = bones[index].localScale;
-        view.inverseBindMatrix = bones[index].inverseBindMatrix;
-        int parent = view.parentIndex;
-        std::size_t guard = 0u;
-        while (parent >= 0
-            && parent < static_cast<int>(_targetSkeleton->getBoneCount())
-            && guard++ < _targetSkeleton->getBoneCount()) {
-            ++view.depth;
-            parent = bones[parent].parentIndex;
+            == normalizedPath(current().targetSkeletonPath);
+    if (!alreadyLoaded) {
+        auto target = std::make_shared<ayt::resource::Skeleton>();
+        if (!target->load(current().targetSkeletonPath)) {
+            _targetPlayer.stop();
+            _targetAnimation.reset();
+            _targetSkeleton.reset();
+            _targetBones.clear();
+            _targetBindWorld.clear();
+            _targetPoseWorld.clear();
+            _targetPreviewError = "Unable to load target skeleton.";
+            return;
         }
-        _targetBones.push_back(std::move(view));
+        _targetSkeleton = std::move(target);
+        _targetBones.clear();
+        const ayt::resource::Bone* bones = _targetSkeleton->getBones();
+        _targetBones.reserve(_targetSkeleton->getBoneCount());
+        for (std::size_t index = 0;
+             index < _targetSkeleton->getBoneCount(); ++index) {
+            SkeletonBoneView view;
+            view.index = static_cast<int>(index);
+            view.parentIndex = bones[index].parentIndex;
+            view.name = bones[index].name;
+            view.localPosition = bones[index].localPosition;
+            view.localRotation = bones[index].localRotation;
+            view.localScale = bones[index].localScale;
+            view.inverseBindMatrix = bones[index].inverseBindMatrix;
+            int parent = view.parentIndex;
+            std::size_t guard = 0u;
+            while (parent >= 0
+                && parent < static_cast<int>(_targetSkeleton->getBoneCount())
+                && guard++ < _targetSkeleton->getBoneCount()) {
+                ++view.depth;
+                parent = bones[parent].parentIndex;
+            }
+            _targetBones.push_back(std::move(view));
+        }
     }
+    _targetPlayer.setSkeleton(_targetSkeleton);
+    rebuildTargetBindPose();
+    rebuildTargetPreviewAnimation();
+    rebuildPoseFromPlayer();
 }
 
 void SkeletonEditorCore::loadBakeReceipt(Snapshot& snapshot) const

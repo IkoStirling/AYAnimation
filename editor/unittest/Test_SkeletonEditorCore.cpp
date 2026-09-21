@@ -353,7 +353,8 @@ TEST_CASE(skeleton_preflight_detects_source_change_after_mapping_save)
 TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
 {
     const auto sourcePath = writeSkeleton();
-    const auto targetPath = writeSkeleton(false, false, "target.ayskel");
+    const auto targetPath = writeSkeleton(
+        false, false, "target.ayskel", 2.0f);
     const auto profilePath = fixtureRoot() / "synthetic-retarget.ayrig";
     SkeletonEditorCore core;
     std::string error;
@@ -413,6 +414,18 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     CHECK(reopened.targetMapping().getBoundCount() == 17u);
     CHECK(reopened.retargetCorrection(HumanoidBone::Hips).axisCorrection
         .dot(correction.axisCorrection) > 0.999f);
+    CHECK(reopened.attachAnimation(writeAnimationForNode(
+        "hips", "retarget-preview.ayanm").string(), &error));
+    CHECK(reopened.setTime(1.0f));
+    CHECK(reopened.hasTargetPreview());
+    CHECK(reopened.targetPreviewError().empty());
+    CHECK(reopened.targetPoseWorldMatrices().size()
+        == reopened.targetBones().size());
+    const auto sourceHips = reopened.poseWorldMatrices()[2]
+        .transformPoint({0, 0, 0});
+    const auto targetHips = reopened.targetPoseWorldMatrices()[2]
+        .transformPoint({0, 0, 0});
+    CHECK(targetHips.y > sourceHips.y);
 
     auto legacyMinimal = encoded;
     legacyMinimal["target"].erase("roles");
