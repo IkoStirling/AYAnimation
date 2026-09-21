@@ -40,6 +40,7 @@ set(SRC_FILES
     # P4-3 (2026-08-30) — AYHumanoid 57-role contract, empty-by-default
     # mapping, required-role and semantic-ancestor hierarchy validation.
     AYTest_HumanoidSkeleton.cpp
+    AYTest_HumanoidRetarget.cpp
 )
 
 add_executable(${MODULE_NAME} ${SRC_FILES})

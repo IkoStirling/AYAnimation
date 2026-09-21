@@ -1283,9 +1283,26 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
                     static_cast<int>(spec.role);
             }
         }
-        add(SkeletonPreflightCode::RetargetSolverUnavailable,
-            "Retarget profile authoring is available, but pose retarget baking is not implemented yet.",
-            _mappingPath);
+        if (_targetSkeleton != nullptr) {
+            const HumanoidValidationResult targetValidation =
+                validateHumanoidSkeleton(*_targetSkeleton,
+                    current().targetMapping);
+            if (!targetValidation
+                && targetValidation.error
+                    != HumanoidValidationError::MissingRequiredBone
+                && targetValidation.error
+                    != HumanoidValidationError::SourceBoneIndexOutOfRange
+                && targetValidation.error
+                    != HumanoidValidationError::DuplicateSourceBone) {
+                add(SkeletonPreflightCode::TargetMappingInvalid,
+                    std::string(
+                        "Target humanoid mapping or hierarchy is invalid: ")
+                        + validationErrorName(targetValidation.error),
+                    current().targetSkeletonPath, targetValidation.role,
+                    targetValidation.relatedRole,
+                    targetValidation.sourceBoneIndex);
+            }
+        }
     }
 
     const auto inspectAnimation = [this, &add](
@@ -1296,12 +1313,56 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
             }
             const char* rawName = animation.getTrackNodeName(track);
             const std::string name = rawName != nullptr ? rawName : "";
-            if (name.empty() || _skeleton->findBone(name.c_str()) < 0) {
+            const int sourceBone = name.empty()
+                ? -1 : _skeleton->findBone(name.c_str());
+            if (sourceBone < 0) {
                 add(SkeletonPreflightCode::AnimationTrackBoneMissing,
                     "Animation track targets a bone missing from the source skeleton: "
                         + (name.empty() ? std::string("<empty>") : name),
                     path, HumanoidBone::Invalid, HumanoidBone::Invalid,
                     -1, static_cast<int>(track));
+                continue;
+            }
+            if (current().profileKind != RigProfileKind::Retarget) continue;
+            if (animation.getTrackBlendMode(track)
+                != ayt::resource::AnimBlendMode::Override) {
+                add(SkeletonPreflightCode::RetargetAdditiveTrackUnsupported,
+                    "Additive skeletal tracks require an explicit reference-pose bake.",
+                    path, HumanoidBone::Invalid, HumanoidBone::Invalid,
+                    sourceBone, static_cast<int>(track));
+                continue;
+            }
+            HumanoidBone role = HumanoidBone::Invalid;
+            for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+                if (current().mapping.getSourceBoneIndex(spec.role)
+                    == sourceBone) {
+                    role = spec.role;
+                    break;
+                }
+            }
+            if (role == HumanoidBone::Invalid
+                || !current().targetMapping.isBound(role)) {
+                add(SkeletonPreflightCode::RetargetAnimationBoneUnmapped,
+                    "Animated source bone has no mapped target role: " + name,
+                    path, role, HumanoidBone::Invalid, sourceBone,
+                    static_cast<int>(track));
+                continue;
+            }
+            const auto type = animation.getTrackType(track);
+            const char* rawProperty = animation.getTrackProperty(track);
+            const std::string property = rawProperty != nullptr
+                ? rawProperty : "";
+            const bool supported =
+                (type == ayt::resource::AnimTrackType::Quaternion
+                    && property == "rotation")
+                || (type == ayt::resource::AnimTrackType::Vector3
+                    && (property == "position" || property == "scale"));
+            if (!supported) {
+                add(SkeletonPreflightCode::RetargetTrackUnsupported,
+                    "Skeletal track has an unsupported property/type pair: "
+                        + property,
+                    path, role, HumanoidBone::Invalid, sourceBone,
+                    static_cast<int>(track));
             }
         }
     };
@@ -1345,6 +1406,9 @@ SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
     plan.platform = current().platform;
     plan.scopeTag = bakeScopeTag(current());
     plan.receiptPath = bakeReceiptPath(current());
+    plan.retargetDefinition.sourceMapping = current().mapping;
+    plan.retargetDefinition.targetMapping = current().targetMapping;
+    plan.retargetDefinition.corrections = current().corrections;
 
     std::vector<std::string> animations = animationPaths;
     if (!_animationPath.empty()) animations.push_back(_animationPath);
@@ -1469,6 +1533,30 @@ std::string SkeletonEditorCore::dryRunManifestJson(
             {"trackIndex", issue.trackIndex},
         });
     }
+    Json retargetRoles = Json::array();
+    if (plan.outputMode == "BakeToTarget") {
+        for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+            const std::size_t roleIndex = static_cast<std::size_t>(spec.role);
+            const int sourceIndex = plan.retargetDefinition.sourceMapping
+                .getSourceBoneIndex(spec.role);
+            const int targetIndex = plan.retargetDefinition.targetMapping
+                .getSourceBoneIndex(spec.role);
+            if (sourceIndex < 0 && targetIndex < 0) continue;
+            const auto& correction =
+                plan.retargetDefinition.corrections[roleIndex];
+            retargetRoles.push_back({
+                {"role", spec.canonicalName},
+                {"sourceIndex", sourceIndex},
+                {"targetIndex", targetIndex},
+                {"sourceReferenceOffset", quaternionJson(
+                    correction.sourceReferenceOffset)},
+                {"targetReferenceOffset", quaternionJson(
+                    correction.targetReferenceOffset)},
+                {"axisCorrection", quaternionJson(
+                    correction.axisCorrection)},
+            });
+        }
+    }
     const Json root = {
         {"type", "SkeletonBakeDryRun"},
         {"version", plan.schemaVersion},
@@ -1491,6 +1579,7 @@ std::string SkeletonEditorCore::dryRunManifestJson(
             {"warnings", plan.preflight.warningCount()},
         }},
         {"bones", std::move(operations)},
+        {"retargetRoles", std::move(retargetRoles)},
         {"dependencies", std::move(dependencies)},
         {"preflight", std::move(issues)},
     };
@@ -2180,7 +2269,11 @@ const char* SkeletonEditorCore::preflightCodeName(
     case SkeletonPreflightCode::TargetRequiredRoleMissing: return "targetRequiredRoleMissing";
     case SkeletonPreflightCode::TargetMappedBoneOutOfRange: return "targetMappedBoneOutOfRange";
     case SkeletonPreflightCode::DuplicateTargetMappedBone: return "duplicateTargetMappedBone";
+    case SkeletonPreflightCode::TargetMappingInvalid: return "targetMappingInvalid";
     case SkeletonPreflightCode::RetargetSolverUnavailable: return "retargetSolverUnavailable";
+    case SkeletonPreflightCode::RetargetAnimationBoneUnmapped: return "retargetAnimationBoneUnmapped";
+    case SkeletonPreflightCode::RetargetTrackUnsupported: return "retargetTrackUnsupported";
+    case SkeletonPreflightCode::RetargetAdditiveTrackUnsupported: return "retargetAdditiveTrackUnsupported";
     case SkeletonPreflightCode::AnimationUnreadable: return "animationUnreadable";
     case SkeletonPreflightCode::AnimationTrackBoneMissing: return "animationTrackBoneMissing";
     }

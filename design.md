@@ -2,11 +2,11 @@
 
 **Version:** 1.0.0（文档版本，不是模块或骨架版本）
 **Date:** 2026-09-18
-**Status:** Active — 现有运行时与骨骼作者核心第一版已实现；重定向/烘焙管线继续建设
+**Status:** Active — P4-4 离线人形重定向求解已实现；并排预览与完整引用安全烘焙继续建设
 **Owner:** AYAnimation
 **Authority:** AYHumanoid 角色表 / AYDocs 的标准骨架与资源管线规范
 
-> **2026-09-19 实现补充**：UI-free `AYAnimationEditorCore` 与 AYEditor 薄适配第一版已落地，覆盖源骨架检查、57 角色映射、校验/历史、双状态和动画姿势预览。规范作者格式按 [ADR-0011](../../AYDocs/adr/0011-unified-asset-type-registry-and-rig-profile-extension.md) 切换为 `.ayrig` `RigProfile`；Legacy `.aysmap` 只读并在保存时非破坏迁移，烘焙状态改从构建回执恢复。重定向求解与完整清理烘焙仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) 推进。
+> **2026-09-21 实现补充**：UI-free `HumanoidRetarget` 已同时提供完整局部姿势和离线 clip 的 source→target 转换，并接入 `SkeletonBakeJob` 的 `BakeToTarget`；目标 Bind Pose、逐角色源/目标参考坐标、骨轴修正、身高比例根位移与缩放差值均进入实际输出。未映射动画骨、未知 TRS 组合和加法轨道显式失败。源目标并排预览与完整引用安全烘焙仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) 推进。
 
 > **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
@@ -1378,7 +1378,7 @@ AnimationStateMachine
 
 ---
 
-## 7. AYHumanoid 语义骨架与重定向（P4-3 基线已 ship，求解器未启动）
+## 7. AYHumanoid 语义骨架与重定向（P4-4 离线求解已 ship）
 
 ### 7.1 选择结论与边界
 
@@ -1391,13 +1391,13 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 - [H-Anim](https://www.web3d.org/documents/specifications/19774/V1.0/HAnim/concepts.html) 是正式的 ISO/Web3D 人体结构参考，但其关节/分段模型不是 MMD、Mixamo、VRM 资产共同使用的最小运行时层级；本阶段不直接采用其完整层级。
 - MMD 与 Mixamo 是重要**来源适配器**，不是 AYAnimation 的权威层级。运行时只认识语义角色和源骨索引，不依赖 PMX/VMD 或 Mixamo 命名。
 
-本刀只交付角色表、空映射容器和结构校验；动画 retarget 求解、比例补偿、rest-pose 旋转补偿、root-motion 提取与离线烘焙仍 deferred。
+P4-3 交付角色表、空映射容器和结构校验；P4-4 已追加 UI-free 局部姿势/clip 求解、参考坐标与骨轴补偿、身高比例根位移以及 `BakeToTarget` 离线输出。根运动提取、分链比例/Twist、加法 clip 显式参考姿势烘焙仍 deferred。
 
 ### 7.2 规范入口与参考资产
 
 骨架角色、层级、参考尺寸/绑定、根运动、动画兼容、模型与多纹理条件统一维护于 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)。该文档区分现有通用语义的 15 个必需角色与未来参考骨架的完整 57 角色，不改变当前可选角色和祖先校验语义。
 
-参考骨架将冻结精确绑定数据，模型外观与渲染 fixture 独立版本化；同名骨骼不保证动画可直接共享。低模资产交付步骤见 [实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。标准资产及重定向/根运动提取仍待实施，本节后续不变量描述已实现代码。
+参考骨架将冻结精确绑定数据，模型外观与渲染 fixture 独立版本化；同名骨骼不保证动画可直接共享。低模资产交付步骤见 [实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。标准资产和根运动提取仍待实施；通用离线重定向数学不依赖该资产。
 
 ### 7.3 映射与层级校验契约
 
@@ -1429,8 +1429,7 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 
 编辑器允许保留原始骨架；导入、手工和模板设置保存可绑定骨架的作者配置，不立即改写源资源。
 `HumanoidBoneMap` 仍是已实现的运行时语义映射容器；新增持久化 SkeletonMapping 与 RetargetProfile
-由 `.ayrig` `RigProfile(kind=mapping)` 承载；Legacy `.aysmap` 只读并迁移，不能用同名映射替代姿态求解。后续重定向核心须处理参考姿势/骨轴和明确的
-源/目标绑定，输出可验证的目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图。
+由 `.ayrig` `RigProfile(kind=mapping/retarget)` 承载；Legacy `.aysmap` 只读并迁移，不能用同名映射替代姿态求解。`HumanoidRetarget` 已按明确的源/目标绑定和逐角色参考姿势/骨轴修正输出目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图；编辑器预览和离线烘焙必须复用它。
 
 AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及后续 SKA-11/12 的根运动、
 分链比例和 Twist 策略。资源 IO、全引用清理、构建摘要与发布门禁归 AYResource/离线编排层；
@@ -1439,8 +1438,7 @@ AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及�
 语义标准化保留源骨长/绑定，不能承诺标准动画库直接兼容；精确目标烘焙必须绑定目标版本/摘要，
 若用于角色 mesh，还须验证蒙皮适配。根轨迹保留与运行时提取/消费分开验收；不允许同时施加实体位移。
 
-规划验收：同骨架恒等、不同参考姿势、非标准原始名称、可选/中间骨、根保留、目标变更失效、
-数值有限性与规定误差预算。测试与首次完整闭环为 SKA-09，分项编码时持续补充，当前未执行新增功能测试。
+已覆盖同/异比例参考骨架、非标准目标骨名、参考姿势/骨轴修正、目标局部旋转、根位移比例、clip 元数据和未映射轨道拒绝；目标变更失效、完整真实资产与规定误差预算仍归 SKA-09 闭环。
 
 ---
 
@@ -1468,18 +1466,21 @@ AYAnimation/
 │   └── AYAnimation/
 │       ├── KeySampler.h            # ✅ AN-01 ship: free functions sampleTrack{Vector3,Quaternion,Float}
 │       ├── AnimationPlayer.h       # ✅ AN-01 ship: 时间管理 + evaluate 三阶段
-│       └── HumanoidSkeleton.h      # ✅ P4-3: 57 roles + 空映射容器 + 校验 API
+│       ├── HumanoidSkeleton.h      # ✅ P4-3: 57 roles + 空映射容器 + 校验 API
+│       └── HumanoidRetarget.h      # ✅ P4-4: source→target pose/clip API
 │
 ├── src/
 │   ├── KeySampler.cpp              # ✅ AN-01 ship: locateSegment + dot<0 slerp 选优 + 单调性 assert
 │   ├── AnimationPlayer.cpp         # ✅ AN-01 ship: 消费 ISkeleton/IAnimation + ticks→s 预转换
-│   └── HumanoidSkeleton.cpp        # ✅ P4-3: 角色表与层级校验
+│   ├── HumanoidSkeleton.cpp        # ✅ P4-3: 角色表与层级校验
+│   └── HumanoidRetarget.cpp        # ✅ P4-4: 参考坐标、骨轴与离线 clip 转换
 │
 └── unittest/
     ├── main.cpp
     ├── AYTest_KeySampler.cpp       # 5+ case: Vec3 lerp / Quat slerp 短弧 / Quat 单 key / Float lerp / dot<0 选优 / 单调性
     ├── AYTest_AnimationPlayer.cpp  # 6+ case: rest pose / position lerp / parent-child 组合 / missing track / loop wrap / skin matrix / Float track sink / topology assert / IBM zero safe
-    └── AYTest_HumanoidSkeleton.cpp # ✅ P4-3: 10 cases / 40 assertions
+    ├── AYTest_HumanoidSkeleton.cpp # ✅ P4-3: 10 cases / 40 assertions
+    └── AYTest_HumanoidRetarget.cpp # ✅ P4-4: pose/axis/scale/clip/error tests
 ```
 
 **已删除（2026-07-26 P0 修复）**：
@@ -1555,10 +1556,11 @@ AYAnimation/
 - [x] **P3.2 L3 子状态机**（2026-08-06）─ `StateMachine._children` (vector<unique_ptr<StateMachine>>) + `_currentChildIndex` + `State.isSubMachine/subMachineIndex` + `StateMachine` move-only (copy deleted, _children 不可拷贝) + `addSubMachine/getActiveSubMachine/getActiveLeafStateName` API + 递归 `setTrigger/setParam` (INV-28) + child-first transition fallback (INV-29) + `getActiveLeafStateName` 深度≤2 (INV-30) + `_currentChildIndex` 在 fireTransition instant cut + cross-fade complete 双路径同步更新 (INV-31) + sub-machine entry state clipPath 字段忽略 (INV-27) + ECS bridge 兑现 dt plumbing (`sm.update(0.0f)` → `sm.update(dt)`) + `AnimationStateMachineComponent.activeSubState` read-back + sub-machine entry 不调 `player.play()` (child SM drives) + 12 AYAnimation unit tests + 4 AYEntity ECS integration tests；0 regression 3-run stable (AYAnimation 600/600 + AYEntity 385/385 + AYResource 1044/1044 × 3)；详见 §4.15 + §13 row 20c + §11 P3.2 row
 - [ ] L4 MotionMatching 风格状态机
 
-### Phase 4: IK + 重定向 ── ✅ P4-1 + P4-2 ship, 余项排队
+### Phase 4: IK + 重定向 ── ✅ P4-1～P4-4 部分 ship, 余项排队
 
 - [x] **P4-1 TwoBone IK**（2026-08-10）─ `TwoBoneSolver`（纯数学解析解：余弦定理 + fromToRotation + 保侧候选 + 世界空间 slerp 权重混合；12 步 + eps=1e-5；退化/NaN/零长骨/不可达 → 原样返回或拉直，永不 NaN）+ `AnimationPlayer` Phase 2.5 集成（IKChainSpec 配置 + kMaxIKChains=8 + setIKChain/clearIKChain/clearAllIKChains/setIKChainTarget/setIKChainWeight/getIKChain/getIKChainCount/isIKChainActive/getIKChainGeneration 9 API + 稀疏 vector<IKChain> 存 resolved index + eager resolve（bind 时）+ setSkeleton 重解析 INV-71 + weight≤0 零成本跳过 INV-72 + 只写 root/mid 的 _localRot post-mask pre-Phase-3 INV-73 + accumulateWorldFrom(start) 子树重算 + writeLocalRot helper + **resolve 用 findBone 直查不用 AssetBoneCache**（低频路径 + 规避指针复用陈旧命中，P5 暴露）+ **0 ECS bridge change**（留 generation 钩子））+ 10 solver unit tests（S1-S10）+ 12 player 集成 tests（P1-P12）；0 regression 3-run stable (AYAnimation **2999/2999** + AYEntity 421/421 + AYResource 1039/1039 × 3) + release 2999/2999 × 3 全绿；详见 §4.25 + §6 + §14.3
 - [x] **P4-2 FABRIK + CCD 迭代 IK**（2026-08-11）─ `FabrikSolver`（backward 锚 tip 拉回 + forward 锁根推出，默认 4 迭代 clamp ≤100，段长精确保持）+ `CcdSolver`（自末端向根逐关节绕自身锚点旋转子链，默认 10 迭代 clamp ≤100，共线不可拉直不对称性文档化）+ 共享 `IterativeIKResult` + `kMaxIKChainBones=32` 固定数组零每帧分配 + `IKSolverType` 枚举（TwoBone 默认 back-compat）+ `IKChainSpec` 末尾追加 `type/iterations`（聚合初始化兼容）+ 私有 `IKChain` 三 int32 → `std::vector<int32_t> path` + **resolveIKChains 重写**（TwoBone 分支逐位保留；迭代型 tip→root 单 walk 自动推导全路径，midBone 忽略；名字 miss/非后代/脱顶/r==t/超 32 → 禁用）+ **Phase 2.5 统一 `applyIKChain()` pass**（快照 → 按 type 分派 → N-1 骨 world→local conjugate 回写 → accumulateWorldFrom(path[0])；TwoBone 分支逐位等价 P4-1）+ **weight = 目标点插值**（非旋转 slerp；可达时 w<1 tip 精确落插值点，与 TwoBone 语义差异文档化）+ 9 public API 零改动 + 0 ECS bridge change + **INV-75**（weight 双门 + 目标空间语义）/ **INV-76**（路径自动推导 + 禁用规则）/ **INV-77**（N-1 骨统一写回泛化 INV-73）+ 22 solver unit tests（F1-F11/C1-C11）+ 13 player 集成 tests（I1-I13 含三型共存重钉 P7 锚点教训）+ 0 regression 3-run stable (AYAnimation **3161/3161** × 3 debug + release 3161/3161 × 3)；详见 §4.26 + §6 + §14.3
+- [x] **P4-4 / SKA-06 离线人形重定向**（2026-09-21）─ `HumanoidRetarget` 校验双映射并将 source 局部 TRS 的参考姿势 delta 转入目标 Bind Pose；逐角色 source/target reference offset 与 axis correction 作为坐标基变换，rest→rest 恒成立；根/hips 平移按 hips-head 参考高度比缩放，scale 传递相对 rest 比例；同一核心转换完整 pose 与 override clip，保留 Float/Notify/时间轴并输出真实目标骨名；`SkeletonBakeJob` 的 `BakeToTarget` 写目标骨架和重定向 clip；未映射动画骨、未知 TRS 与 Additive 轨道在 preflight/solver 显式失败。新增 4 solver cases，AYAnimation 3219/3219；作者核心含真实异比例 bake 集成共 299/299。
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] Pole vector / 局部空间目标 / per-chain mask 门控
@@ -4895,6 +4897,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 | 2026-09-19 | `AYAnimationEditorCore` 第一版 ship：源 `.ayskel` 只读检查、绑定 `.aysmap`、57 角色手工/规范名模板映射、校验/撤销/保存、适配与烘焙状态、`.ayanm` 姿势预览；AYEditor 仅通过薄适配消费。 |
 | 2026-09-19 | Rig Profile 迁移：writer 只写 `.ayrig` `RigProfile` v1，角色同时持久化层级路径和迁移索引；reader 兼容 `.aysmap` v1 并非破坏迁移；作者文件不再保存权威 bakeState，状态从 `.bake-result.json` 及输出恢复。 |
 | 2026-09-18 | **后续设计，非实现完成**：新增 §7.5 与 Phase 4 的 SKA-01～16 导航；统一源保留、映射/profile 资源、编辑器双标志、派生烘焙清理和发布门禁，区分 P0/P1/P2 与验收依赖；不修改现有 INV-78～81 或测试历史。 |
+| 2026-09-21 | **P4-4 / SKA-06 离线人形重定向 ship**：新增 UI-free `HumanoidRetarget` 完整 pose/clip 转换，参考坐标/骨轴/目标 Bind Pose/身高比例根位移/scale delta 进入真实求解；`BakeToTarget` 输出目标骨架和目标轨道；unsupported/unmapped 数据显式失败；AYAnimation 3219/3219、作者核心 299/299。 |
 | 2026-08-30 | **P4-3 AYHumanoid 语义骨架基线 ship**：§7 确立一套跨性别/年龄语义契约；VRM 1.0 的 55 humanoid roles + AY `SceneRoot`/`MotionRoot`；`HumanoidBoneMap` 默认 57 项空映射；`validateHumanoidSkeleton()` 校验索引、唯一性、15 required roles、语义祖先链、非法父索引与循环；源中间辅助骨原样保留；MMD/Mixamo 内置映射刻意留空等待真实 fixture；INV-78..81 NEW；10 cases / 40 assertions，AYAnimation debug 3201/3201 × 3 stable。 |
 | 2026-07-26 | P0–P1.4 多轮 SHIP；工业对照表初版 |
 | 2026-07-27 | **设计审计补丁**：状态抬头；§4.3.1 Hold≠末帧 clamp；§4.7 Override 忽略 weight 陷阱；**§4.8 P1.5 Player SHIP 对齐代码**；§11/§13 勾选与统计修正；Montage Slot 与 AdditiveSlot 对齐约束 |

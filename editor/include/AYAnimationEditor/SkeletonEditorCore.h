@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimation/HumanoidRetarget.h>
 #include <AYAnimation/HumanoidSkeleton.h>
 #include <AYMath/MathTypes.h>
 
@@ -62,7 +63,11 @@ enum class SkeletonPreflightCode : std::uint8_t {
     TargetRequiredRoleMissing,
     TargetMappedBoneOutOfRange,
     DuplicateTargetMappedBone,
+    TargetMappingInvalid,
     RetargetSolverUnavailable,
+    RetargetAnimationBoneUnmapped,
+    RetargetTrackUnsupported,
+    RetargetAdditiveTrackUnsupported,
     AnimationUnreadable,
     AnimationTrackBoneMissing,
 };
@@ -131,6 +136,7 @@ struct SkeletonBakeDryRunPlan {
     std::string platform;
     std::string scopeTag;
     std::string receiptPath;
+    HumanoidRetargetDefinition retargetDefinition;
     SkeletonPreflightReport preflight;
     std::vector<SkeletonBakeBoneOperation> boneOperations;
     std::vector<SkeletonBakeDependency> dependencies;
@@ -186,14 +192,7 @@ struct SkeletonBoneView {
     ayt::math::Float4x4 inverseBindMatrix = ayt::math::Float4x4::identity();
 };
 
-struct RetargetBoneCorrection {
-    ayt::math::FQuaternion sourceReferenceOffset =
-        ayt::math::FQuaternion::identity();
-    ayt::math::FQuaternion targetReferenceOffset =
-        ayt::math::FQuaternion::identity();
-    ayt::math::FQuaternion axisCorrection =
-        ayt::math::FQuaternion::identity();
-};
+using RetargetBoneCorrection = HumanoidRetargetBoneCorrection;
 
 // UI-free authoring model shared by AYEditor and future command-line tools.
 // The source .ayskel is never modified: authored mapping data is stored in a

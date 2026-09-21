@@ -42,6 +42,8 @@ set(SRC_FILES
     # P4-3 (2026-08-30) — AYHumanoid semantic role table, deliberately
     # empty source mapping container, and source-hierarchy validator.
     src/HumanoidSkeleton.cpp
+    # P4-4 — UI-free source→target humanoid local-pose and clip conversion.
+    src/HumanoidRetarget.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${SRC_FILES})
@@ -73,4 +75,4 @@ if(AY_BUILD_BENCHMARKS)
     add_subdirectory(benchmark)
 endif()
 
-message(STATUS "AYAnimation v0.1.0 (P4-3 AYHumanoid semantic skeleton) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+message(STATUS "AYAnimation v0.1.0 (P4-4 AYHumanoid offline retarget) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

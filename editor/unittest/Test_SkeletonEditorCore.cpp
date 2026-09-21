@@ -29,7 +29,8 @@ std::filesystem::path fixtureRoot()
 
 std::filesystem::path writeSkeleton(bool addHelper = false,
                                     bool renameHead = false,
-                                    const char* fileName = "synthetic.ayskel")
+                                    const char* fileName = "synthetic.ayskel",
+                                    float size = 1.0f)
 {
     Skeleton skeleton;
     const struct BoneDef { const char* name; int parent; float x; float y; } defs[] = {
@@ -47,7 +48,7 @@ std::filesystem::path writeSkeleton(bool addHelper = false,
         Bone bone;
         bone.name = def.name;
         bone.parentIndex = def.parent;
-        bone.localPosition = {def.x, def.y, 0.0f};
+        bone.localPosition = {def.x * size, def.y * size, 0.0f};
         bone.localRotation = ayt::math::FQuaternion::identity();
         bone.localScale = {1, 1, 1};
         bone.inverseBindMatrix = ayt::math::Float4x4::identity();
@@ -425,14 +426,17 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     CHECK(migrated.targetMapping().getBoundCount() == 17u);
 
     const auto plan = reopened.dryRunBake();
-    CHECK_FALSE(plan.canBake());
+    CHECK(plan.canBake());
     CHECK_FALSE(plan.scopeTag.empty());
     CHECK(plan.receiptPath.find(plan.scopeTag) != std::string::npos);
-    CHECK(std::any_of(plan.preflight.issues.begin(), plan.preflight.issues.end(),
+    CHECK_FALSE(std::any_of(plan.preflight.issues.begin(), plan.preflight.issues.end(),
         [](const SkeletonPreflightIssue& issue) {
             return issue.code
                 == SkeletonPreflightCode::RetargetSolverUnavailable;
         }));
+    const auto manifest = nlohmann::json::parse(
+        SkeletonEditorCore::dryRunManifestJson(plan));
+    CHECK(manifest["retargetRoles"].size() == 17u);
     CHECK(reopened.clearRetarget());
     CHECK(reopened.profileKind() == RigProfileKind::Mapping);
     CHECK(reopened.targetSkeletonPath().empty());
@@ -553,6 +557,59 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     SkeletonEditorCore stale;
     CHECK(stale.open(skeletonPath.string(), &error));
     CHECK(stale.status().bake == SkeletonBakeState::Stale);
+}
+
+TEST_CASE(skeleton_bake_job_retargets_animation_to_target_skeleton)
+{
+    const auto sourcePath = writeSkeleton();
+    const auto targetPath = writeSkeleton(
+        false, false, "large-target.ayskel", 2.0f);
+    const auto animationPath = writeAnimationForNode(
+        "hips", "retarget_motion.ayanm");
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(sourcePath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    CHECK(core.configureRetarget(targetPath.string(), "test", &error));
+    const auto plan = core.dryRunBake({animationPath.string()});
+    CHECK(plan.canBake());
+
+    SkeletonBakeJob job;
+    const auto output = fixtureRoot() / "BakedRetarget";
+    std::error_code ignored;
+    std::filesystem::remove_all(output, ignored);
+    job.start(plan, output.string());
+    SkeletonBakeJobSnapshot snapshot;
+    for (int attempt = 0; attempt < 400; ++attempt) {
+        snapshot = job.poll();
+        if (snapshot.finished()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(snapshot.state == SkeletonBakeJobState::Succeeded);
+    const auto animationOutput = std::find_if(
+        snapshot.outputPaths.begin(), snapshot.outputPaths.end(),
+        [](const std::string& path) {
+            return std::filesystem::path(path).extension() == ".ayanm";
+        });
+    const auto skeletonOutput = std::find_if(
+        snapshot.outputPaths.begin(), snapshot.outputPaths.end(),
+        [](const std::string& path) {
+            return std::filesystem::path(path).extension() == ".ayskel";
+        });
+    CHECK(animationOutput != snapshot.outputPaths.end());
+    CHECK(skeletonOutput != snapshot.outputPaths.end());
+    Animation animation;
+    if (animationOutput != snapshot.outputPaths.end()) {
+        const auto bytes = ayt::io::File::readAllBytes(*animationOutput);
+        CHECK(animation.loadFromBinary(bytes.data(), bytes.size()));
+        CHECK(std::string(animation.getTrackNodeName(0)) == "hips");
+        CHECK_FLOAT_EQ(4.0f, animation.getTrackValues(0)[4], 1.0e-4f);
+    }
+    Skeleton skeleton;
+    if (skeletonOutput != snapshot.outputPaths.end()) {
+        CHECK(skeleton.load(*skeletonOutput));
+        CHECK_FLOAT_EQ(2.0f, skeleton.getLocalPositions()[2].y, 1.0e-4f);
+    }
 }
 
 TEST_CASE(skeleton_bake_job_rejects_blocked_and_isolates_generations)

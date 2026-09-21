@@ -1,5 +1,7 @@
 #include <AYAnimationEditor/SkeletonBakeJob.h>
 
+#include <AYAnimation/HumanoidRetarget.h>
+
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYResource/assetsImpl/Skeleton.h>
@@ -144,6 +146,39 @@ bool rewriteAnimation(const std::string& sourcePath,
     return true;
 }
 
+bool rewriteRetargetAnimation(const std::string& sourcePath,
+                              const ayt::resource::Skeleton& sourceSkeleton,
+                              const ayt::resource::Skeleton& targetSkeleton,
+                              const HumanoidRetargetDefinition& definition,
+                              std::vector<ayt::math::UInt8>& output,
+                              std::string& error)
+{
+    ayt::resource::Animation source;
+    const std::vector<ayt::math::UInt8> sourceBytes =
+        ayt::io::File::readAllBytes(sourcePath);
+    if (sourceBytes.empty()
+        || !source.loadFromBinary(sourceBytes.data(), sourceBytes.size())) {
+        error = "Unable to load animation dependency: " + sourcePath;
+        return false;
+    }
+    ayt::resource::Animation baked;
+    const HumanoidRetargetResult result = retargetHumanoidAnimation(
+        sourceSkeleton, targetSkeleton, definition, source, baked);
+    if (!result) {
+        error = "Unable to retarget animation dependency (";
+        error += humanoidRetargetErrorName(result.error);
+        error += "): " + sourcePath;
+        if (!result.message.empty()) error += " - " + result.message;
+        return false;
+    }
+    baked.setGuid(source.getGuid());
+    if (!baked.saveToBinary(output)) {
+        error = "Unable to serialize retargeted animation: " + sourcePath;
+        return false;
+    }
+    return true;
+}
+
 void executeBake(const std::shared_ptr<RunState>& run,
                  SkeletonBakeDryRunPlan plan,
                  std::string outputDirectory)
@@ -177,46 +212,71 @@ void executeBake(const std::shared_ptr<RunState>& run,
         fail(run, "Unable to load source skeleton: " + plan.skeletonPath);
         return;
     }
-    if (plan.boneOperations.size() != source.getBoneCount()) {
-        fail(run, "Bake plan no longer matches the source skeleton bone count.");
-        return;
-    }
-    std::vector<int> remap(source.getBoneCount(), -1);
-    int nextIndex = 0;
-    for (const auto& operation : plan.boneOperations) {
-        if (operation.sourceBoneIndex < 0
-            || operation.sourceBoneIndex >= static_cast<int>(source.getBoneCount())) {
-            fail(run, "Bake plan contains an invalid source bone index.");
+    const bool retarget = plan.outputMode == "BakeToTarget";
+    ayt::resource::Skeleton target;
+    std::unordered_map<std::string, const SkeletonBakeBoneOperation*> byName;
+    std::vector<ayt::math::UInt8> skeletonBytes;
+    if (retarget) {
+        if (!target.load(plan.targetSkeletonPath)) {
+            fail(run, "Unable to load target skeleton: "
+                + plan.targetSkeletonPath);
             return;
         }
-        if (operation.action != SkeletonBakeBoneAction::Delete) {
-            remap[static_cast<std::size_t>(operation.sourceBoneIndex)] = nextIndex++;
+        const HumanoidRetargetResult validation = validateHumanoidRetarget(
+            source, target, plan.retargetDefinition);
+        if (!validation) {
+            fail(run, "Retarget definition is invalid: "
+                + std::string(humanoidRetargetErrorName(validation.error)));
+            return;
         }
-    }
-    ayt::resource::Skeleton baked;
-    baked.setGuid(source.getGuid());
-    const ayt::resource::Bone* sourceBones = source.getBones();
-    std::unordered_map<std::string, const SkeletonBakeBoneOperation*> byName;
-    for (const auto& operation : plan.boneOperations) {
-        byName.emplace(operation.sourceName, &operation);
-        if (operation.action == SkeletonBakeBoneAction::Delete) continue;
-        ayt::resource::Bone bone = sourceBones[operation.sourceBoneIndex];
-        if (!operation.targetName.empty()) bone.name = operation.targetName;
-        int parent = bone.parentIndex;
-        std::size_t guard = 0u;
-        while (parent >= 0 && parent < static_cast<int>(remap.size())
-               && remap[static_cast<std::size_t>(parent)] < 0
-               && guard++ < remap.size()) {
-            parent = sourceBones[parent].parentIndex;
+        if (!target.saveToBinary(skeletonBytes)) {
+            fail(run, "Unable to serialize target skeleton output.");
+            return;
         }
-        bone.parentIndex = parent >= 0 && parent < static_cast<int>(remap.size())
-            ? remap[static_cast<std::size_t>(parent)] : -1;
-        baked.addBone(bone);
-    }
-    std::vector<ayt::math::UInt8> skeletonBytes;
-    if (!baked.saveToBinary(skeletonBytes)) {
-        fail(run, "Unable to serialize baked skeleton.");
-        return;
+    } else {
+        if (plan.boneOperations.size() != source.getBoneCount()) {
+            fail(run,
+                "Bake plan no longer matches the source skeleton bone count.");
+            return;
+        }
+        std::vector<int> remap(source.getBoneCount(), -1);
+        int nextIndex = 0;
+        for (const auto& operation : plan.boneOperations) {
+            if (operation.sourceBoneIndex < 0
+                || operation.sourceBoneIndex
+                    >= static_cast<int>(source.getBoneCount())) {
+                fail(run, "Bake plan contains an invalid source bone index.");
+                return;
+            }
+            if (operation.action != SkeletonBakeBoneAction::Delete) {
+                remap[static_cast<std::size_t>(operation.sourceBoneIndex)] =
+                    nextIndex++;
+            }
+        }
+        ayt::resource::Skeleton baked;
+        baked.setGuid(source.getGuid());
+        const ayt::resource::Bone* sourceBones = source.getBones();
+        for (const auto& operation : plan.boneOperations) {
+            byName.emplace(operation.sourceName, &operation);
+            if (operation.action == SkeletonBakeBoneAction::Delete) continue;
+            ayt::resource::Bone bone = sourceBones[operation.sourceBoneIndex];
+            if (!operation.targetName.empty()) bone.name = operation.targetName;
+            int parent = bone.parentIndex;
+            std::size_t guard = 0u;
+            while (parent >= 0 && parent < static_cast<int>(remap.size())
+                   && remap[static_cast<std::size_t>(parent)] < 0
+                   && guard++ < remap.size()) {
+                parent = sourceBones[parent].parentIndex;
+            }
+            bone.parentIndex = parent >= 0
+                && parent < static_cast<int>(remap.size())
+                ? remap[static_cast<std::size_t>(parent)] : -1;
+            baked.addBone(bone);
+        }
+        if (!baked.saveToBinary(skeletonBytes)) {
+            fail(run, "Unable to serialize baked skeleton.");
+            return;
+        }
     }
     if (run->cancelled.load()) return;
     run->progress.store(0.4f);
@@ -252,7 +312,11 @@ void executeBake(const std::shared_ptr<RunState>& run,
         }
         std::vector<ayt::math::UInt8> animationBytes;
         std::string error;
-        if (!rewriteAnimation(dependency.path, byName, animationBytes, error)) {
+        const bool rewritten = retarget
+            ? rewriteRetargetAnimation(dependency.path, source, target,
+                plan.retargetDefinition, animationBytes, error)
+            : rewriteAnimation(dependency.path, byName, animationBytes, error);
+        if (!rewritten) {
             std::vector<std::filesystem::path> temps;
             for (const auto& file : files) temps.push_back(file.first);
             cleanupFiles(temps);
