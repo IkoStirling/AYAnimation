@@ -126,6 +126,12 @@ struct TrackSlice {
     std::vector<ayt::math::FVector3>    vec3Values;   // packed, aligned
     std::vector<ayt::math::FQuaternion> quatValues;   // packed, aligned
     std::vector<float>                  scalarValues; // flat
+    std::vector<ayt::math::FVector3>    vec3InTangents;
+    std::vector<ayt::math::FVector3>    vec3OutTangents;
+    std::vector<ayt::math::FQuaternion> quatInTangents;
+    std::vector<ayt::math::FQuaternion> quatOutTangents;
+    std::vector<float>                  scalarInTangents;
+    std::vector<float>                  scalarOutTangents;
     std::string                         nodeName;
     std::string                         property;
     ayt::resource::AnimTrackType        type     = ayt::resource::AnimTrackType::Vector3;
@@ -133,6 +139,7 @@ struct TrackSlice {
     // never calls back into the IAnimation interface (hot-path).
     // Default Override → byte-identical to pre-P1.2 behavior.
     ayt::resource::AnimBlendMode        blendMode = ayt::resource::AnimBlendMode::Override;
+    ayt::resource::AnimInterpolation    interpolation = ayt::resource::AnimInterpolation::Linear;
     std::vector<float>                  timesSec;
     // P1.4 — bone index cache. Sentinel INT32_MIN ("unresolved"); 0+
     // ("resolved to a real bone"); -1 ("looked up, name not found in

@@ -23,18 +23,30 @@ void sampleTrackVector3(const ayt::math::FVector3* values,
                         size_t                     keyCount,
                         const std::vector<float>&  times,
                         float                      t,
-                        ayt::math::FVector3&       out);
+                        ayt::math::FVector3&       out,
+                        ayt::resource::AnimInterpolation interpolation =
+                            ayt::resource::AnimInterpolation::Linear,
+                        const ayt::math::FVector3* inTangents = nullptr,
+                        const ayt::math::FVector3* outTangents = nullptr);
 
 void sampleTrackQuaternion(const ayt::math::FQuaternion* values,
                            size_t                       keyCount,
                            const std::vector<float>&    times,
                            float                        t,
-                           ayt::math::FQuaternion&      out);
+                           ayt::math::FQuaternion&      out,
+                           ayt::resource::AnimInterpolation interpolation =
+                               ayt::resource::AnimInterpolation::Linear,
+                           const ayt::math::FQuaternion* inTangents = nullptr,
+                           const ayt::math::FQuaternion* outTangents = nullptr);
 
 void sampleTrackFloat(const float*             values,
                       size_t                   keyCount,
                       const std::vector<float>& times,
                       float                    t,
-                      float&                   out);
+                      float&                   out,
+                      ayt::resource::AnimInterpolation interpolation =
+                          ayt::resource::AnimInterpolation::Linear,
+                      const float* inTangents = nullptr,
+                      const float* outTangents = nullptr);
 
 } // namespace ayt::anim

@@ -133,6 +133,7 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
                              : std::string();
         slice.type     = src->getTrackType(ti);
         slice.blendMode = src->getTrackBlendMode(ti);
+        slice.interpolation = src->getTrackInterpolation(ti);
         const uint32_t keyCount = src->getTrackKeyframeCount(ti);
         const float* rawTimes = src->getTrackTimes(ti);
         slice.timesSec.assign(keyCount, 0.0f);
@@ -140,6 +141,8 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
             slice.timesSec[k] = rawTimes[k] * invTps;
         }
         const float* flat = src->getTrackFloatValues(ti);
+        const float* flatIn = src->getTrackInTangents(ti);
+        const float* flatOut = src->getTrackOutTangents(ti);
         switch (slice.type) {
             case ayt::resource::AnimTrackType::Vector3: {
                 if (flat != nullptr && keyCount > 0) {
@@ -149,6 +152,14 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
                             flat[k * 3 + 0],
                             flat[k * 3 + 1],
                             flat[k * 3 + 2]);
+                    }
+                }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.vec3InTangents.resize(keyCount);
+                    slice.vec3OutTangents.resize(keyCount);
+                    for (uint32_t k = 0; k < keyCount; ++k) {
+                        slice.vec3InTangents[k] = {flatIn[k * 3], flatIn[k * 3 + 1], flatIn[k * 3 + 2]};
+                        slice.vec3OutTangents[k] = {flatOut[k * 3], flatOut[k * 3 + 1], flatOut[k * 3 + 2]};
                     }
                 }
                 break;
@@ -164,11 +175,23 @@ void AnimationPlayer::rebuildSlotTracks(AdditiveSlot& slot,
                             flat[k * 4 + 3]);
                     }
                 }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.quatInTangents.resize(keyCount);
+                    slice.quatOutTangents.resize(keyCount);
+                    for (uint32_t k = 0; k < keyCount; ++k) {
+                        slice.quatInTangents[k] = {flatIn[k * 4], flatIn[k * 4 + 1], flatIn[k * 4 + 2], flatIn[k * 4 + 3]};
+                        slice.quatOutTangents[k] = {flatOut[k * 4], flatOut[k * 4 + 1], flatOut[k * 4 + 2], flatOut[k * 4 + 3]};
+                    }
+                }
                 break;
             }
             case ayt::resource::AnimTrackType::Float: {
                 if (flat != nullptr && keyCount > 0) {
                     slice.scalarValues.assign(flat, flat + keyCount);
+                }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.scalarInTangents.assign(flatIn, flatIn + keyCount);
+                    slice.scalarOutTangents.assign(flatOut, flatOut + keyCount);
                 }
                 break;
             }
@@ -409,6 +432,7 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
                              : std::string();
         slice.type     = anim->getTrackType(ti);
         slice.blendMode = anim->getTrackBlendMode(ti);
+        slice.interpolation = anim->getTrackInterpolation(ti);
 
         const uint32_t keyCount = anim->getTrackKeyframeCount(ti);
         const float* rawTimes = anim->getTrackTimes(ti);
@@ -419,6 +443,8 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
 
         // P0 alignment workaround — same as setAdditiveSource body.
         const float* flat = anim->getTrackFloatValues(ti);
+        const float* flatIn = anim->getTrackInTangents(ti);
+        const float* flatOut = anim->getTrackOutTangents(ti);
         switch (slice.type) {
             case ayt::resource::AnimTrackType::Vector3: {
                 if (flat != nullptr && keyCount > 0) {
@@ -428,6 +454,14 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
                             flat[k * 3 + 0],
                             flat[k * 3 + 1],
                             flat[k * 3 + 2]);
+                    }
+                }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.vec3InTangents.resize(keyCount);
+                    slice.vec3OutTangents.resize(keyCount);
+                    for (uint32_t k = 0; k < keyCount; ++k) {
+                        slice.vec3InTangents[k] = {flatIn[k * 3], flatIn[k * 3 + 1], flatIn[k * 3 + 2]};
+                        slice.vec3OutTangents[k] = {flatOut[k * 3], flatOut[k * 3 + 1], flatOut[k * 3 + 2]};
                     }
                 }
                 break;
@@ -443,11 +477,23 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
                             flat[k * 4 + 3]);
                     }
                 }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.quatInTangents.resize(keyCount);
+                    slice.quatOutTangents.resize(keyCount);
+                    for (uint32_t k = 0; k < keyCount; ++k) {
+                        slice.quatInTangents[k] = {flatIn[k * 4], flatIn[k * 4 + 1], flatIn[k * 4 + 2], flatIn[k * 4 + 3]};
+                        slice.quatOutTangents[k] = {flatOut[k * 4], flatOut[k * 4 + 1], flatOut[k * 4 + 2], flatOut[k * 4 + 3]};
+                    }
+                }
                 break;
             }
             case ayt::resource::AnimTrackType::Float: {
                 if (flat != nullptr && keyCount > 0) {
                     slice.scalarValues.assign(flat, flat + keyCount);
+                }
+                if (flatIn != nullptr && flatOut != nullptr && keyCount > 0) {
+                    slice.scalarInTangents.assign(flatIn, flatIn + keyCount);
+                    slice.scalarOutTangents.assign(flatOut, flatOut + keyCount);
                 }
                 break;
             }
@@ -1062,7 +1108,9 @@ void AnimationPlayer::evaluate()
             if (hasSink && tr.type == ayt::resource::AnimTrackType::Float) {
                 float v = 0.0f;
                 sampleTrackFloat(tr.scalarValues.data(), tr.timesSec.size(),
-                                 tr.timesSec, _time, v);
+                                 tr.timesSec, _time, v, tr.interpolation,
+                                 tr.scalarInTangents.empty() ? nullptr : tr.scalarInTangents.data(),
+                                 tr.scalarOutTangents.empty() ? nullptr : tr.scalarOutTangents.data());
                 _floatSink(tr.nodeName.c_str(),
                            tr.property.empty() ? nullptr : tr.property.c_str(),
                            v);
@@ -1080,7 +1128,9 @@ void AnimationPlayer::evaluate()
             case ayt::resource::AnimTrackType::Vector3: {
                 ayt::math::FVector3 v;
                 sampleTrackVector3(tr.vec3Values.data(), tr.timesSec.size(),
-                                   tr.timesSec, _time, v);
+                                   tr.timesSec, _time, v, tr.interpolation,
+                                   tr.vec3InTangents.empty() ? nullptr : tr.vec3InTangents.data(),
+                                   tr.vec3OutTangents.empty() ? nullptr : tr.vec3OutTangents.data());
                 if (tr.property == "position") {
                     if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
                         _localPos[idx * 3 + 0] = v.x;
@@ -1109,7 +1159,9 @@ void AnimationPlayer::evaluate()
             case ayt::resource::AnimTrackType::Quaternion: {
                 ayt::math::FQuaternion q;
                 sampleTrackQuaternion(tr.quatValues.data(), tr.timesSec.size(),
-                                      tr.timesSec, _time, q);
+                                      tr.timesSec, _time, q, tr.interpolation,
+                                      tr.quatInTangents.empty() ? nullptr : tr.quatInTangents.data(),
+                                      tr.quatOutTangents.empty() ? nullptr : tr.quatOutTangents.data());
                 if (tr.property == "rotation") {
                     if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
                         _localRot[idx * 4 + 0] = q.x;
@@ -1140,7 +1192,9 @@ void AnimationPlayer::evaluate()
             case ayt::resource::AnimTrackType::Float: {
                 float v = 0.0f;
                 sampleTrackFloat(tr.scalarValues.data(), tr.timesSec.size(),
-                                 tr.timesSec, _time, v);
+                                 tr.timesSec, _time, v, tr.interpolation,
+                                 tr.scalarInTangents.empty() ? nullptr : tr.scalarInTangents.data(),
+                                 tr.scalarOutTangents.empty() ? nullptr : tr.scalarOutTangents.data());
                 if (hasSink) {
                     _floatSink(tr.nodeName.c_str(),
                                tr.property.empty() ? nullptr : tr.property.c_str(),
@@ -1185,7 +1239,9 @@ void AnimationPlayer::evaluate()
                 if (hasSink && tr.type == ayt::resource::AnimTrackType::Float) {
                     float v = 0.0f;
                     sampleTrackFloat(tr.scalarValues.data(), tr.timesSec.size(),
-                                     tr.timesSec, s.time, v);
+                                     tr.timesSec, s.time, v, tr.interpolation,
+                                     tr.scalarInTangents.empty() ? nullptr : tr.scalarInTangents.data(),
+                                     tr.scalarOutTangents.empty() ? nullptr : tr.scalarOutTangents.data());
                     _floatSink(tr.nodeName.c_str(),
                                tr.property.empty() ? nullptr : tr.property.c_str(),
                                v);
@@ -1213,7 +1269,9 @@ void AnimationPlayer::evaluate()
                 case ayt::resource::AnimTrackType::Vector3: {
                     ayt::math::FVector3 v;
                     sampleTrackVector3(tr.vec3Values.data(), tr.timesSec.size(),
-                                       tr.timesSec, s.time, v);
+                                       tr.timesSec, s.time, v, tr.interpolation,
+                                       tr.vec3InTangents.empty() ? nullptr : tr.vec3InTangents.data(),
+                                       tr.vec3OutTangents.empty() ? nullptr : tr.vec3OutTangents.data());
                     if (tr.property == "position") {
                         if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
                             _localPos[idx * 3 + 0] = v.x;
@@ -1240,7 +1298,9 @@ void AnimationPlayer::evaluate()
                 case ayt::resource::AnimTrackType::Quaternion: {
                     ayt::math::FQuaternion q;
                     sampleTrackQuaternion(tr.quatValues.data(), tr.timesSec.size(),
-                                          tr.timesSec, s.time, q);
+                                          tr.timesSec, s.time, q, tr.interpolation,
+                                          tr.quatInTangents.empty() ? nullptr : tr.quatInTangents.data(),
+                                          tr.quatOutTangents.empty() ? nullptr : tr.quatOutTangents.data());
                     if (tr.property == "rotation") {
                         if (tr.blendMode == ayt::resource::AnimBlendMode::Override) {
                             _localRot[idx * 4 + 0] = q.x;
@@ -1274,7 +1334,9 @@ void AnimationPlayer::evaluate()
                     // that ride along with the additive layer.
                     float v = 0.0f;
                     sampleTrackFloat(tr.scalarValues.data(), tr.timesSec.size(),
-                                     tr.timesSec, s.time, v);
+                                     tr.timesSec, s.time, v, tr.interpolation,
+                                     tr.scalarInTangents.empty() ? nullptr : tr.scalarInTangents.data(),
+                                     tr.scalarOutTangents.empty() ? nullptr : tr.scalarOutTangents.data());
                     if (hasSink) {
                         _floatSink(tr.nodeName.c_str(),
                                    tr.property.empty() ? nullptr : tr.property.c_str(),

@@ -1366,6 +1366,15 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
                         + property,
                     path, role, HumanoidBone::Invalid, sourceBone,
                     static_cast<int>(track));
+            } else if (type == ayt::resource::AnimTrackType::Quaternion
+                && animation.getTrackInterpolation(track)
+                    == ayt::resource::AnimInterpolation::CubicHermite
+                && (animation.getTrackInTangents(track) != nullptr
+                    || animation.getTrackOutTangents(track) != nullptr)) {
+                add(SkeletonPreflightCode::RetargetTrackUnsupported,
+                    "Cubic quaternion retarget requires tangent-space conversion.",
+                    path, role, HumanoidBone::Invalid, sourceBone,
+                    static_cast<int>(track));
             }
         }
     };

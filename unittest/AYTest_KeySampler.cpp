@@ -162,6 +162,56 @@ TEST_SUITE(KeySamplerTests)
         CHECK_FLOAT_EQ(out, 50.0f, 1e-4f);
     }
 
+    TEST_CASE(step_interpolation_holds_left_key) {
+        auto times = makeTimes({0.0f, 1.0f});
+        auto values = makeFloatValues({2.0f, 9.0f});
+        float out = 0.0f;
+        sampleTrackFloat(values.data(), values.size(), times, 0.75f, out,
+            ayt::resource::AnimInterpolation::Step);
+        CHECK_FLOAT_EQ(out, 2.0f, 1e-5f);
+    }
+
+    TEST_CASE(cubic_float_uses_outgoing_and_incoming_tangents) {
+        auto times = makeTimes({0.0f, 1.0f});
+        auto values = makeFloatValues({0.0f, 1.0f});
+        auto inTangents = makeFloatValues({0.0f, 0.0f});
+        auto outTangents = makeFloatValues({4.0f, 0.0f});
+        float out = 0.0f;
+        sampleTrackFloat(values.data(), values.size(), times, 0.5f, out,
+            ayt::resource::AnimInterpolation::CubicHermite,
+            inTangents.data(), outTangents.data());
+        CHECK_FLOAT_EQ(out, 1.0f, 1e-5f);
+    }
+
+    TEST_CASE(cubic_vector_and_quaternion_are_sampled_and_normalized) {
+        auto times = makeTimes({0.0f, 1.0f});
+        auto vectors = makeVec3Values({FVector3(0, 0, 0), FVector3(1, 1, 1)});
+        auto vectorIn = makeVec3Values({FVector3(), FVector3()});
+        auto vectorOut = makeVec3Values({FVector3(4, 0, 0), FVector3()});
+        FVector3 vectorResult;
+        sampleTrackVector3(vectors.data(), vectors.size(), times, 0.5f,
+            vectorResult, ayt::resource::AnimInterpolation::CubicHermite,
+            vectorIn.data(), vectorOut.data());
+        CHECK_FLOAT_EQ(vectorResult.x, 1.0f, 1e-5f);
+        CHECK_FLOAT_EQ(vectorResult.y, 0.5f, 1e-5f);
+
+        auto quaternions = makeQuatValues({
+            FQuaternion::identity(), FQuaternion(0, 0, 1, 0)});
+        auto quaternionIn = makeQuatValues({FQuaternion(0, 0, 0, 0),
+                                            FQuaternion(0, 0, 0, 0)});
+        auto quaternionOut = quaternionIn;
+        FQuaternion quaternionResult;
+        sampleTrackQuaternion(quaternions.data(), quaternions.size(), times,
+            0.5f, quaternionResult,
+            ayt::resource::AnimInterpolation::CubicHermite,
+            quaternionIn.data(), quaternionOut.data());
+        const float lengthSquared = quaternionResult.x * quaternionResult.x
+            + quaternionResult.y * quaternionResult.y
+            + quaternionResult.z * quaternionResult.z
+            + quaternionResult.w * quaternionResult.w;
+        CHECK_FLOAT_EQ(lengthSquared, 1.0f, 1e-5f);
+    }
+
     // P0: vector3 lerp on an unsorted-times track. The sampler asserts in
     // debug builds (so a loader regression is caught loudly); in release
     // builds the assertion is compiled out and the sampler falls through

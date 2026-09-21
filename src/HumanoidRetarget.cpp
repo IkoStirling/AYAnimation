@@ -139,9 +139,19 @@ void copyTrackMetadata(const ayt::resource::IAnimation& source,
     track.property = property != nullptr ? property : "";
     track.valueType = source.getTrackType(index);
     track.blendMode = source.getTrackBlendMode(index);
+    track.interpolation = source.getTrackInterpolation(index);
     const std::uint32_t count = source.getTrackKeyframeCount(index);
     const float* times = source.getTrackTimes(index);
     if (count > 0u && times != nullptr) track.times.assign(times, times + count);
+    const std::size_t width = track.valueType == ayt::resource::AnimTrackType::Quaternion
+        ? 4u : track.valueType == ayt::resource::AnimTrackType::Vector3 ? 3u : 1u;
+    const std::size_t valueCount = static_cast<std::size_t>(count) * width;
+    if (const float* tangents = source.getTrackInTangents(index)) {
+        track.inTangents.assign(tangents, tangents + valueCount);
+    }
+    if (const float* tangents = source.getTrackOutTangents(index)) {
+        track.outTangents.assign(tangents, tangents + valueCount);
+    }
 }
 
 } // namespace
@@ -335,6 +345,13 @@ HumanoidRetargetResult retargetHumanoidAnimation(
             static_cast<std::size_t>(role)];
         if (track.valueType == ayt::resource::AnimTrackType::Quaternion
             && track.property == "rotation") {
+            if (track.interpolation
+                    == ayt::resource::AnimInterpolation::CubicHermite
+                && (!track.inTangents.empty() || !track.outTangents.empty())) {
+                return errorResult(HumanoidRetargetError::UnsupportedTrack,
+                    "Cubic quaternion retarget requires tangent-space conversion.",
+                    role, sourceIndex, targetIndex, static_cast<int>(index));
+            }
             const float* values = animation.getTrackValues(index);
             if (count > 0u && values == nullptr) {
                 return errorResult(
@@ -386,6 +403,10 @@ HumanoidRetargetResult retargetHumanoidAnimation(
                 track.values.insert(track.values.end(),
                     {value.x, value.y, value.z});
             }
+            const float tangentScale = roleTransfersTranslation(role,
+                definition.translationPolicy) ? translationScale : 0.0f;
+            for (float& tangent : track.inTangents) tangent *= tangentScale;
+            for (float& tangent : track.outTangents) tangent *= tangentScale;
         } else if (track.valueType == ayt::resource::AnimTrackType::Vector3
             && track.property == "scale") {
             const float* values = animation.getTrackValues(index);
@@ -406,6 +427,25 @@ HumanoidRetargetResult retargetHumanoidAnimation(
                     targetRestScales[targetIndex], sourceValue);
                 track.values.insert(track.values.end(),
                     {value.x, value.y, value.z});
+            }
+            const FVector3 tangentScale(
+                std::abs(sourceRestScales[sourceIndex].x) > kEpsilon
+                    ? targetRestScales[targetIndex].x / sourceRestScales[sourceIndex].x : 0.0f,
+                std::abs(sourceRestScales[sourceIndex].y) > kEpsilon
+                    ? targetRestScales[targetIndex].y / sourceRestScales[sourceIndex].y : 0.0f,
+                std::abs(sourceRestScales[sourceIndex].z) > kEpsilon
+                    ? targetRestScales[targetIndex].z / sourceRestScales[sourceIndex].z : 0.0f);
+            for (std::size_t component = 0u;
+                 component < track.inTangents.size(); ++component) {
+                const float scale = component % 3u == 0u ? tangentScale.x
+                    : component % 3u == 1u ? tangentScale.y : tangentScale.z;
+                track.inTangents[component] *= scale;
+            }
+            for (std::size_t component = 0u;
+                 component < track.outTangents.size(); ++component) {
+                const float scale = component % 3u == 0u ? tangentScale.x
+                    : component % 3u == 1u ? tangentScale.y : tangentScale.z;
+                track.outTangents[component] *= scale;
             }
         } else {
             return errorResult(HumanoidRetargetError::UnsupportedTrack,

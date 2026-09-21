@@ -289,6 +289,7 @@ bool rewriteAnimation(const std::string& sourcePath,
         track.property = property != nullptr ? property : "";
         track.valueType = source.getTrackType(index);
         track.blendMode = source.getTrackBlendMode(index);
+        track.interpolation = source.getTrackInterpolation(index);
         const std::uint32_t count = source.getTrackKeyframeCount(index);
         const float* times = source.getTrackTimes(index);
         if (count > 0u && times == nullptr) {
@@ -306,6 +307,13 @@ bool rewriteAnimation(const std::string& sourcePath,
         if (count > 0u) {
             track.values.assign(values,
                 values + static_cast<std::size_t>(count) * width);
+            const std::size_t valueCount = static_cast<std::size_t>(count) * width;
+            if (const float* tangents = source.getTrackInTangents(index)) {
+                track.inTangents.assign(tangents, tangents + valueCount);
+            }
+            if (const float* tangents = source.getTrackOutTangents(index)) {
+                track.outTangents.assign(tangents, tangents + valueCount);
+            }
         }
         baked.addTrack(track);
     }

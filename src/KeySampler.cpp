@@ -77,13 +77,29 @@ inline size_t valueFloatsPerKey(ayt::resource::AnimTrackType type)
     return 1;
 }
 
+float hermite(float a, float b, float outTangent, float inTangent,
+              float fraction, float span)
+{
+    const float t2 = fraction * fraction;
+    const float t3 = t2 * fraction;
+    const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+    const float h10 = t3 - 2.0f * t2 + fraction;
+    const float h01 = -2.0f * t3 + 3.0f * t2;
+    const float h11 = t3 - t2;
+    return h00 * a + h10 * span * outTangent
+        + h01 * b + h11 * span * inTangent;
+}
+
 } // namespace
 
 void sampleTrackVector3(const ayt::math::FVector3* values,
                         size_t keyCount,
                         const std::vector<float>& times,
                         float t,
-                        ayt::math::FVector3& out)
+                        ayt::math::FVector3& out,
+                        ayt::resource::AnimInterpolation interpolation,
+                        const ayt::math::FVector3* inTangents,
+                        const ayt::math::FVector3* outTangents)
 {
     if (keyCount == 0 || values == nullptr) {
         out = ayt::math::FVector3(0.0f, 0.0f, 0.0f);
@@ -100,6 +116,20 @@ void sampleTrackVector3(const ayt::math::FVector3* values,
         return;
     }
     const ayt::math::FVector3 b = values[loc.k + 1];
+    if (interpolation == ayt::resource::AnimInterpolation::Step) {
+        out = a;
+        return;
+    }
+    if (interpolation == ayt::resource::AnimInterpolation::CubicHermite
+        && inTangents != nullptr && outTangents != nullptr) {
+        const float span = times[loc.k + 1] - times[loc.k];
+        const auto& m0 = outTangents[loc.k];
+        const auto& m1 = inTangents[loc.k + 1];
+        out = {hermite(a.x, b.x, m0.x, m1.x, loc.frac, span),
+               hermite(a.y, b.y, m0.y, m1.y, loc.frac, span),
+               hermite(a.z, b.z, m0.z, m1.z, loc.frac, span)};
+        return;
+    }
     out = a.lerp(b, loc.frac);
 }
 
@@ -107,7 +137,10 @@ void sampleTrackQuaternion(const ayt::math::FQuaternion* values,
                            size_t keyCount,
                            const std::vector<float>& times,
                            float t,
-                           ayt::math::FQuaternion& out)
+                           ayt::math::FQuaternion& out,
+                           ayt::resource::AnimInterpolation interpolation,
+                           const ayt::math::FQuaternion* inTangents,
+                           const ayt::math::FQuaternion* outTangents)
 {
     const size_t stride = 4;
     if (keyCount == 0 || values == nullptr) {
@@ -134,8 +167,27 @@ void sampleTrackQuaternion(const ayt::math::FQuaternion* values,
     // the interpolated quaternion can flip 180° mid-blend, causing
     // visible visual twitching in rotation tracks.
     const float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-    if (dot < 0.0f) {
+    const bool flip = dot < 0.0f;
+    if (flip) {
         b = ayt::math::FQuaternion(-b.x, -b.y, -b.z, -b.w);
+    }
+
+    if (interpolation == ayt::resource::AnimInterpolation::Step) {
+        out = a.normalize();
+        return;
+    }
+    if (interpolation == ayt::resource::AnimInterpolation::CubicHermite
+        && inTangents != nullptr && outTangents != nullptr) {
+        const float span = times[loc.k + 1] - times[loc.k];
+        const auto& m0 = outTangents[loc.k];
+        auto m1 = inTangents[loc.k + 1];
+        if (flip) m1 = {-m1.x, -m1.y, -m1.z, -m1.w};
+        out = ayt::math::FQuaternion(
+            hermite(a.x, b.x, m0.x, m1.x, loc.frac, span),
+            hermite(a.y, b.y, m0.y, m1.y, loc.frac, span),
+            hermite(a.z, b.z, m0.z, m1.z, loc.frac, span),
+            hermite(a.w, b.w, m0.w, m1.w, loc.frac, span)).normalize();
+        return;
     }
 
     out = a.slerp(b, loc.frac).normalize();
@@ -145,7 +197,10 @@ void sampleTrackFloat(const float* values,
                       size_t keyCount,
                       const std::vector<float>& times,
                       float t,
-                      float& out)
+                      float& out,
+                      ayt::resource::AnimInterpolation interpolation,
+                      const float* inTangents,
+                      const float* outTangents)
 {
     if (keyCount == 0 || values == nullptr) {
         out = 0.0f;
@@ -162,6 +217,16 @@ void sampleTrackFloat(const float* values,
         return;
     }
     const float b = values[loc.k + 1];
+    if (interpolation == ayt::resource::AnimInterpolation::Step) {
+        out = a;
+        return;
+    }
+    if (interpolation == ayt::resource::AnimInterpolation::CubicHermite
+        && inTangents != nullptr && outTangents != nullptr) {
+        out = hermite(a, b, outTangents[loc.k], inTangents[loc.k + 1],
+                      loc.frac, times[loc.k + 1] - times[loc.k]);
+        return;
+    }
     out = a + (b - a) * loc.frac;
 }
 
