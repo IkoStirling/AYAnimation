@@ -149,7 +149,35 @@ TEST_CASE(animation_preview_falls_back_to_skeleton_and_reports_missing_tracks)
         [](const AnimationPreviewDiagnostic& diagnostic) {
             return diagnostic.code
                 == AnimationPreviewDiagnosticCode::AnimationTrackBoneMissing;
-        }));
+    }));
+}
+
+TEST_CASE(animation_preview_replaces_in_memory_clip_and_preserves_time)
+{
+    const auto root = previewFixtureRoot();
+    AnimationPreviewSession session;
+    std::string error;
+    CHECK(session.openAnimation(writePreviewAnimation(root).string(), &error));
+    CHECK(session.bindSkeleton(writePreviewSkeleton(root).string(), &error));
+    CHECK(session.setTime(0.5f));
+    const auto revision = session.revision();
+
+    auto edited = std::make_shared<Animation>();
+    edited->setName("hero_idle_edited");
+    edited->setDuration(2.0f);
+    edited->setTicksPerSecond(1.0f);
+    AnimTrack track;
+    track.nodeName = "hips";
+    track.property = "position";
+    track.valueType = AnimTrackType::Vector3;
+    track.times = {0.0f, 1.0f, 2.0f};
+    track.values = {0, 1, 0, 0, 3, 0, 0, 1, 0};
+    edited->addTrack(track);
+    CHECK(session.replaceAnimation(std::move(edited), true, &error));
+    CHECK(session.revision() > revision);
+    CHECK(session.duration() == 2.0f);
+    CHECK(session.time() == 0.5f);
+    CHECK(session.poseWorldMatrices()[1].transformPoint({0, 0, 0}).y > 1.9f);
 }
 
 TEST_SUITE_END

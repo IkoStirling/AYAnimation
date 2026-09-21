@@ -100,6 +100,29 @@ bool AnimationPreviewSession::reloadAnimation(std::string* error)
     return true;
 }
 
+bool AnimationPreviewSession::replaceAnimation(
+    std::shared_ptr<ayt::resource::Animation> animation,
+    bool preserveTime, std::string* error)
+{
+    if (animation == nullptr) {
+        setError(error, "Animation revision is null.");
+        return false;
+    }
+    const float previousTime = preserveTime ? time() : 0.0f;
+    const bool wasPlaying = _playing;
+    _animation = std::move(animation);
+    _playing = false;
+    bindPlayer();
+    if (_skeleton != nullptr) {
+        (void)setTime(std::clamp(previousTime, 0.0f, duration()));
+        if (wasPlaying) play();
+    }
+    rebuildDiagnostics();
+    ++_revision;
+    if (error != nullptr) error->clear();
+    return true;
+}
+
 bool AnimationPreviewSession::bindSkeleton(const std::string& path,
                                            std::string* error)
 {

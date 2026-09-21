@@ -64,9 +64,10 @@ struct AnimationPreviewBindings {
     }
 };
 
-// UI-free animation preview state shared by AYEditor and future tools. Cooked
-// animation, skeleton and mesh resources stay read-only. The session owns only
-// transient playback state and exposes both world-pose and skinning matrices.
+// UI-free animation preview state shared by AYEditor and future tools. Skeleton
+// and mesh resources stay read-only. The active animation may be replaced by an
+// editor-owned in-memory revision so authoring changes can be previewed without
+// reloading or partially writing the resource on disk.
 class AnimationPreviewSession final {
 public:
     AnimationPreviewSession();
@@ -76,6 +77,9 @@ public:
 
     bool openAnimation(const std::string& path, std::string* error = nullptr);
     bool reloadAnimation(std::string* error = nullptr);
+    bool replaceAnimation(std::shared_ptr<ayt::resource::Animation> animation,
+                          bool preserveTime = true,
+                          std::string* error = nullptr);
     bool bindSkeleton(const std::string& path, std::string* error = nullptr);
     bool bindMesh(const std::string& path, std::string* error = nullptr);
     void unbindSkeleton();
