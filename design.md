@@ -2,11 +2,11 @@
 
 **Version:** 1.0.0（文档版本，不是模块或骨架版本）
 **Date:** 2026-09-18
-**Status:** Active — P4-4 离线人形重定向求解与同步并排预览已实现；完整引用安全烘焙继续建设
+**Status:** Active — P4-4～P4-6 离线人形重定向、同步并排预览与当前正式资源集的完整引用安全烘焙已实现
 **Owner:** AYAnimation
 **Authority:** AYHumanoid 角色表 / AYDocs 的标准骨架与资源管线规范
 
-> **2026-09-21 实现补充**：UI-free `HumanoidRetarget` 已同时提供完整局部姿势和离线 clip 的 source→target 转换，并接入 `SkeletonBakeJob` 的 `BakeToTarget`；目标 Bind Pose、逐角色源/目标参考坐标、骨轴修正、身高比例根位移与缩放差值均进入实际输出。未映射动画骨、未知 TRS 组合和加法轨道显式失败。`SkeletonEditorCore` 以正式转换 clip 驱动目标 `AnimationPlayer`，源/目标 pose 在播放、暂停、停止、拖动和逐帧更新时保持同一时间点；完整引用安全烘焙仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) 推进。
+> **2026-09-21 实现补充**：UI-free `HumanoidRetarget` 已同时提供完整局部姿势和离线 clip 的 source→target 转换，并接入 `SkeletonBakeJob` 的 `BakeToTarget`；目标 Bind Pose、逐角色源/目标参考坐标、骨轴修正、身高比例根位移与缩放差值均进入实际输出。未映射动画骨、未知 TRS 组合和加法轨道显式失败。`SkeletonEditorCore` 以正式转换 clip 驱动目标 `AnimationPlayer`，源/目标 pose 在播放、暂停、停止、拖动和逐帧更新时保持同一时间点。引用安全烘焙覆盖当前正式资源集中的骨架、动画、蒙皮 palette/joint 与 Skeleton Mask，采用事务式暂存、验证、回滚和最后切换 receipt v2；AYResource 发布门禁核对完整闭包及源修订指纹。跨骨架蒙皮几何空间 rebind 尚未实现，因此相关 `BakeToTarget` 会显式阻止而不会生成伪正确结果。
 
 > **状态（2026-08-30）**：薄播放内核 P1–P4-2 已 ship；本轮新增 **P4-3 AYHumanoid 语义骨架基线**（VRM 1.0 的 55 个 humanoid roles + 2 个 AY 引擎根、默认空映射容器、层级校验，INV-78..81）。MMD/Mixamo 内置映射与实际 retarget 求解仍 deferred。P4-3 后 AYAnimation debug **3201/3201 × 3** stable；此前 AYResource 1039/1039 + AYEntity 421/421 × 3 及 AYAnimation release 3161/3161 × 3 基线保持不变。
 > **不负责**：完整角色管线（ASM / BlendTree / Root Motion / Retarget / LOD）仍属后续 Phase；L4 MotionMatching / state-graph 编辑器 / multi-graph / BlendTree inside state machine / `.ayasm` loader / parallel states / 函数调用 / OnStateEntered/Exited event / IK 约束 / pole vector / 局部目标 / per-chain mask / 骨骼重定向 全部 deferred。L1 + L2 DSL + L3 子状态机 + Time-in-state query + per-state AnimNotify routing + flat-array hot-path + bytecode hot-path + lock-free cache + slot 内存回收 + transparent hash + stress 测试 + **DSL 四则运算** + **INV-60 flip debug assert + release 配置落地** + **TwoBone IK（P4-1）** + **FABRIK + CCD 迭代 IK（P4-2）** 已 ship（P3.1 + P3.x + P3.2 + P3.x刀 N+1.BC + P0 polish + P1 polish + P2 polish + P3 polish + P4 polish + P5 polish + P6 polish + P4-1 + P4-2 2026-08-06..11）。  
@@ -1562,7 +1562,7 @@ AYAnimation/
 - [x] **P4-2 FABRIK + CCD 迭代 IK**（2026-08-11）─ `FabrikSolver`（backward 锚 tip 拉回 + forward 锁根推出，默认 4 迭代 clamp ≤100，段长精确保持）+ `CcdSolver`（自末端向根逐关节绕自身锚点旋转子链，默认 10 迭代 clamp ≤100，共线不可拉直不对称性文档化）+ 共享 `IterativeIKResult` + `kMaxIKChainBones=32` 固定数组零每帧分配 + `IKSolverType` 枚举（TwoBone 默认 back-compat）+ `IKChainSpec` 末尾追加 `type/iterations`（聚合初始化兼容）+ 私有 `IKChain` 三 int32 → `std::vector<int32_t> path` + **resolveIKChains 重写**（TwoBone 分支逐位保留；迭代型 tip→root 单 walk 自动推导全路径，midBone 忽略；名字 miss/非后代/脱顶/r==t/超 32 → 禁用）+ **Phase 2.5 统一 `applyIKChain()` pass**（快照 → 按 type 分派 → N-1 骨 world→local conjugate 回写 → accumulateWorldFrom(path[0])；TwoBone 分支逐位等价 P4-1）+ **weight = 目标点插值**（非旋转 slerp；可达时 w<1 tip 精确落插值点，与 TwoBone 语义差异文档化）+ 9 public API 零改动 + 0 ECS bridge change + **INV-75**（weight 双门 + 目标空间语义）/ **INV-76**（路径自动推导 + 禁用规则）/ **INV-77**（N-1 骨统一写回泛化 INV-73）+ 22 solver unit tests（F1-F11/C1-C11）+ 13 player 集成 tests（I1-I13 含三型共存重钉 P7 锚点教训）+ 0 regression 3-run stable (AYAnimation **3161/3161** × 3 debug + release 3161/3161 × 3)；详见 §4.26 + §6 + §14.3
 - [x] **P4-4 / SKA-06 离线人形重定向**（2026-09-21）─ `HumanoidRetarget` 校验双映射并将 source 局部 TRS 的参考姿势 delta 转入目标 Bind Pose；逐角色 source/target reference offset 与 axis correction 作为坐标基变换，rest→rest 恒成立；根/hips 平移按 hips-head 参考高度比缩放，scale 传递相对 rest 比例；同一核心转换完整 pose 与 override clip，保留 Float/Notify/时间轴并输出真实目标骨名；`SkeletonBakeJob` 的 `BakeToTarget` 写目标骨架和重定向 clip；未映射动画骨、未知 TRS 与 Additive 轨道在 preflight/solver 显式失败。新增 4 solver cases，AYAnimation 3219/3219；作者核心含真实异比例 bake 集成共 299/299。
 - [x] **P4-5 / SKA-04、06 同步源/目标预览**（2026-09-21）─ `SkeletonEditorCore` 为目标骨架维护独立 Bind/Pose 与 `AnimationPlayer`，复用 `HumanoidRetarget` 的正式离线 clip 转换而不复制求解算法；映射、目标和参考修正变化会重建目标预览，失败原因显式保留；源/目标共享播放状态和时间点。作者核心 307/307，AYEditor 骨架扩展 86/86。
-- [x] **P4-6 / SKA-07 引用安全烘焙执行器**（2026-09-21）─ dry-run 与执行器覆盖动画轨道、`.aymesh` draw-local palette/有效 joint 和 `.aymask` 命名引用；删除骨仍被有效蒙皮引用时阻止，未使用 palette 槽会压缩，Mask 在语义清理或 source→target 角色映射下重写。跨骨架蒙皮网格在尚无几何空间 rebind 时显式阻止。全部临时产物先反序列化复验，旧输出以 rollback 副本保护，整组失败恢复，receipt v2 最后切换；提交阶段不可被取消。作者核心 338/338，AYEditor 骨架扩展 86/86。发布门禁的 v2 完整闭包校验由 SKA-08 后续提交闭合。
+- [x] **P4-6 / SKA-07 引用安全烘焙执行器**（2026-09-21）─ dry-run 与执行器覆盖动画轨道、`.aymesh` draw-local palette/有效 joint 和 `.aymask` 命名引用；删除骨仍被有效蒙皮引用时阻止，未使用 palette 槽会压缩，Mask 在语义清理或 source→target 角色映射下重写。跨骨架蒙皮网格在尚无几何空间 rebind 时显式阻止。全部临时产物先反序列化复验，旧输出以 rollback 副本保护，整组失败恢复，receipt v2 最后切换；提交阶段不可被取消。每个 receipt artifact 记录源修订指纹，AYResource 发布门禁验证精确依赖/产物闭包、scope、目标及源修订，并排除作者源与陈旧 baked 产物。作者核心 338/338，AYEditor 骨架扩展 86/86，AYResource 2495/2495。
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] Pole vector / 局部空间目标 / per-chain mask 门控
@@ -4896,6 +4896,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 | 日期 | 变更 |
 |------|------|
+| 2026-09-21 | **P4-6 / SKA-07～08 引用安全烘焙与发布闭环 ship**：骨架、动画、网格 palette/joint 和 Mask 以事务方式整组改写；receipt v2 记录精确依赖/产物及源修订指纹；AYResource 在构建执行时复验 scope、目标、profile、闭包和所有输入，排除作者源及陈旧产物。跨骨架蒙皮几何 rebind 未实现时明确阻止。作者核心 338/338、AYResource 2495/2495、编辑器骨骼扩展 86/86。 |
 | 2026-09-19 | `AYAnimationEditorCore` 第一版 ship：源 `.ayskel` 只读检查、绑定 `.aysmap`、57 角色手工/规范名模板映射、校验/撤销/保存、适配与烘焙状态、`.ayanm` 姿势预览；AYEditor 仅通过薄适配消费。 |
 | 2026-09-19 | Rig Profile 迁移：writer 只写 `.ayrig` `RigProfile` v1，角色同时持久化层级路径和迁移索引；reader 兼容 `.aysmap` v1 并非破坏迁移；作者文件不再保存权威 bakeState，状态从 `.bake-result.json` 及输出恢复。 |
 | 2026-09-18 | **后续设计，非实现完成**：新增 §7.5 与 Phase 4 的 SKA-01～16 导航；统一源保留、映射/profile 资源、编辑器双标志、派生烘焙清理和发布门禁，区分 P0/P1/P2 与验收依赖；不修改现有 INV-78～81 或测试历史。 |

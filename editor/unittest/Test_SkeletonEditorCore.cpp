@@ -620,6 +620,10 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
         (output / "synthetic.bake-result.json").string()));
     CHECK(receipt["version"] == 2u);
     CHECK(receipt["artifacts"].size() == 4u);
+    for (const auto& artifact : receipt["artifacts"]) {
+        CHECK(artifact.value("sourceFingerprint", std::string{}).empty()
+            == false);
+    }
     CHECK(core.setNative(true));
     CHECK_FALSE(core.recordBakeResult(true, snapshot.sourceFingerprint,
         snapshot.profileFingerprint, &error));

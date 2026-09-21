@@ -29,6 +29,17 @@ std::string normalizedPath(const std::filesystem::path& path)
     return path.lexically_normal().generic_string();
 }
 
+std::string fileRevision(const std::filesystem::path& path)
+{
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error) return {};
+    const auto modified = std::filesystem::last_write_time(path, error);
+    if (error) return std::to_string(size);
+    return std::to_string(size) + ":"
+        + std::to_string(modified.time_since_epoch().count());
+}
+
 struct RunState {
     enum class Phase : std::uint8_t {
         Building,
@@ -501,6 +512,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
     artifacts.push_back({
         {"kind", "skeleton"},
         {"source", normalizedPath(std::filesystem::absolute(plan.skeletonPath))},
+        {"sourceFingerprint", fileRevision(plan.skeletonPath)},
         {"output", normalizedPath(std::filesystem::absolute(skeletonOutput))},
     });
     for (const auto& dependency : plan.dependencies) {
@@ -555,6 +567,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
                 dependency.kind)},
             {"source", normalizedPath(
                 std::filesystem::absolute(dependency.path))},
+            {"sourceFingerprint", fileRevision(dependency.path)},
             {"output", normalizedPath(std::filesystem::absolute(output))},
         });
     }
