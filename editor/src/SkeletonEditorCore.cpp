@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -101,6 +102,28 @@ std::string stableProfileId(const std::filesystem::path& path)
     return fnvHex("rig-", normalizedPath(std::filesystem::absolute(path)));
 }
 
+Json quaternionJson(const ayt::math::FQuaternion& value)
+{
+    return Json::array({value.x, value.y, value.z, value.w});
+}
+
+bool parseQuaternion(const Json& value, ayt::math::FQuaternion& result)
+{
+    if (!value.is_array() || value.size() != 4u) return false;
+    for (const Json& component : value) {
+        if (!component.is_number()) return false;
+    }
+    result = {value[0].get<float>(), value[1].get<float>(),
+        value[2].get<float>(), value[3].get<float>()};
+    if (!std::isfinite(result.x) || !std::isfinite(result.y)
+        || !std::isfinite(result.z) || !std::isfinite(result.w)
+        || result.length() < 1.0e-4f) {
+        return false;
+    }
+    result = result.normalize();
+    return true;
+}
+
 } // namespace
 
 SkeletonEditorCore::SkeletonEditorCore()
@@ -184,12 +207,15 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
     std::string sourceFingerprint;
     std::string profileId;
     std::array<std::string, kHumanoidBoneCount> bonePaths{};
+    std::array<std::string, kHumanoidBoneCount> targetBonePaths{};
+    bool targetRolesPresent = false;
     std::filesystem::path loadedMappingPath;
     _legacyMappingPath.clear();
     if (mappingFirst) {
         loadedMappingPath = requested;
         if (!loadMappingFile(inputPath, skeletonReference, loaded,
-                             sourceFingerprint, profileId, bonePaths, error)) {
+                             sourceFingerprint, profileId, bonePaths,
+                             targetBonePaths, targetRolesPresent, error)) {
             return false;
         }
         std::filesystem::path skeletonPath(skeletonReference);
@@ -212,7 +238,8 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
         if (std::filesystem::exists(_mappingPath, existsError)) {
             loadedMappingPath = _mappingPath;
             if (!loadMappingFile(_mappingPath, skeletonReference, loaded,
-                                 sourceFingerprint, profileId, bonePaths, error)) {
+                                 sourceFingerprint, profileId, bonePaths,
+                                 targetBonePaths, targetRolesPresent, error)) {
                 return false;
             }
         } else {
@@ -222,7 +249,7 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
                 loadedMappingPath = legacyPath;
                 if (!loadMappingFile(legacyPath, skeletonReference, loaded,
                                      sourceFingerprint, profileId, bonePaths,
-                                     error)) {
+                                     targetBonePaths, targetRolesPresent, error)) {
                     return false;
                 }
                 _legacyMappingPath = legacyPath;
@@ -251,6 +278,49 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
     }
 
     resolveBonePaths(loaded, bonePaths);
+    if (loaded.profileKind == RigProfileKind::Retarget) {
+        auto target = std::make_shared<ayt::resource::Skeleton>();
+        if (!target->load(loaded.targetSkeletonPath)) {
+            setError(error, "Unable to load retarget target skeleton: "
+                + loaded.targetSkeletonPath);
+            return false;
+        }
+        _targetSkeleton = std::move(target);
+        _targetBones.clear();
+        const ayt::resource::Bone* targetBones = _targetSkeleton->getBones();
+        for (std::size_t index = 0; index < _targetSkeleton->getBoneCount(); ++index) {
+            SkeletonBoneView view;
+            view.index = static_cast<int>(index);
+            view.parentIndex = targetBones[index].parentIndex;
+            view.name = targetBones[index].name;
+            view.localPosition = targetBones[index].localPosition;
+            view.localRotation = targetBones[index].localRotation;
+            view.localScale = targetBones[index].localScale;
+            view.inverseBindMatrix = targetBones[index].inverseBindMatrix;
+            int parent = view.parentIndex;
+            std::size_t guard = 0u;
+            while (parent >= 0
+                && parent < static_cast<int>(_targetSkeleton->getBoneCount())
+                && guard++ < _targetSkeleton->getBoneCount()) {
+                ++view.depth;
+                parent = targetBones[parent].parentIndex;
+            }
+            _targetBones.push_back(std::move(view));
+        }
+        if (!targetRolesPresent) {
+            for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+                const int index = _targetSkeleton->findBone(
+                    spec.canonicalName.data());
+                if (index >= 0) {
+                    (void)loaded.targetMapping.bind(spec.role, index);
+                }
+            }
+        }
+        resolveTargetBonePaths(loaded, targetBonePaths);
+    } else {
+        _targetSkeleton.reset();
+        _targetBones.clear();
+    }
     _profileId = profileId.empty() ? stableProfileId(_mappingPath) : profileId;
     loadBakeReceipt(loaded);
 
@@ -296,6 +366,8 @@ bool SkeletonEditorCore::loadMappingFile(
     Snapshot& snapshot, std::string& sourceFingerprint,
     std::string& profileId,
     std::array<std::string, kHumanoidBoneCount>& bonePaths,
+    std::array<std::string, kHumanoidBoneCount>& targetBonePaths,
+    bool& targetRolesPresent,
     std::string* error) const
 {
     const std::string text = ayt::io::File::readAllText(path);
@@ -371,6 +443,74 @@ bool SkeletonEditorCore::loadMappingFile(
                         "Retarget RigProfile output mode is unsupported: "
                             + snapshot.outputMode);
                     return false;
+                }
+                if (const auto targetRoles = target->find("roles");
+                    targetRoles != target->end()) {
+                    if (!targetRoles->is_object()) {
+                        setError(error,
+                            "Retarget target roles must be an object.");
+                        return false;
+                    }
+                    targetRolesPresent = true;
+                    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+                        const auto value = targetRoles->find(
+                            std::string(spec.canonicalName));
+                        if (value == targetRoles->end()) continue;
+                        if (!value->is_object()) {
+                            setError(error,
+                                "Retarget target role has an invalid value: "
+                                    + std::string(spec.canonicalName));
+                            return false;
+                        }
+                        const int index = value->value("targetIndex", -1);
+                        if (index >= 0) {
+                            (void)snapshot.targetMapping.bind(spec.role, index);
+                        }
+                        targetBonePaths[static_cast<std::size_t>(spec.role)] =
+                            value->value("bonePath", std::string{});
+                        if (targetBonePaths[static_cast<std::size_t>(spec.role)]
+                            .empty()) {
+                            setError(error,
+                                "Retarget target role is missing bonePath: "
+                                    + std::string(spec.canonicalName));
+                            return false;
+                        }
+                    }
+                }
+                if (const auto corrections = root.find("corrections");
+                    corrections != root.end() && corrections->is_object()) {
+                    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+                        const auto value = corrections->find(
+                            std::string(spec.canonicalName));
+                        if (value == corrections->end()) continue;
+                        if (!value->is_object()) {
+                            setError(error,
+                                "Retarget correction has an invalid value: "
+                                    + std::string(spec.canonicalName));
+                            return false;
+                        }
+                        auto& correction = snapshot.corrections[
+                            static_cast<std::size_t>(spec.role)];
+                        const auto sourceOffset = value->find(
+                            "sourceReferenceOffset");
+                        const auto targetOffset = value->find(
+                            "targetReferenceOffset");
+                        const auto axis = value->find("axisCorrection");
+                        if ((sourceOffset != value->end()
+                                && !parseQuaternion(*sourceOffset,
+                                    correction.sourceReferenceOffset))
+                            || (targetOffset != value->end()
+                                && !parseQuaternion(*targetOffset,
+                                    correction.targetReferenceOffset))
+                            || (axis != value->end()
+                                && !parseQuaternion(*axis,
+                                    correction.axisCorrection))) {
+                            setError(error,
+                                "Retarget correction contains an invalid quaternion: "
+                                    + std::string(spec.canonicalName));
+                            return false;
+                        }
+                    }
                 }
             }
         } else {
@@ -460,9 +600,33 @@ bool SkeletonEditorCore::writeMappingFile(
             snapshot.targetSkeletonPath, destination.parent_path(),
             targetRelativeError);
         if (targetRelativeError) targetReference = snapshot.targetSkeletonPath;
+        Json targetRoles = Json::object();
+        Json corrections = Json::object();
+        for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+            const std::size_t roleIndex = static_cast<std::size_t>(spec.role);
+            const int targetIndex = snapshot.targetMapping.getSourceBoneIndex(
+                spec.role);
+            if (targetIndex >= 0) {
+                targetRoles[std::string(spec.canonicalName)] = {
+                    {"bonePath", targetBonePath(targetIndex)},
+                    {"targetIndex", targetIndex},
+                };
+            }
+            const RetargetBoneCorrection& correction =
+                snapshot.corrections[roleIndex];
+            corrections[std::string(spec.canonicalName)] = {
+                {"sourceReferenceOffset", quaternionJson(
+                    correction.sourceReferenceOffset)},
+                {"targetReferenceOffset", quaternionJson(
+                    correction.targetReferenceOffset)},
+                {"axisCorrection", quaternionJson(
+                    correction.axisCorrection)},
+            };
+        }
         root["target"] = {
             {"skeleton", normalizedPath(targetReference)},
             {"fingerprint", fileFingerprint(snapshot.targetSkeletonPath)},
+            {"roles", std::move(targetRoles)},
         };
         root["output"] = {
             {"mode", snapshot.outputMode.empty()
@@ -470,6 +634,7 @@ bool SkeletonEditorCore::writeMappingFile(
             {"platform", snapshot.platform.empty()
                 ? "default" : snapshot.platform},
         };
+        root["corrections"] = std::move(corrections);
     }
 
     std::error_code directoryError;
@@ -548,6 +713,7 @@ void SkeletonEditorCore::commit(Snapshot next, bool invalidateReady)
     }
     _history.push_back(std::move(next));
     _historyCursor = _history.size() - 1u;
+    syncTargetSkeleton();
     ++_revision;
 }
 
@@ -803,6 +969,11 @@ bool SkeletonEditorCore::configureRetarget(
     next.targetFingerprint = fileFingerprint(absolute);
     next.outputMode = "BakeToTarget";
     next.platform = platform.empty() ? "default" : platform;
+    next.targetMapping.clear();
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const int index = targetSkeleton.findBone(spec.canonicalName.data());
+        if (index >= 0) (void)next.targetMapping.bind(spec.role, index);
+    }
     commit(std::move(next));
     if (error != nullptr) error->clear();
     return true;
@@ -816,8 +987,78 @@ bool SkeletonEditorCore::clearRetarget()
     next.profileKind = RigProfileKind::Mapping;
     next.targetSkeletonPath.clear();
     next.targetFingerprint.clear();
+    next.targetMapping.clear();
+    next.corrections = {};
     next.outputMode = "SemanticNormalize";
     next.platform.clear();
+    commit(std::move(next));
+    return true;
+}
+
+bool SkeletonEditorCore::bindTarget(HumanoidBone role, int targetBoneIndex)
+{
+    if (current().profileKind != RigProfileKind::Retarget
+        || !roleInRange(role) || targetBoneIndex < 0
+        || targetBoneIndex >= static_cast<int>(_targetBones.size())) {
+        return false;
+    }
+    if (current().targetMapping.getSourceBoneIndex(role) == targetBoneIndex) {
+        return true;
+    }
+    Snapshot next = current();
+    (void)next.targetMapping.bind(role, targetBoneIndex);
+    commit(std::move(next));
+    return true;
+}
+
+bool SkeletonEditorCore::unbindTarget(HumanoidBone role)
+{
+    if (current().profileKind != RigProfileKind::Retarget
+        || !roleInRange(role)) return false;
+    if (!current().targetMapping.isBound(role)) return true;
+    Snapshot next = current();
+    (void)next.targetMapping.unbind(role);
+    commit(std::move(next));
+    return true;
+}
+
+const RetargetBoneCorrection& SkeletonEditorCore::retargetCorrection(
+    HumanoidBone role) const noexcept
+{
+    static const RetargetBoneCorrection identity{};
+    return roleInRange(role)
+        ? current().corrections[static_cast<std::size_t>(role)] : identity;
+}
+
+bool SkeletonEditorCore::setRetargetCorrection(
+    HumanoidBone role, const RetargetBoneCorrection& correction)
+{
+    if (current().profileKind != RigProfileKind::Retarget
+        || !roleInRange(role)) return false;
+    const auto valid = [](const ayt::math::FQuaternion& value) {
+        return std::isfinite(value.x) && std::isfinite(value.y)
+            && std::isfinite(value.z) && std::isfinite(value.w)
+            && value.length() >= 1.0e-4f;
+    };
+    if (!valid(correction.sourceReferenceOffset)
+        || !valid(correction.targetReferenceOffset)
+        || !valid(correction.axisCorrection)) return false;
+    Snapshot next = current();
+    auto& stored = next.corrections[static_cast<std::size_t>(role)];
+    stored.sourceReferenceOffset =
+        correction.sourceReferenceOffset.normalize();
+    stored.targetReferenceOffset =
+        correction.targetReferenceOffset.normalize();
+    stored.axisCorrection = correction.axisCorrection.normalize();
+    commit(std::move(next));
+    return true;
+}
+
+bool SkeletonEditorCore::resetRetargetCorrections()
+{
+    if (current().profileKind != RigProfileKind::Retarget) return false;
+    Snapshot next = current();
+    next.corrections = {};
     commit(std::move(next));
     return true;
 }
@@ -860,6 +1101,24 @@ SkeletonAuthoringStatus SkeletonEditorCore::status() const
                 != fileFingerprint(current().targetSkeletonPath)) {
             result.adaptation = SkeletonAdaptationState::Invalid;
             result.message = "The retarget target skeleton changed after this profile was saved.";
+        } else if (current().profileKind == RigProfileKind::Retarget) {
+            const HumanoidValidationResult targetChecked =
+                _targetSkeleton != nullptr
+                ? validateHumanoidSkeleton(*_targetSkeleton,
+                    current().targetMapping)
+                : HumanoidValidationResult{
+                    HumanoidValidationError::MissingRequiredBone};
+            if (!targetChecked) {
+                result.adaptation = targetChecked.error
+                        == HumanoidValidationError::MissingRequiredBone
+                    ? SkeletonAdaptationState::Incomplete
+                    : SkeletonAdaptationState::Invalid;
+                result.message = "Target mapping: ";
+                result.message += validationErrorName(targetChecked.error);
+            } else {
+                result.adaptation = SkeletonAdaptationState::Validated;
+                result.message = "Source and target humanoid mappings are valid.";
+            }
         } else {
             result.adaptation = current().nativeSkeleton
                 ? SkeletonAdaptationState::Native
@@ -990,6 +1249,39 @@ SkeletonPreflightReport SkeletonEditorCore::preflight(
             add(SkeletonPreflightCode::TargetSkeletonChanged,
                 "The retarget target skeleton changed after the profile was saved.",
                 current().targetSkeletonPath);
+        }
+        std::vector<int> targetOwner(_targetBones.size(), -1);
+        for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+            const int mapped = current().targetMapping.getSourceBoneIndex(
+                spec.role);
+            if (mapped < 0) {
+                if (spec.requirement == HumanoidBoneRequirement::Required) {
+                    add(SkeletonPreflightCode::TargetRequiredRoleMissing,
+                        "Required target role is not mapped: "
+                            + std::string(spec.canonicalName),
+                        current().targetSkeletonPath, spec.role);
+                }
+                continue;
+            }
+            if (mapped >= static_cast<int>(_targetBones.size())) {
+                add(SkeletonPreflightCode::TargetMappedBoneOutOfRange,
+                    "Target mapped bone index is outside the target skeleton for role: "
+                        + std::string(spec.canonicalName),
+                    current().targetSkeletonPath, spec.role,
+                    HumanoidBone::Invalid, mapped);
+                continue;
+            }
+            if (targetOwner[static_cast<std::size_t>(mapped)] >= 0) {
+                add(SkeletonPreflightCode::DuplicateTargetMappedBone,
+                    "Target bone is assigned to more than one humanoid role: "
+                        + _targetBones[static_cast<std::size_t>(mapped)].name,
+                    current().targetSkeletonPath, spec.role,
+                    static_cast<HumanoidBone>(
+                        targetOwner[static_cast<std::size_t>(mapped)]), mapped);
+            } else {
+                targetOwner[static_cast<std::size_t>(mapped)] =
+                    static_cast<int>(spec.role);
+            }
         }
         add(SkeletonPreflightCode::RetargetSolverUnavailable,
             "Retarget profile authoring is available, but pose retarget baking is not implemented yet.",
@@ -1286,6 +1578,7 @@ bool SkeletonEditorCore::undo()
 {
     if (!canUndo()) return false;
     --_historyCursor;
+    syncTargetSkeleton();
     ++_revision;
     return true;
 }
@@ -1294,6 +1587,7 @@ bool SkeletonEditorCore::redo()
 {
     if (!canRedo()) return false;
     ++_historyCursor;
+    syncTargetSkeleton();
     ++_revision;
     return true;
 }
@@ -1488,6 +1782,28 @@ std::string SkeletonEditorCore::bonePath(int boneIndex) const
     return result;
 }
 
+std::string SkeletonEditorCore::targetBonePath(int boneIndex) const
+{
+    if (boneIndex < 0
+        || boneIndex >= static_cast<int>(_targetBones.size())) return {};
+    std::vector<std::string> segments;
+    std::vector<std::uint8_t> visited(_targetBones.size(), 0u);
+    int cursor = boneIndex;
+    while (cursor >= 0 && cursor < static_cast<int>(_targetBones.size())) {
+        if (visited[static_cast<std::size_t>(cursor)] != 0u) return {};
+        visited[static_cast<std::size_t>(cursor)] = 1u;
+        segments.push_back(_targetBones[static_cast<std::size_t>(cursor)].name);
+        cursor = _targetBones[static_cast<std::size_t>(cursor)].parentIndex;
+    }
+    std::reverse(segments.begin(), segments.end());
+    std::string result;
+    for (const std::string& segment : segments) {
+        if (!result.empty()) result.push_back('/');
+        result += segment;
+    }
+    return result;
+}
+
 void SkeletonEditorCore::resolveBonePaths(
     Snapshot& snapshot,
     const std::array<std::string, kHumanoidBoneCount>& bonePaths) const
@@ -1510,6 +1826,77 @@ void SkeletonEditorCore::resolveBonePaths(
         }
         (void)snapshot.mapping.unbind(spec.role);
         if (resolved >= 0) (void)snapshot.mapping.bind(spec.role, resolved);
+    }
+}
+
+void SkeletonEditorCore::resolveTargetBonePaths(
+    Snapshot& snapshot,
+    const std::array<std::string, kHumanoidBoneCount>& bonePaths) const
+{
+    for (const HumanoidBoneSpec& spec : getHumanoidBoneSpecs()) {
+        const std::string& expected = bonePaths[
+            static_cast<std::size_t>(spec.role)];
+        if (expected.empty()) continue;
+        const int storedIndex = snapshot.targetMapping.getSourceBoneIndex(
+            spec.role);
+        if (storedIndex >= 0 && targetBonePath(storedIndex) == expected) continue;
+        int resolved = -1;
+        for (std::size_t index = 0; index < _targetBones.size(); ++index) {
+            if (targetBonePath(static_cast<int>(index)) != expected) continue;
+            if (resolved >= 0) {
+                resolved = -1;
+                break;
+            }
+            resolved = static_cast<int>(index);
+        }
+        (void)snapshot.targetMapping.unbind(spec.role);
+        if (resolved >= 0) {
+            (void)snapshot.targetMapping.bind(spec.role, resolved);
+        }
+    }
+}
+
+void SkeletonEditorCore::syncTargetSkeleton()
+{
+    if (current().profileKind != RigProfileKind::Retarget
+        || current().targetSkeletonPath.empty()) {
+        _targetSkeleton.reset();
+        _targetBones.clear();
+        return;
+    }
+    if (_targetSkeleton != nullptr
+        && normalizedPath(_targetSkeleton->getPath())
+            == normalizedPath(current().targetSkeletonPath)) {
+        return;
+    }
+    auto target = std::make_shared<ayt::resource::Skeleton>();
+    if (!target->load(current().targetSkeletonPath)) {
+        _targetSkeleton.reset();
+        _targetBones.clear();
+        return;
+    }
+    _targetSkeleton = std::move(target);
+    _targetBones.clear();
+    const ayt::resource::Bone* bones = _targetSkeleton->getBones();
+    _targetBones.reserve(_targetSkeleton->getBoneCount());
+    for (std::size_t index = 0; index < _targetSkeleton->getBoneCount(); ++index) {
+        SkeletonBoneView view;
+        view.index = static_cast<int>(index);
+        view.parentIndex = bones[index].parentIndex;
+        view.name = bones[index].name;
+        view.localPosition = bones[index].localPosition;
+        view.localRotation = bones[index].localRotation;
+        view.localScale = bones[index].localScale;
+        view.inverseBindMatrix = bones[index].inverseBindMatrix;
+        int parent = view.parentIndex;
+        std::size_t guard = 0u;
+        while (parent >= 0
+            && parent < static_cast<int>(_targetSkeleton->getBoneCount())
+            && guard++ < _targetSkeleton->getBoneCount()) {
+            ++view.depth;
+            parent = bones[parent].parentIndex;
+        }
+        _targetBones.push_back(std::move(view));
     }
 }
 
@@ -1628,6 +2015,22 @@ std::string SkeletonEditorCore::rigProfileFingerprint(
         canonical += spec.canonicalName;
         canonical += "=";
         canonical += index >= 0 ? bonePath(index) : "-";
+        const int targetIndex = snapshot.targetMapping.getSourceBoneIndex(
+            spec.role);
+        canonical += "->";
+        canonical += targetIndex >= 0 ? targetBonePath(targetIndex) : "-";
+        const RetargetBoneCorrection& correction = snapshot.corrections[
+            static_cast<std::size_t>(spec.role)];
+        const auto appendQuaternion = [&canonical](
+            const ayt::math::FQuaternion& value) {
+            std::ostringstream encoded;
+            encoded << std::setprecision(9) << value.x << "," << value.y
+                << "," << value.z << "," << value.w;
+            canonical += "|" + encoded.str();
+        };
+        appendQuaternion(correction.sourceReferenceOffset);
+        appendQuaternion(correction.targetReferenceOffset);
+        appendQuaternion(correction.axisCorrection);
     }
     return fnvHex("rig-input-", canonical);
 }
@@ -1774,6 +2177,9 @@ const char* SkeletonEditorCore::preflightCodeName(
     case SkeletonPreflightCode::SourceSkeletonChanged: return "sourceSkeletonChanged";
     case SkeletonPreflightCode::TargetSkeletonMissing: return "targetSkeletonMissing";
     case SkeletonPreflightCode::TargetSkeletonChanged: return "targetSkeletonChanged";
+    case SkeletonPreflightCode::TargetRequiredRoleMissing: return "targetRequiredRoleMissing";
+    case SkeletonPreflightCode::TargetMappedBoneOutOfRange: return "targetMappedBoneOutOfRange";
+    case SkeletonPreflightCode::DuplicateTargetMappedBone: return "duplicateTargetMappedBone";
     case SkeletonPreflightCode::RetargetSolverUnavailable: return "retargetSolverUnavailable";
     case SkeletonPreflightCode::AnimationUnreadable: return "animationUnreadable";
     case SkeletonPreflightCode::AnimationTrackBoneMissing: return "animationTrackBoneMissing";

@@ -363,6 +363,21 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     CHECK(core.targetSkeletonPath() == targetPath.generic_string());
     CHECK(core.bakePlatform() == "windows-d3d12");
     CHECK(core.outputMode() == "BakeToTarget");
+    CHECK(core.targetSkeleton() != nullptr);
+    CHECK(core.targetMapping().getBoundCount() == 17u);
+    RetargetBoneCorrection correction;
+    correction.sourceReferenceOffset = ayt::math::FQuaternion::fromAxisAngle(
+        {1.0f, 0.0f, 0.0f}, 0.1f);
+    correction.targetReferenceOffset = ayt::math::FQuaternion::fromAxisAngle(
+        {0.0f, 1.0f, 0.0f}, -0.2f);
+    correction.axisCorrection = ayt::math::FQuaternion::fromAxisAngle(
+        {0.0f, 0.0f, 1.0f}, 0.3f);
+    CHECK(core.setRetargetCorrection(HumanoidBone::Hips, correction));
+    CHECK(core.undo());
+    CHECK(core.retargetCorrection(HumanoidBone::Hips).axisCorrection.w == 1.0f);
+    CHECK(core.redo());
+    CHECK(core.retargetCorrection(HumanoidBone::Hips).axisCorrection
+        .dot(correction.axisCorrection) > 0.999f);
     CHECK(core.saveMappingAs(profilePath.string(), &error));
 
     const auto encoded = nlohmann::json::parse(
@@ -371,6 +386,9 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     CHECK(encoded["target"]["skeleton"] == "target.ayskel");
     CHECK(encoded["output"]["mode"] == "BakeToTarget");
     CHECK(encoded["output"]["platform"] == "windows-d3d12");
+    CHECK(encoded["target"]["roles"]["hips"]["bonePath"]
+        == "sceneRoot/motionRoot/hips");
+    CHECK(encoded["corrections"]["hips"]["axisCorrection"].size() == 4u);
 
     RigProfileInfo info;
     CHECK(SkeletonEditorCore::inspectRigProfile(
@@ -391,6 +409,21 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     SkeletonEditorCore reopened;
     CHECK(reopened.open(profilePath.string(), &error));
     CHECK(reopened.profileKind() == RigProfileKind::Retarget);
+    CHECK(reopened.targetMapping().getBoundCount() == 17u);
+    CHECK(reopened.retargetCorrection(HumanoidBone::Hips).axisCorrection
+        .dot(correction.axisCorrection) > 0.999f);
+
+    auto legacyMinimal = encoded;
+    legacyMinimal["target"].erase("roles");
+    legacyMinimal.erase("corrections");
+    const auto legacyMinimalPath = fixtureRoot()
+        / "legacy-minimal-retarget.ayrig";
+    CHECK(ayt::io::File::writeAllText(
+        legacyMinimalPath.string(), legacyMinimal.dump(2) + "\n"));
+    SkeletonEditorCore migrated;
+    CHECK(migrated.open(legacyMinimalPath.string(), &error));
+    CHECK(migrated.targetMapping().getBoundCount() == 17u);
+
     const auto plan = reopened.dryRunBake();
     CHECK_FALSE(plan.canBake());
     CHECK_FALSE(plan.scopeTag.empty());

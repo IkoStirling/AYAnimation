@@ -59,6 +59,9 @@ enum class SkeletonPreflightCode : std::uint8_t {
     SourceSkeletonChanged,
     TargetSkeletonMissing,
     TargetSkeletonChanged,
+    TargetRequiredRoleMissing,
+    TargetMappedBoneOutOfRange,
+    DuplicateTargetMappedBone,
     RetargetSolverUnavailable,
     AnimationUnreadable,
     AnimationTrackBoneMissing,
@@ -183,6 +186,15 @@ struct SkeletonBoneView {
     ayt::math::Float4x4 inverseBindMatrix = ayt::math::Float4x4::identity();
 };
 
+struct RetargetBoneCorrection {
+    ayt::math::FQuaternion sourceReferenceOffset =
+        ayt::math::FQuaternion::identity();
+    ayt::math::FQuaternion targetReferenceOffset =
+        ayt::math::FQuaternion::identity();
+    ayt::math::FQuaternion axisCorrection =
+        ayt::math::FQuaternion::identity();
+};
+
 // UI-free authoring model shared by AYEditor and future command-line tools.
 // The source .ayskel is never modified: authored mapping data is stored in a
 // .ayrig RigProfile. Legacy .aysmap files are read only and migrate to .ayrig
@@ -221,6 +233,10 @@ public:
     }
     [[nodiscard]] std::shared_ptr<const ayt::resource::Skeleton>
         skeleton() const noexcept { return _skeleton; }
+    [[nodiscard]] std::shared_ptr<const ayt::resource::Skeleton>
+        targetSkeleton() const noexcept { return _targetSkeleton; }
+    [[nodiscard]] const std::vector<SkeletonBoneView>& targetBones()
+        const noexcept { return _targetBones; }
 
     [[nodiscard]] int selectedBone() const noexcept { return _selectedBone; }
     bool selectBone(int boneIndex) noexcept;
@@ -254,6 +270,16 @@ public:
                            const std::string& platform,
                            std::string* error = nullptr);
     bool clearRetarget();
+    [[nodiscard]] const HumanoidBoneMap& targetMapping() const noexcept {
+        return current().targetMapping;
+    }
+    bool bindTarget(HumanoidBone role, int targetBoneIndex);
+    bool unbindTarget(HumanoidBone role);
+    [[nodiscard]] const RetargetBoneCorrection& retargetCorrection(
+        HumanoidBone role) const noexcept;
+    bool setRetargetCorrection(HumanoidBone role,
+        const RetargetBoneCorrection& correction);
+    bool resetRetargetCorrections();
     [[nodiscard]] RigProfileKind profileKind() const noexcept {
         return current().profileKind;
     }
@@ -337,6 +363,8 @@ public:
 private:
     struct Snapshot {
         HumanoidBoneMap mapping;
+        HumanoidBoneMap targetMapping;
+        std::array<RetargetBoneCorrection, kHumanoidBoneCount> corrections{};
         bool nativeSkeleton = false;
         bool notApplicable = false;
         RigProfileKind profileKind = RigProfileKind::Mapping;
@@ -359,6 +387,8 @@ private:
                          std::string& sourceFingerprint,
                          std::string& profileId,
                          std::array<std::string, kHumanoidBoneCount>& bonePaths,
+                         std::array<std::string, kHumanoidBoneCount>& targetBonePaths,
+                         bool& targetRolesPresent,
                          std::string* error) const;
     bool writeMappingFile(const std::string& path,
                           const Snapshot& snapshot,
@@ -373,8 +403,12 @@ private:
     void resolveBonePaths(Snapshot& snapshot,
                           const std::array<std::string,
                               kHumanoidBoneCount>& bonePaths) const;
+    void resolveTargetBonePaths(Snapshot& snapshot,
+        const std::array<std::string, kHumanoidBoneCount>& bonePaths) const;
+    void syncTargetSkeleton();
     void loadBakeReceipt(Snapshot& snapshot) const;
     [[nodiscard]] std::string bonePath(int boneIndex) const;
+    [[nodiscard]] std::string targetBonePath(int boneIndex) const;
     [[nodiscard]] std::string skeletonFingerprint() const;
     [[nodiscard]] static std::string fileFingerprint(const std::string& path);
     [[nodiscard]] std::string bakeScopeTag(const Snapshot& snapshot) const;
@@ -390,7 +424,9 @@ private:
     std::string _profileId;
     std::string _loadedSourceFingerprint;
     std::shared_ptr<ayt::resource::Skeleton> _skeleton;
+    std::shared_ptr<ayt::resource::Skeleton> _targetSkeleton;
     std::vector<SkeletonBoneView> _bones;
+    std::vector<SkeletonBoneView> _targetBones;
     std::vector<ayt::math::Float4x4> _bindWorld;
     std::vector<ayt::math::Float4x4> _poseWorld;
     std::vector<Snapshot> _history;
