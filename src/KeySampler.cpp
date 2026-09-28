@@ -1,4 +1,5 @@
 #include <AYAnimation/KeySampler.h>
+#include <AYMath/CurveMath.h>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -80,14 +81,7 @@ inline size_t valueFloatsPerKey(ayt::resource::AnimTrackType type)
 float hermite(float a, float b, float outTangent, float inTangent,
               float fraction, float span)
 {
-    const float t2 = fraction * fraction;
-    const float t3 = t2 * fraction;
-    const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
-    const float h10 = t3 - 2.0f * t2 + fraction;
-    const float h01 = -2.0f * t3 + 3.0f * t2;
-    const float h11 = t3 - t2;
-    return h00 * a + h10 * span * outTangent
-        + h01 * b + h11 * span * inTangent;
+    return ayt::math::sampleCubicHermite(a, b, outTangent, inTangent, fraction, span);
 }
 
 } // namespace
