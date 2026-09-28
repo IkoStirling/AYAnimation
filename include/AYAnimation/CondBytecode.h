@@ -39,8 +39,8 @@
 //              stream (no separate operand array).
 //   * INV-57 — Bytecode lives in shared_ptr<CondBytecode> (not unique_ptr)
 //              — vector<Transition> push_back requires copyable Transition.
-//   * INV-58 — OP_AND / OP_OR short-circuit encoded as relative jump
-//              offset (±127 opcodes) — left false → skip right subtree.
+//   * INV-58 — Compiler emits forward uint32 byte offsets for short-circuit.
+//              Legacy int8 opcodes remain readable; invalid offsets fail soft.
 
 #pragma once
 
@@ -60,6 +60,7 @@ struct ConditionEvalCtx;  // forward decl — note: tag is `struct` (matches
 // All opcodes are 1 byte. Operands (when present) follow immediately
 // in the program stream in fixed order:
 //   OP_AND / OP_OR          : OP, int8_t relJump  (signed right-subtree byte count)
+//   OP_AND_WIDE / OP_OR_WIDE : OP, uint32_t relJump (forward byte count)
 //   OP_NOT                  : OP                   (no operand; takes 1 from stack)
 //   OP_GT / OP_LT / OP_EQ / OP_NE : OP             (no operand; pops 2 from stack)
 //   OP_ADD / OP_SUB / OP_MUL / OP_DIV : OP         (no operand; pops 2, pushes 1 —
@@ -87,6 +88,8 @@ enum class CondOpByte : uint8_t {
     OP_MUL          = 12,  // a * b
     OP_DIV          = 13,  // b == 0.0f → 0.0f (INV-67); else a / b
     OP_NEG          = 14,  // -a
+    OP_AND_WIDE     = 15,
+    OP_OR_WIDE      = 16,
 };
 
 // === Reserved ident IDs ================================================
@@ -118,7 +121,7 @@ struct CondBytecode {
 
     // Evaluate the compiled program against `ctx`. Returns the boolean result.
     // Stack-machine: the evaluator uses a FIXED-SIZE float stack array
-    // (capacity 16; AST depth ≤ 5 production) — no heap allocation on the
+    // (capacity 64; parser/compiler AST depth is bounded to 64) — no heap allocation on the
     // hot path (a std::vector stack with reserve(8) was ~8x slower in the
     // debug benchmark). On stack overflow / malformed program, returns
     // false (fail-soft, mirrors INV-33).
@@ -127,7 +130,7 @@ struct CondBytecode {
 
 // === Compile API ========================================================
 // Implemented in ConditionParser.cpp. Post-order walk of the AST → flat
-// program. Returns nullptr only if the AST is null (defensive).
+// program. Returns nullptr on null/invalid/deep AST or allocation failure.
 //
 // CompileToBytecode NEVER throws; it just walks node pointers and emits
 // bytes. The caller (Transition::evaluateBytecode) is responsible for

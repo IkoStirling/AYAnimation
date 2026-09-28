@@ -11,6 +11,9 @@
 //     dot(a, b) < 0 to defend against visual twitching.
 //   - Sample functions are responsible for normalizing quaternions on
 //     return.
+// Multi-key times must match keyCount and be non-decreasing. Count mismatch
+// or NaN sample time yields neutral output (zero/identity), never indexes OOB.
+// Infinite sample times clamp to the endpoint; single keys need no time array.
 #include <AYMath/MathTypes.h>
 #include <AYResource/assetsDefs/IAnimation.h>
 #include <cstddef>

@@ -42,7 +42,8 @@ class ConditionParser {
 public:
     // Parse a condition expression. Returns the AST root or nullptr.
     // On success, outErr is cleared. On failure, outErr receives a
-    // single-line diagnostic with line + col + reason.
+    // single-line diagnostic with line + col + reason. Limits: 64 AST/nesting
+    // depth, 1024 tokens, 65536 source bytes; finite, fully consumed numbers.
     static std::unique_ptr<CondExprAst> parse(
         const std::string& src,
         std::string& outErr);

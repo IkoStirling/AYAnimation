@@ -57,6 +57,22 @@ inline AnimNotifySourceTag tagForSlotIndex(uint32_t slotIdx)
     return static_cast<AnimNotifySourceTag>(static_cast<uint8_t>(AnimNotifySourceTag::Additive_0) + slotIdx);
 }
 
+// At most one delivery per marker per tick, including long multi-loop ticks.
+// Exclude the previously delivered boundary; initial play includes its start.
+bool crossesNotify(float marker, float prev, float next, float duration,
+                   bool wrapped, float travel, bool includeStart)
+{
+    if (!std::isfinite(marker) || travel == 0.0f) return false;
+    if (wrapped && duration > 0.0f && std::fabs(travel) >= duration)
+        return marker >= 0.0f && marker <= duration;
+    if (includeStart && marker == prev) return true;
+    if (!wrapped) return travel > 0.0f ? marker > prev && marker <= next
+                                       : marker < prev && marker >= next;
+    return travel > 0.0f
+        ? (marker > prev && marker <= duration) || (marker >= 0.0f && marker <= next)
+        : (marker < prev && marker >= 0.0f) || (marker <= duration && marker >= next);
+}
+
 } // namespace
 
 // ===========================================================================
@@ -320,6 +336,7 @@ void AnimationPlayer::setSkeleton(
     // skeleton. P1.5: iterates every slot's tracks in addition to
     // the base _tracks.
     invalidateBoneIndexCache();
+    AssetBoneCache::instance().bindSkeleton(_skeleton);
 
     // P1.4 / P1.5 — ref-pose capture buffer resize + state flip per slot.
     // Each slot that has refPoseCapture enabled owns its own captured
@@ -411,6 +428,7 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
     // in [0, tick_dt).
     _pendingNotifies.clear();
     _prevTickTime = 0.0f;
+    _notifyStartPending = true;
 
     _tracks.clear();
     if (anim == nullptr) return;
@@ -576,6 +594,7 @@ void AnimationPlayer::resume() { _paused = false; }
 
 void AnimationPlayer::setTime(float t)
 {
+    if (!std::isfinite(t)) return;
     _time = t;
     if (_baseClip && _loop) {
         const float d = _baseClip->getDuration();
@@ -587,6 +606,7 @@ void AnimationPlayer::setTime(float t)
     // mark prev = current so the next tick() fires anything in
     // [current, current + dt).
     _prevTickTime = _time;
+    _notifyStartPending = false;
     _pendingNotifies.clear();
 
     // P1.5 — multi-slot seek loop. Each slot jumps independently per
@@ -605,6 +625,7 @@ void AnimationPlayer::setTime(float t)
             }
         }
         s.prevTickTime = s.time;
+        s.notifyStartPending = false;
         s.pendingNotifies.clear();
         if (s.syncToBase) {
             s.time = _time;
@@ -646,6 +667,8 @@ void AnimationPlayer::setBlendWeight(float w)
 
 void AnimationPlayer::tick(float dt)
 {
+    const float travel = dt * _playRate;
+    if (!std::isfinite(dt) || !std::isfinite(travel) || !std::isfinite(_time + travel)) return;
     // Phase 1.5: when paused or no clip, keep prev in sync with _time so
     // the next un-paused tick won't fire markers across [prev, _time)
     // for the time spent paused. Per-slot cursors stay synced too (INV-8
@@ -661,7 +684,7 @@ void AnimationPlayer::tick(float dt)
     }
 
     const float prev = _time;
-    _time += dt * _playRate;
+    _time += travel;
     const float d = _baseClip->getDuration();
     bool wrapped = false;
     if (d > 0.0f) {
@@ -672,10 +695,13 @@ void AnimationPlayer::tick(float dt)
         } else if (_time > d) {
             _time = d;
             _paused = true;   // clamp to end-of-clip when not looping
+        } else if (_time < 0.0f) {
+            _time = 0.0f;
         }
     }
 
-    dispatchPendingNotifies(prev, _time, wrapped);
+    dispatchPendingNotifies(prev, _time, wrapped, travel);
+    if (travel != 0.0f) _notifyStartPending = false;
     _prevTickTime = _time;
 
     // P1.5 — per-slot additive branches. Order: slot 0 first, slot 7
@@ -694,12 +720,15 @@ void AnimationPlayer::tick(float dt)
             // the same prev/next as the base.
             const float prevAdd = s.prevTickTime;
             s.time = _time;
-            dispatchSlotNotifies(s, prevAdd, s.time, wrapped);
+            dispatchSlotNotifies(s, prevAdd, s.time, wrapped, travel);
+            if (travel != 0.0f) s.notifyStartPending = false;
             s.prevTickTime = s.time;
         } else {
             // P1.3 — independent axis (the per-slot default).
             const float prevAdd = s.time;
-            s.time += dt * s.playRate;
+            const float slotTravel = dt * s.playRate;
+            if (!std::isfinite(slotTravel) || !std::isfinite(s.time + slotTravel)) continue;
+            s.time += slotTravel;
             const float dAdd = s.clip->getDuration();
             bool wrappedAdd = false;
             if (dAdd > 0.0f) {
@@ -709,9 +738,12 @@ void AnimationPlayer::tick(float dt)
                     wrappedAdd = (rawAdd >= dAdd) || (rawAdd < 0.0f);
                 } else if (s.time > dAdd) {
                     s.time = dAdd;
+                } else if (s.time < 0.0f) {
+                    s.time = 0.0f;
                 }
             }
-            dispatchSlotNotifies(s, prevAdd, s.time, wrappedAdd);
+            dispatchSlotNotifies(s, prevAdd, s.time, wrappedAdd, slotTravel);
+            if (slotTravel != 0.0f) s.notifyStartPending = false;
             s.prevTickTime = s.time;
         }
 
@@ -746,7 +778,7 @@ void AnimationPlayer::tick(float dt)
 
 void AnimationPlayer::dispatchPendingNotifies(float prev,
                                               float next,
-                                              bool  wrapped)
+                                              bool  wrapped, float travel)
 {
     if (_baseClip == nullptr) return;
     const uint32_t n = _baseClip->getNotifyCount();
@@ -774,23 +806,9 @@ void AnimationPlayer::dispatchPendingNotifies(float prev,
     };
 
     const float dur = _baseClip->getDuration();
-    if (!wrapped) {
-        const float lo = std::min(prev, next);
-        const float hi = std::max(prev, next);
-        for (uint32_t i = 0; i < n; ++i) {
-            const float t = _baseClip->getNotifyTime(i);
-            if (t < lo) continue;
-            if (t > hi) break;
+    for (uint32_t i = 0; i < n; ++i)
+        if (crossesNotify(_baseClip->getNotifyTime(i), prev, next, dur, wrapped, travel, _notifyStartPending))
             fireOne(i);
-        }
-    } else {
-        for (uint32_t i = 0; i < n; ++i) {
-            const float t = _baseClip->getNotifyTime(i);
-            const bool inA = (t >= prev) && (t <  dur);
-            const bool inB = (t >= 0.0f) && (t <= next);
-            if (inA || inB) fireOne(i);
-        }
-    }
 }
 
 const std::vector<AnimationPlayer::AnimNotifyRecord>&
@@ -818,7 +836,7 @@ AnimationPlayer::consumePendingNotifies()
 void AnimationPlayer::dispatchSlotNotifies(AdditiveSlot& slot,
                                            float prev,
                                            float next,
-                                           bool  wrapped)
+                                           bool  wrapped, float travel)
 {
     if (slot.clip == nullptr) return;
     const uint32_t n = slot.clip->getNotifyCount();
@@ -846,23 +864,9 @@ void AnimationPlayer::dispatchSlotNotifies(AdditiveSlot& slot,
     };
 
     const float dur = slot.clip->getDuration();
-    if (!wrapped) {
-        const float lo = std::min(prev, next);
-        const float hi = std::max(prev, next);
-        for (uint32_t i = 0; i < n; ++i) {
-            const float t = slot.clip->getNotifyTime(i);
-            if (t < lo) continue;
-            if (t > hi) break;
+    for (uint32_t i = 0; i < n; ++i)
+        if (crossesNotify(slot.clip->getNotifyTime(i), prev, next, dur, wrapped, travel, slot.notifyStartPending))
             fireOne(i);
-        }
-    } else {
-        for (uint32_t i = 0; i < n; ++i) {
-            const float t = slot.clip->getNotifyTime(i);
-            const bool inA = (t >= prev) && (t <  dur);
-            const bool inB = (t >= 0.0f) && (t <= next);
-            if (inA || inB) fireOne(i);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1754,6 +1758,7 @@ bool AnimationPlayer::setAdditiveLayerSource(uint32_t slotId,
     s.clip              = src;
     s.time              = 0.0f;
     s.prevTickTime      = 0.0f;
+    s.notifyStartPending = true;
     s.playRate          = playRate;
     s.loop              = loop;
     s.pendingNotifies.clear();

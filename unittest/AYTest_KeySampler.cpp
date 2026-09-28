@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 using namespace ayt::anim;
@@ -220,5 +221,27 @@ TEST_SUITE(KeySamplerTests)
     // build. The invariant is documented at the call site (KeySampler.cpp
     // line ~38) and the monotonicity contract is exercised by all other
     // cases implicitly (they use strictly increasing times).
+
+    TEST_CASE(invalid_counts_and_nan_return_neutral_without_indexing) {
+        const float scalars[] = {3.0f, 8.0f};
+        const FVector3 vectors[] = {{3, 4, 5}, {8, 9, 10}};
+        const FQuaternion rotations[] = {FQuaternion::identity(), FQuaternion::identity()};
+        for (const auto& times : {std::vector<float>{}, {0.0f}, {0.0f, 1.0f, 2.0f}}) {
+            float scalar = -1;
+            FVector3 vector;
+            FQuaternion rotation;
+            sampleTrackFloat(scalars, 2, times, 5, scalar);
+            sampleTrackVector3(vectors, 2, times, 5, vector);
+            sampleTrackQuaternion(rotations, 2, times, 5, rotation);
+            CHECK_FLOAT_EQ(scalar, 0, 1e-6f);
+            CHECK_FLOAT_EQ(vector.x, 0, 1e-6f);
+            CHECK_FLOAT_EQ(rotation.w, 1, 1e-6f);
+        }
+        float scalar = -1;
+        sampleTrackFloat(scalars, 2, {0, 1}, std::numeric_limits<float>::quiet_NaN(), scalar);
+        CHECK_FLOAT_EQ(scalar, 0, 1e-6f);
+        sampleTrackFloat(scalars, 2, {0, 1}, std::numeric_limits<float>::infinity(), scalar);
+        CHECK_FLOAT_EQ(scalar, 8, 1e-6f);
+    }
 
 TEST_SUITE_END

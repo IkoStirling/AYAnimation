@@ -276,6 +276,7 @@ struct AdditiveSlot {
     float                            playRate          = 1.0f;
     bool                             loop              = true;
     float                            prevTickTime      = 0.0f;
+    bool                             notifyStartPending = true;
     std::vector<TrackSlice>          tracks;
     std::vector<AnimNotifyRecord>    pendingNotifies;
 
@@ -708,7 +709,13 @@ public:
     bool  isPaused() const            { return _paused; }
     bool  isValid() const             { return _skeleton != nullptr && _baseClip != nullptr; }
 
+    /// Advances finite time; Notify excludes the previous boundary (initial
+    /// play includes its start). Seek fires none. Reverse/long loop ticks
+    /// deliver each crossed marker at most once per tick, not once per cycle.
     void tick(float dt);
+    /// Evaluate the current pose before skinned render extraction. Borrowed
+    /// clips, masks and IK data must remain valid and immutable during evaluation.
+    /// Skeleton/clip edits require rebind; import/retarget is a separate pipeline.
     void evaluate();
 
     // === Matrix results (renderer reads) ===
@@ -753,7 +760,7 @@ private:
     // Phase 1.5 — internal scan-fire-callback implementation. Declared
     // here, defined in AnimationPlayer.cpp. Public callers use the sink
     // setter + consumePendingNotifies() instead.
-    void dispatchPendingNotifies(float prev, float next, bool wrapped);
+    void dispatchPendingNotifies(float prev, float next, bool wrapped, float travel);
 
     // P1.4 — bone index cache management. See TrackSlice header for the
     // sentinel semantics (kBoneUnresolved = INT32_MIN, -1 = cached miss).
@@ -800,7 +807,7 @@ private:
 
     // Per-slot dispatch (P1.5). Called from the Phase 1b per-slot loop
     // inside tick() / evaluate().
-    void dispatchSlotNotifies(AdditiveSlot& slot, float prev, float next, bool wrapped);
+    void dispatchSlotNotifies(AdditiveSlot& slot, float prev, float next, bool wrapped, float travel);
 
     // Merged notify rebuild + consume.
     void rebuildMergedNotifies();
@@ -926,6 +933,7 @@ private:
     std::vector<AnimNotifyRecord>  _pendingNotifies;
     std::vector<AnimNotifyRecord>  _pendingNotifiesMerged;   // P1.5 NEW
     float                           _prevTickTime = 0.0f;
+    bool                            _notifyStartPending = true;
 
     // P3.x刀 N+1.C — Per-state AnimNotify routing. Recorded into
     // AnimNotifyRecord::fromStateName on push. Setter is called by

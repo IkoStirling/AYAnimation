@@ -65,6 +65,27 @@ bool AssetBoneCache::isThreadSafe() const noexcept
     return _threadSafe;
 }
 
+void AssetBoneCache::bindSkeleton(const std::shared_ptr<const ayt::resource::ISkeleton>& skeleton)
+{
+    if (!skeleton) return;
+    uint64_t topology = 14695981039346656037ull;
+    const auto mix = [&](uint8_t byte) { topology = (topology ^ byte) * 1099511628211ull; };
+    for (size_t i = 0; i < skeleton->getBoneCount(); ++i) {
+        for (unsigned char byte : skeleton->getBones()[i].name) mix(byte);
+        mix(0); // distinguish concatenated names
+    }
+    std::unique_lock<std::mutex> lk = maybeLock(_mu, _threadSafe);
+    for (auto it = _bindings.begin(); it != _bindings.end();) {
+        if (it->second.owner.expired()) {
+            _map.erase(it->first);
+            it = _bindings.erase(it);
+        } else ++it;
+    }
+    auto& binding = _bindings[skeleton.get()];
+    if (binding.owner.expired() || binding.topology != topology) _map.erase(skeleton.get());
+    binding = {skeleton, topology};
+}
+
 int32_t AssetBoneCache::lookup(const ayt::resource::ISkeleton* skel,
                                const char* name) const
 {
@@ -111,12 +132,14 @@ void AssetBoneCache::invalidate(const ayt::resource::ISkeleton* skel)
     if (skel == nullptr) return;
     std::unique_lock<std::mutex> lk = maybeLock(_mu, _threadSafe);
     _map.erase(skel);
+    _bindings.erase(skel);
 }
 
 void AssetBoneCache::clear()
 {
     std::unique_lock<std::mutex> lk = maybeLock(_mu, _threadSafe);
     _map.clear();
+    _bindings.clear();
 }
 
 size_t AssetBoneCache::skeletonEntryCount() const

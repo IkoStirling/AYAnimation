@@ -26,10 +26,11 @@ namespace ayt::anim
 {
 namespace
 {
-constexpr std::size_t kStackCapacity = 16;
+constexpr std::size_t kStackCapacity = 64;
 }
 
 bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
+    if (program.empty()) return false;
     // Fixed array stack — depth ≤ AST depth ≤ 5 production; +11 safety.
     // sp is the next free slot; guard pushes with sp >= kStackCapacity
     // (fail-soft, never write past the array).
@@ -46,29 +47,29 @@ bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
             // Encoding: OP_AND/OR, int8_t relJump  (signed right-subtree
             // byte count). Left evaluated first; if decisive, pc advances
             // by relJump bytes to skip the right subtree (INV-58).
-            case CondOpByte::OP_AND: {
-                if (pc >= end || sp == 0) return false;   // malformed/underflow
-                const int8_t relJump = static_cast<int8_t>(*pc++);
-                const bool left = (stack[sp - 1] != 0.0f);
-                --sp;
-                if (!left) {
-                    // Short-circuit: skip right subtree.
-                    pc += relJump;
-                    stack[sp++] = 0.0f;                   // false
-                } else {
-                    // Fall through into right subtree — already in program
-                    // stream at current pc; loop continues.
-                }
-                break;
-            }
-            case CondOpByte::OP_OR: {
+            case CondOpByte::OP_AND:
+            case CondOpByte::OP_OR:
+            case CondOpByte::OP_AND_WIDE:
+            case CondOpByte::OP_OR_WIDE: {
                 if (pc >= end || sp == 0) return false;
-                const int8_t relJump = static_cast<int8_t>(*pc++);
+                uint32_t relJump = 0;
+                const bool wide = op == CondOpByte::OP_AND_WIDE || op == CondOpByte::OP_OR_WIDE;
+                if (wide) {
+                    if (end - pc < sizeof(relJump)) return false;
+                    std::memcpy(&relJump, pc, sizeof(relJump));
+                    pc += sizeof(relJump);
+                } else {
+                    const auto legacy = static_cast<int8_t>(*pc++);
+                    if (legacy < 0) return false; // backward loops were never compiler output
+                    relJump = static_cast<uint32_t>(legacy);
+                }
+                if (relJump > static_cast<std::size_t>(end - pc)) return false;
                 const bool left = (stack[sp - 1] != 0.0f);
                 --sp;
-                if (left) {
-                    pc += relJump;                        // short-circuit skip
-                    stack[sp++] = 1.0f;                   // true
+                const bool isAnd = op == CondOpByte::OP_AND || op == CondOpByte::OP_AND_WIDE;
+                if (isAnd ? !left : left) {
+                    pc += relJump;
+                    stack[sp++] = left ? 1.0f : 0.0f;
                 }
                 break;
             }
@@ -150,7 +151,7 @@ bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
 
             // === OP_LOAD_PARAM (u32 hash) → ctx.params linear scan =====
             case CondOpByte::OP_LOAD_PARAM: {
-                if (pc + 4 > end) return false;
+                if (end - pc < 4) return false;
                 uint32_t hash;
                 std::memcpy(&hash, pc, 4);
                 pc += 4;
@@ -167,7 +168,7 @@ bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
 
             // === OP_LOAD_LITERAL (u32 idx) → literals[] table lookup ==
             case CondOpByte::OP_LOAD_LITERAL: {
-                if (pc + 4 > end) return false;
+                if (end - pc < 4) return false;
                 uint32_t idx;
                 std::memcpy(&idx, pc, 4);
                 pc += 4;
@@ -176,6 +177,7 @@ bool CondBytecode::evaluate(const ConditionEvalCtx& ctx) const {
                 stack[sp++] = literals[idx];               // float, verbatim
                 break;
             }
+            default: return false;
 
             // === OP_LOAD_RESERVED (u8 rid) → ctx.currentStateTime =====
             // INV-55 — reserved ident encoded as dedicated opcode. 0

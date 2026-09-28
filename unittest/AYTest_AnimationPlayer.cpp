@@ -29,6 +29,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -3083,6 +3084,91 @@ TEST_SUITE(AnimationPlayerTests)
 
         cache.clear();
         CHECK(cache.skeletonEntryCount() == 0u);
+    }
+
+    TEST_CASE(notify_exact_boundary_zero_tick_and_seek_do_not_repeat) {
+        Animation clip;
+        clip.setDuration(2);
+        clip.addNotify({"Start", 0, 0});
+        clip.addNotify({"Half", 0.5f, 0});
+        AnimationPlayer player;
+        player.play(&clip);
+        player.tick(0);
+        CHECK(player.consumePendingNotifies().empty());
+        player.tick(0.5f);
+        CHECK(player.consumePendingNotifies().size() == 2u);
+        player.tick(0);
+        CHECK(player.consumePendingNotifies().empty());
+        player.tick(0.1f);
+        CHECK(player.consumePendingNotifies().empty());
+        player.setTime(0.5f);
+        player.tick(0.1f);
+        CHECK(player.consumePendingNotifies().empty());
+    }
+
+    TEST_CASE(notify_long_loop_and_reverse_wrap_cover_crossed_markers_once) {
+        Animation clip;
+        clip.setDuration(2);
+        clip.addNotify({"Gap", 0.6f, 0});
+        clip.addNotify({"Tail", 1.8f, 0});
+        AnimationPlayer player;
+        player.play(&clip);
+        player.setLoop(true);
+        player.setTime(0.7f);
+        player.tick(3.8f); // full loop crossed, including gap between next and prev
+        CHECK(player.consumePendingNotifies().size() == 2u);
+        player.setTime(0.2f);
+        player.setPlayRate(-1);
+        player.tick(0.5f);
+        const auto& reverse = player.consumePendingNotifies();
+        CHECK(reverse.size() == 1u);
+        if (!reverse.empty()) CHECK(std::string(reverse[0].name) == "Tail");
+        player.tick(std::numeric_limits<float>::quiet_NaN());
+        CHECK_FLOAT_EQ(player.getTime(), 1.7f, 1e-5f);
+    }
+
+    TEST_CASE(additive_notify_boundaries_share_base_contract) {
+        Animation base;
+        base.setDuration(2);
+        Animation layer;
+        layer.setDuration(2);
+        layer.addNotify({"LayerHalf", 0.5f, 0});
+        AnimationPlayer player;
+        player.play(&base);
+        CHECK(player.setAdditiveLayerSource(0, &layer, 1, true));
+        player.tick(0.5f);
+        CHECK(player.consumePendingNotifiesMerged().size() == 1u);
+        player.tick(0);
+        CHECK(player.consumePendingNotifiesMerged().empty());
+        player.tick(0.1f);
+        CHECK(player.consumePendingNotifiesMerged().empty());
+    }
+
+    TEST_CASE(rebinding_edited_skeleton_rebuilds_shared_and_player_indices) {
+        AssetBoneCache::instance().clear();
+        auto skeleton = std::make_shared<Skeleton>(makeTwoBoneSkeleton());
+        Animation clip;
+        clip.setTicksPerSecond(30);
+        clip.setDuration(1);
+        clip.addTrack(makeRootPosTrack());
+        AnimationPlayer player;
+        player.setSkeleton(skeleton);
+        player.play(&clip);
+        player.setLoop(false);
+        player.setTime(1);
+        player.evaluate();
+        CHECK(AssetBoneCache::instance().lookup(skeleton.get(), "Root") == 0);
+        Bone first = skeleton->getBones()[0];
+        Bone second = skeleton->getBones()[1];
+        first.name = "Other";
+        second.name = "Root";
+        skeleton->setBone(0, first);
+        skeleton->setBone(1, second);
+        player.setSkeleton(skeleton);
+        player.evaluate();
+        CHECK(AssetBoneCache::instance().lookup(skeleton.get(), "Root") == 1);
+        CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[0].transformPoint({0,0,0}).x, 0, 1e-5f);
+        CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[1].transformPoint({0,0,0}).x, 10, 1e-5f);
     }
 
     TEST_SUITE_END

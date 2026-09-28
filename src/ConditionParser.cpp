@@ -31,6 +31,7 @@
 #include <AYAnimation/StateMachine.h>  // P0 polish — for detail::ParamNameRegistry
 
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -38,7 +39,9 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <stdexcept>
 #include <utility>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -168,6 +171,16 @@ float CondBinaryExpr::evaluateAsFloat(const ConditionEvalCtx& ctx) const {
 
 namespace {
 
+constexpr std::size_t kMaxSourceBytes = 65536;
+constexpr std::size_t kMaxTokens = 1024;
+constexpr std::size_t kMaxDepth = 64;
+
+struct RecursionScope {
+    std::size_t& depth;
+    explicit RecursionScope(std::size_t& value) : depth(value) { ++depth; }
+    ~RecursionScope() { --depth; }
+};
+
 enum class CondTokenKind : uint8_t {
     Number,
     True,
@@ -210,6 +223,11 @@ public:
         std::size_t line = 1;
         std::size_t col  = 1;
         while (i < _src.size()) {
+            if (outTokens.size() >= kMaxTokens) {
+                outErr = "line " + std::to_string(line) + " col " + std::to_string(col)
+                    + ": condition exceeds token limit (1024)";
+                break;
+            }
             const char c = _src[i];
 
             // Whitespace
@@ -266,7 +284,13 @@ public:
                     ++i; ++col;
                 }
                 t.text = _src.substr(start, i - start);
-                t.number = std::stof(t.text);
+                const auto converted = std::from_chars(t.text.data(), t.text.data() + t.text.size(), t.number);
+                if (converted.ec != std::errc{} || converted.ptr != t.text.data() + t.text.size()
+                    || !std::isfinite(t.number)) {
+                    outErr = "line " + std::to_string(line) + " col " + std::to_string(t.col)
+                        + ": invalid finite number '" + t.text + "'";
+                    break;
+                }
                 t.kind = CondTokenKind::Number;
                 outTokens.push_back(std::move(t));
                 continue;
@@ -393,6 +417,11 @@ private:
     // precedence-climbing core. minPrec is the lowest precedence allowed
     // at this level (1 = top-level OR).
     std::unique_ptr<CondExprAst> parseExpression(int minPrec) {
+        RecursionScope scope(_expressionDepth);
+        if (_expressionDepth > kMaxDepth) {
+            recordErr("condition exceeds nesting limit (64)");
+            return nullptr;
+        }
         auto left = parseUnary();
         if (left == nullptr) return nullptr;
 
@@ -411,13 +440,20 @@ private:
             auto right = parseExpression(prec + 1);
             if (right == nullptr) return nullptr;
 
-            left = std::make_unique<CondBinaryExpr>(
-                std::move(left), op, std::move(right));
+            const auto depth = 1 + std::max(_depths.at(left.get()), _depths.at(right.get()));
+            left = remember(std::make_unique<CondBinaryExpr>(
+                std::move(left), op, std::move(right)), depth);
+            if (!left) return nullptr;
         }
         return left;
     }
 
     std::unique_ptr<CondExprAst> parseUnary() {
+        RecursionScope scope(_unaryDepth);
+        if (_unaryDepth > kMaxDepth) {
+            recordErr("condition exceeds unary/nesting limit (64)");
+            return nullptr;
+        }
         if (_pos < _tokens.size()) {
             // P5 polish (INV-66) — unary minus. Prefix position means it
             // binds tighter than ANY binary op ("-A * B" = "(-A) * B").
@@ -425,13 +461,15 @@ private:
                 ++_pos;  // consume '-'
                 auto operand = parseUnary();   // right-associative
                 if (operand == nullptr) return nullptr;
-                return std::make_unique<CondUnaryExpr>(CondOp::Neg, std::move(operand));
+                const auto depth = 1 + _depths.at(operand.get());
+                return remember(std::make_unique<CondUnaryExpr>(CondOp::Neg, std::move(operand)), depth);
             }
             if (_tokens[_pos].kind == Kind::Not) {
                 ++_pos;  // consume '!'
                 auto operand = parseUnary();   // right-associative
                 if (operand == nullptr) return nullptr;
-                return std::make_unique<CondUnaryExpr>(CondOp::Not, std::move(operand));
+                const auto depth = 1 + _depths.at(operand.get());
+                return remember(std::make_unique<CondUnaryExpr>(CondOp::Not, std::move(operand)), depth);
             }
         }
         return parsePrimary();
@@ -446,19 +484,19 @@ private:
         switch (t.kind) {
             case Kind::Number: {
                 ++_pos;
-                return std::make_unique<CondLiteralExpr>(t.number);
+                return remember(std::make_unique<CondLiteralExpr>(t.number), 1);
             }
             case Kind::True: {
                 ++_pos;
-                return std::make_unique<CondLiteralExpr>(true);
+                return remember(std::make_unique<CondLiteralExpr>(true), 1);
             }
             case Kind::False: {
                 ++_pos;
-                return std::make_unique<CondLiteralExpr>(false);
+                return remember(std::make_unique<CondLiteralExpr>(false), 1);
             }
             case Kind::Ident: {
                 ++_pos;
-                return std::make_unique<CondIdentifierExpr>(t.text);
+                return remember(std::make_unique<CondIdentifierExpr>(t.text), 1);
             }
             case Kind::LParen: {
                 ++_pos;  // consume '('
@@ -476,6 +514,15 @@ private:
                 return nullptr;
             }
         }
+    }
+
+    std::unique_ptr<CondExprAst> remember(std::unique_ptr<CondExprAst> node, std::size_t depth) {
+        if (depth > kMaxDepth) {
+            recordErr("condition exceeds AST depth limit (64)");
+            return nullptr;
+        }
+        _depths[node.get()] = depth;
+        return node;
     }
 
     static int precedence(Kind k) {
@@ -541,6 +588,9 @@ private:
     const std::vector<CondToken>& _tokens;
     std::string& _err;
     std::size_t  _pos = 0;
+    std::size_t _expressionDepth = 0;
+    std::size_t _unaryDepth = 0;
+    std::unordered_map<const CondExprAst*, std::size_t> _depths;
 };
 
 }  // namespace
@@ -562,9 +612,14 @@ std::unique_ptr<CondExprAst> ConditionParser::parse(
     }
 
     try {
+        if (src.size() > kMaxSourceBytes) {
+            outErr = "line 1 col 1: condition exceeds source limit (65536 bytes)";
+            return nullptr;
+        }
         std::vector<CondToken> tokens;
         CondLexer lexer(src);
         lexer.tokenize(tokens, outErr);
+        if (!outErr.empty()) return nullptr;
 
         CondParserImpl parser(tokens, outErr);
         return parser.parseAll();
@@ -593,12 +648,9 @@ std::unique_ptr<CondExprAst> ConditionParser::parse(
 //     OP_AND/OR placeholder (with placeholder jump offset = 0); compile
 //     right; compute right-subtree byte count; patch placeholder jump.
 //
-// Branch jump encoding: OP_AND/OR is followed by 1 signed byte that is
-// the relative byte count of the right subtree. When the evaluator
-// decides short-circuit, it advances pc by that many bytes — the right
-// subtree is skipped. Limit: right subtree ≤ 127 bytes (INV-58 ±127).
-//
-// Compile never throws. Returns nullptr only if ast is null.
+// Compiler emits OP_AND_WIDE/OR_WIDE with uint32 forward byte count. Legacy
+// opcodes keep their old values. Invalid/too-deep AST and allocation failure
+// return nullptr at the public compile boundary.
 
 namespace
 {
@@ -611,43 +663,55 @@ constexpr const char* kReservedCurrentStateTime = "CurrentStateTime";
 // patched AFTER the right subtree is compiled (we don't know its size in
 // advance; the placeholder sits 1 byte after the OP_AND/OR opcode byte).
 //
-// `jumpPatchSite` is the byte offset within prog where the int8_t jump
+// `jumpPatchSite` is the byte offset within prog where the uint32_t jump
 // offset lives for OP_AND/OR — used by the caller after right-subtree
 // compilation to back-patch.
 void compileNode(const CondExprAst* node,
                  std::vector<uint8_t>& prog,
                  std::vector<float>& lits,
-                 std::size_t& jumpPatchSite)
+                 std::size_t& jumpPatchSite,
+                 bool asFloat = false,
+                 std::size_t depth = 1)
 {
     jumpPatchSite = static_cast<std::size_t>(-1);  // no patch site by default
 
-    if (node == nullptr) return;  // defensive — caller guards
+    if (node == nullptr || depth > kMaxDepth) throw std::invalid_argument("invalid condition AST depth/node");
+
+    // AST logical/comparison nodes intentionally yield zero in float context.
+    // Compile the same semantics, rather than consuming their boolean result.
+    const auto emitZero = [&] {
+        prog.push_back(static_cast<uint8_t>(CondOpByte::OP_LOAD_LITERAL));
+        const auto idx = static_cast<uint32_t>(lits.size());
+        lits.push_back(0.0f);
+        const auto site = prog.size();
+        prog.resize(site + sizeof(idx));
+        std::memcpy(prog.data() + site, &idx, sizeof(idx));
+    };
 
     if (auto* bin = dynamic_cast<const CondBinaryExpr*>(node)) {
+        const bool arithmetic = bin->op == CondOp::Add || bin->op == CondOp::Sub
+            || bin->op == CondOp::Mul || bin->op == CondOp::Div;
+        if (!bin->left || !bin->right || bin->op == CondOp::Not || bin->op == CondOp::Neg)
+            throw std::invalid_argument("invalid binary condition AST");
+        if (asFloat && !arithmetic) { emitZero(); return; }
+        const bool logical = bin->op == CondOp::And || bin->op == CondOp::Or;
         // Compile left first.
         std::size_t leftJumpSite;
-        compileNode(bin->left.get(), prog, lits, leftJumpSite);
+        compileNode(bin->left.get(), prog, lits, leftJumpSite, !logical, depth + 1);
 
         if (bin->op == CondOp::And || bin->op == CondOp::Or) {
             // Emit placeholder opcode + placeholder jump (0 for now).
             const CondOpByte opByte = (bin->op == CondOp::And)
-                ? CondOpByte::OP_AND : CondOpByte::OP_OR;
+                ? CondOpByte::OP_AND_WIDE : CondOpByte::OP_OR_WIDE;
             prog.push_back(static_cast<uint8_t>(opByte));
             const std::size_t jumpSite = prog.size();
-            prog.push_back(0);                 // placeholder; patched below
+            prog.resize(jumpSite + sizeof(uint32_t));
             // Compile right subtree.
             std::size_t rightJumpSite;
-            compileNode(bin->right.get(), prog, lits, rightJumpSite);
+            compileNode(bin->right.get(), prog, lits, rightJumpSite, false, depth + 1);
             // Compute right-subtree byte count.
-            const std::size_t rightSize = prog.size() - (jumpSite + 1);
-            // INV-58 — ±127 limit. Production AST depth ≤ 5; right
-            // subtree size well under 64 bytes. If overflow (e.g.
-            // pathological 1000-token expression), clamp to 127 and
-            // the evaluator will mis-skip — document as production safe
-            // (right subtree < 127 bytes always).
-            prog[jumpSite] = (rightSize > 127)
-                ? static_cast<uint8_t>(127)
-                : static_cast<uint8_t>(rightSize);
+            const auto rightSize = static_cast<uint32_t>(prog.size() - (jumpSite + sizeof(uint32_t)));
+            std::memcpy(prog.data() + jumpSite, &rightSize, sizeof(rightSize));
             jumpPatchSite = jumpSite;          // unused; reserved
             return;
         }
@@ -658,7 +722,7 @@ void compileNode(const CondExprAst* node,
         // be compiled BEFORE the opcode byte, and both operands must
         // have been emitted for the stack machine to see 2 values.
         std::size_t rightJumpSite;
-        compileNode(bin->right.get(), prog, lits, rightJumpSite);
+        compileNode(bin->right.get(), prog, lits, rightJumpSite, true, depth + 1);
         switch (bin->op) {
             case CondOp::GT: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_GT)); return;
             case CondOp::LT: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_LT)); return;
@@ -671,13 +735,16 @@ void compileNode(const CondExprAst* node,
             case CondOp::Mul: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_MUL)); return;
             case CondOp::Div: prog.push_back(static_cast<uint8_t>(CondOpByte::OP_DIV)); return;
             case CondOp::Not: /* should not be binary */ return;
-            default: return;                    // And/Or handled above
+            default: throw std::invalid_argument("unknown binary condition op");
         }
     }
 
     if (auto* un = dynamic_cast<const CondUnaryExpr*>(node)) {
+        if (!un->operand || (un->op != CondOp::Not && un->op != CondOp::Neg))
+            throw std::invalid_argument("invalid unary condition AST");
+        if (asFloat && un->op == CondOp::Not) { emitZero(); return; }
         std::size_t innerJumpSite;
-        compileNode(un->operand.get(), prog, lits, innerJumpSite);
+        compileNode(un->operand.get(), prog, lits, innerJumpSite, un->op == CondOp::Neg, depth + 1);
         // Not / Neg are the only valid unary ops (per AST contract).
         if (un->op == CondOp::Not) {
             prog.push_back(static_cast<uint8_t>(CondOpByte::OP_NOT));
@@ -722,16 +789,21 @@ void compileNode(const CondExprAst* node,
         std::memcpy(&prog[site], &idx32, 4);
         return;
     }
+    throw std::invalid_argument("unknown condition AST node");
 }
 
 }  // namespace
 
 std::shared_ptr<CondBytecode> compileToBytecode(const CondExprAst* ast) {
     if (ast == nullptr) return nullptr;
-    auto code = std::make_shared<CondBytecode>();
-    std::size_t patchSite = 0;                     // unused — reserved
-    compileNode(ast, code->program, code->literals, patchSite);
-    return code;
+    try {
+        auto code = std::make_shared<CondBytecode>();
+        std::size_t patchSite = 0;
+        compileNode(ast, code->program, code->literals, patchSite);
+        return code;
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 } // namespace ayt::anim

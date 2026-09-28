@@ -95,7 +95,8 @@ void sampleTrackVector3(const ayt::math::FVector3* values,
                         const ayt::math::FVector3* inTangents,
                         const ayt::math::FVector3* outTangents)
 {
-    if (keyCount == 0 || values == nullptr) {
+    if (keyCount == 0 || values == nullptr || std::isnan(t)
+        || (keyCount > 1 && times.size() != keyCount)) {
         out = ayt::math::FVector3(0.0f, 0.0f, 0.0f);
         return;
     }
@@ -137,7 +138,8 @@ void sampleTrackQuaternion(const ayt::math::FQuaternion* values,
                            const ayt::math::FQuaternion* outTangents)
 {
     const size_t stride = 4;
-    if (keyCount == 0 || values == nullptr) {
+    if (keyCount == 0 || values == nullptr || std::isnan(t)
+        || (keyCount > 1 && times.size() != keyCount)) {
         out = ayt::math::FQuaternion::identity();
         return;
     }
@@ -196,7 +198,8 @@ void sampleTrackFloat(const float* values,
                       const float* inTangents,
                       const float* outTangents)
 {
-    if (keyCount == 0 || values == nullptr) {
+    if (keyCount == 0 || values == nullptr || std::isnan(t)
+        || (keyCount > 1 && times.size() != keyCount)) {
         out = 0.0f;
         return;
     }

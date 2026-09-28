@@ -17,11 +17,11 @@
 // shared_ptr) because the cache is a side-table — the source of truth
 // for skeleton lifecycle is the holders (SkeletonComponent or the
 // test-side Skeleton). If a skeleton is unloaded while its address
-// is still cached, the entry becomes stale and lookup() returns
-// `kNotInCache` (INT32_MIN); the caller treats this the same as a
-// cold start. invalidate() is the explicit "drop this entry" path
-// (called from setSkeleton() on the new-pointer side, so the OLD
-// skeleton's entries survive for any other player still bound).
+// is still cached, raw lookup cannot detect its destruction. Player bindings
+// register weak ownership and name topology through bindSkeleton(); expired
+// ownership or edited topology purges the corresponding asset-level table.
+// Raw lookup users must explicitly invalidate before destruction/mutation.
+// Old live skeleton entries remain available to other bound players.
 //
 // Thread-safety (P3 polish, 2026-08-08): touches happen on the
 // main-thread AnimationSystem tick path (single-threaded by ECS
@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -92,6 +93,12 @@ public:
 
     static AssetBoneCache& instance();
 
+    // Binding boundary: detect expired/replaced ownership and changed bone-name
+    // topology before player-local indices resolve. No work on the sample path.
+    // Rebind every affected player after in-place asset edits. Raw lookup users
+    // still explicitly invalidate before resource destruction/mutation.
+    void bindSkeleton(const std::shared_ptr<const ayt::resource::ISkeleton>& skeleton);
+
     // Returns kCacheKeyAbsent on cold cache, kCachedMiss on a cached
     // "name not in skeleton", or the bone index >= 0 on hit. Does NOT
     // mutate the cache. Caller uses this to decide whether to call
@@ -145,6 +152,11 @@ private:
 
     mutable std::mutex _mu;
     bool _threadSafe = false;   // INV-59/60 — plain bool, not atomic
+    struct Binding {
+        std::weak_ptr<const ayt::resource::ISkeleton> owner;
+        uint64_t topology = 0;
+    };
+    std::unordered_map<const ayt::resource::ISkeleton*, Binding> _bindings;
     // P4 polish (2026-08-10) — StringViewHash + std::equal_to<> enable
     // heterogeneous lookup: find(name) with const char* / string_view
     // keys does NOT construct a temporary std::string (INV-63).

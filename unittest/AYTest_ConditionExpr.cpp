@@ -36,6 +36,7 @@
 #include "StateMachine.h"
 
 #include <memory>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1174,6 +1175,94 @@ TEST_CASE(P5_Arith_Bytecode_ShortCircuit_SkipArith) {
     // A true → right subtree evaluates: B+1=6 > 5 → true.
     CHECK(ast->evaluate(makeCtx({{"A", 1.0f}, {"B", 5.0f}})) == true);
     CHECK(code->evaluate(makeCtx({{"A", 1.0f}, {"B", 5.0f}})) == true);
+}
+
+TEST_CASE(Bytecode_LongShortCircuitPreservesAstResult) {
+    std::string right = "0";
+    for (int i = 0; i < 40; ++i) right += " + 0";
+    for (const auto& expr : {"true || (" + right + " > 1)",
+                             "false && (" + right + " > 1) || true",
+                             "false || (" + right + " == 0)"}) {
+        std::string err;
+        auto ast = ConditionParser::parse(expr, err);
+        CHECK(ast != nullptr);
+        auto code = compileToBytecode(ast.get());
+        CHECK(code != nullptr);
+        if (ast && code) {
+            CHECK(ast->evaluate({}));
+            CHECK(code->evaluate({}) == ast->evaluate({}));
+        }
+    }
+}
+
+TEST_CASE(Bytecode_BooleanInNumericContextMatchesAst) {
+    for (const auto* expr : {"(true && true) + 1 == 1", "-(1 > 0) == 0",
+                            "(!false) == 0", "(2 < 3) * 4 == 0"}) {
+        std::string err;
+        auto ast = ConditionParser::parse(expr, err);
+        auto code = compileToBytecode(ast.get());
+        CHECK(ast != nullptr);
+        CHECK(code != nullptr);
+        if (ast && code) {
+            CHECK(ast->evaluate({}));
+            CHECK(code->evaluate({}) == ast->evaluate({}));
+        }
+    }
+}
+
+TEST_CASE(Parser_RejectsOversizedDeepAndMalformedInputs) {
+    std::string flat = "1";
+    for (int i = 0; i < 80; ++i) flat += " + 1";
+    for (const auto& expr : {std::string(70, '(') + "true" + std::string(70, ')'),
+                            std::string(70, '!') + "true", flat,
+                            std::string(65537, ' '), std::string("1.2.3 > 0"),
+                            std::string("1e999 > 0"), std::string("1e+ > 0")}) {
+        std::string err;
+        CHECK(ConditionParser::parse(expr, err) == nullptr);
+        CHECK(!err.empty());
+    }
+    std::string many = "true";
+    for (int i = 0; i < 600; ++i) many += " || true";
+    std::string err;
+    CHECK(ConditionParser::parse(many, err) == nullptr);
+    CHECK(err.find("token limit") != std::string::npos);
+}
+
+TEST_CASE(Bytecode_DeepRightArithmeticMatchesAst) {
+    std::string expr = "1";
+    for (int i = 0; i < 24; ++i) expr = "1 + (" + expr + ")";
+    expr += " == 25";
+    std::string err;
+    auto ast = ConditionParser::parse(expr, err);
+    CHECK(ast != nullptr);
+    auto code = compileToBytecode(ast.get());
+    CHECK(code != nullptr);
+    if (ast && code) {
+        CHECK(ast->evaluate({}));
+        CHECK(code->evaluate({}) == ast->evaluate({}));
+    }
+}
+
+TEST_CASE(Bytecode_MalformedProgramsFailSoftAndLegacyStillWorks) {
+    const auto load = static_cast<uint8_t>(CondOpByte::OP_LOAD_LITERAL);
+    const auto oldOr = static_cast<uint8_t>(CondOpByte::OP_OR);
+    const auto wideOr = static_cast<uint8_t>(CondOpByte::OP_OR_WIDE);
+    for (const std::vector<uint8_t>& program : {
+            std::vector<uint8_t>{}, {load}, {load, 0, 0, 0},
+            {load, 0, 0, 0, 0, 255}, {load, 0, 0, 0, 0, oldOr, 255},
+            {load, 0, 0, 0, 0, wideOr, 255, 255, 255, 255},
+            {load, 0, 0, 0, 0, wideOr, 1}}) {
+        CondBytecode code;
+        code.program = program;
+        code.literals = {1.0f};
+        CHECK(!code.evaluate({}));
+    }
+    CondBytecode legacy;
+    legacy.program = {load, 0, 0, 0, 0, oldOr, 5, load, 1, 0, 0, 0};
+    legacy.literals = {1.0f, 0.0f};
+    CHECK(legacy.evaluate({}));
+    CondBinaryExpr invalid(nullptr, CondOp::And, std::make_unique<CondLiteralExpr>(true));
+    CHECK(compileToBytecode(&invalid) == nullptr);
 }
 
 TEST_SUITE_END
