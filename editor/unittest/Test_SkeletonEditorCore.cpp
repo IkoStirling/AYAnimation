@@ -1,5 +1,7 @@
 #include <AYAnimationEditor/SkeletonEditorCore.h>
 #include <AYAnimationEditor/SkeletonBakeJob.h>
+#include <AYAnimationEditor/AnimationAuthoring.h>
+#include <AYAnimationEditor/AnimationPreviewSession.h>
 
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
@@ -581,6 +583,51 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
 TEST_SUITE_END
 
 TEST_SUITE(SkeletonBakeJobTests)
+
+TEST_CASE(authored_clip_preview_reload_and_bake_preserve_key_revision) {
+    const auto skeletonPath = writeSkeleton();
+    const auto animationPath = writeAnimationForNode("hips", "authored-motion.ayanm");
+    Animation original;
+    const auto originalBytes = ayt::io::File::readAllBytes(animationPath.string());
+    CHECK(original.loadFromBinary(originalBytes.data(), originalBytes.size()));
+    const auto edit = translateAnimationKeys(original, {{0, 1, false}}, -.25, 1, 1);
+    CHECK(edit);
+    std::vector<ayt::math::UInt8> editedBytes;
+    CHECK(edit.animation->saveToBinary(editedBytes));
+    CHECK(ayt::io::File::atomicWrite(animationPath.string(), editedBytes.data(), editedBytes.size()));
+    AnimationPreviewSession preview;
+    std::string error;
+    CHECK(preview.openAnimation(animationPath.string(), &error));
+    CHECK(preview.bindSkeleton(skeletonPath.string(), &error));
+    CHECK(preview.setTime(.75f));
+    CHECK(std::fabs(preview.poseWorldMatrices()[2].transformPoint({0, 0, 0}).y - 3) < 1e-4f);
+    CHECK(preview.replaceAnimation(std::make_shared<Animation>(original), true, &error));
+    CHECK(preview.reloadAnimation(&error));
+    CHECK(preview.animation()->getTrackTimes(0)[1] == .75f);
+    SkeletonEditorCore core;
+    CHECK(core.open(skeletonPath.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto plan = core.dryRunBake({animationPath.string()});
+    CHECK(plan.canBake());
+    ayt::task::TaskScheduler scheduler(1);
+    SkeletonBakeJob job(scheduler);
+    job.start(plan, (fixtureRoot() / "AuthoringBake").string());
+    job.drain();
+    const auto snapshot = job.poll();
+    CHECK_MSG(snapshot.state == SkeletonBakeJobState::Succeeded, snapshot.message.c_str());
+    bool foundAnimation = false;
+    for (const auto& path : snapshot.outputPaths) {
+        if (std::filesystem::path(path).extension() != ".ayanm") continue;
+        foundAnimation = true;
+        Animation baked;
+        const auto bytes = ayt::io::File::readAllBytes(path);
+        CHECK(baked.loadFromBinary(bytes.data(), bytes.size()));
+        CHECK(baked.getTrackTimes(0)[1] == .75f);
+        CHECK(baked.getTrackValues(0)[4] == 3);
+    }
+    CHECK(foundAnimation);
+    CHECK(ayt::io::File::readAllBytes(animationPath.string()) == editedBytes);
+}
 
 TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
 {

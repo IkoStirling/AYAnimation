@@ -146,6 +146,7 @@ public:
         diagnostics() const noexcept { return _diagnostics; }
     [[nodiscard]] std::size_t missingTrackCount() const noexcept;
 
+    // Content/binding revision: playhead, rate and looping changes do not invalidate authoring snapshots.
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
     [[nodiscard]] std::uint64_t poseRevision() const noexcept {
         return _poseRevision;

@@ -113,10 +113,8 @@ bool AnimationPreviewSession::replaceAnimation(
     _animation = std::move(animation);
     _playing = false;
     bindPlayer();
-    if (_skeleton != nullptr) {
-        (void)setTime(std::clamp(previousTime, 0.0f, duration()));
-        if (wasPlaying) play();
-    }
+    (void)setTime(std::clamp(previousTime, 0.0f, duration()));
+    if (wasPlaying) play();
     rebuildDiagnostics();
     ++_revision;
     if (error != nullptr) error->clear();
@@ -131,11 +129,15 @@ bool AnimationPreviewSession::bindSkeleton(const std::string& path,
         setError(error, "Unable to load skeleton resource: " + path);
         return false;
     }
+    const auto previousTime = time();
+    const auto wasPlaying = _playing;
     _skeleton = std::move(skeleton);
     _bindings.skeletonPath = normalizedAbsolute(path);
     rebuildBones();
     rebuildBindPose();
     bindPlayer();
+    (void)setTime(previousTime);
+    if (wasPlaying) play();
     rebuildDiagnostics();
     ++_revision;
     if (error != nullptr) error->clear();
@@ -161,15 +163,18 @@ bool AnimationPreviewSession::bindMesh(const std::string& path,
 
 void AnimationPreviewSession::unbindSkeleton()
 {
+    const auto previousTime = time();
+    const auto wasPlaying = _playing;
     _playing = false;
-    _player.stop();
-    _player.setSkeleton({});
     _skeleton.reset();
     _bindings.skeletonPath.clear();
     _bones.clear();
     _bindWorld.clear();
     _poseWorld.clear();
     _skin.clear();
+    bindPlayer();
+    (void)setTime(previousTime);
+    if (wasPlaying) play();
     rebuildDiagnostics();
     ++_poseRevision;
     ++_revision;
@@ -342,7 +347,7 @@ bool AnimationPreviewSession::canPreviewModel() const noexcept
 
 void AnimationPreviewSession::play()
 {
-    if (_animation == nullptr || _skeleton == nullptr) return;
+    if (_animation == nullptr) return;
     if (time() >= duration() && !_looping) (void)setTime(0.0f);
     _player.resume();
     _playing = true;
@@ -357,15 +362,15 @@ void AnimationPreviewSession::pause()
 void AnimationPreviewSession::stop()
 {
     _playing = false;
-    if (_animation == nullptr || _skeleton == nullptr) return;
+    if (_animation == nullptr) return;
     _player.stop();
     bindPlayer();
 }
 
 void AnimationPreviewSession::tick(float dt)
 {
-    if (!_playing || dt <= 0.0f || _animation == nullptr
-        || _skeleton == nullptr) return;
+    if (!_playing || !std::isfinite(dt) || dt <= 0.0f || _animation == nullptr
+        || !std::isfinite(dt * _playRate) || !std::isfinite(time() + dt * _playRate)) return;
     _player.tick(dt);
     _player.evaluate();
     rebuildPoseFromPlayer();
@@ -377,7 +382,7 @@ void AnimationPreviewSession::tick(float dt)
 
 bool AnimationPreviewSession::setTime(float seconds)
 {
-    if (_animation == nullptr || _skeleton == nullptr) return false;
+    if (_animation == nullptr || !std::isfinite(seconds)) return false;
     _player.setTime(std::clamp(seconds, 0.0f, duration()));
     _player.evaluate();
     rebuildPoseFromPlayer();
@@ -389,16 +394,15 @@ void AnimationPreviewSession::setLooping(bool looping) noexcept
     if (_looping == looping) return;
     _looping = looping;
     _player.setLoop(looping);
-    ++_revision;
 }
 
 void AnimationPreviewSession::setPlayRate(float rate) noexcept
 {
+    if (!std::isfinite(rate)) return;
     const float clamped = std::clamp(rate, 0.05f, 4.0f);
     if (std::fabs(_playRate - clamped) < 1.0e-6f) return;
     _playRate = clamped;
     _player.setPlayRate(clamped);
-    ++_revision;
 }
 
 float AnimationPreviewSession::time() const noexcept
@@ -454,7 +458,7 @@ void AnimationPreviewSession::bindPlayer()
     _player.setSkeleton(_skeleton);
     _player.setLoop(_looping);
     _player.setPlayRate(_playRate);
-    if (_animation != nullptr && _skeleton != nullptr) {
+    if (_animation != nullptr) {
         _player.play(_animation.get());
         _player.setLoop(_looping);
         _player.setPlayRate(_playRate);

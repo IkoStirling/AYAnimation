@@ -26,10 +26,22 @@ bool validSelection(const AuthoredAnimation& clip, const std::vector<AnimationKe
     if (keys.empty() || !std::isfinite(clip.duration) || clip.duration < 0
         || !std::isfinite(clip.ticksPerSecond)) return false;
     std::set<std::tuple<bool, std::size_t, std::size_t>> unique;
+    std::set<std::size_t> validatedTracks;
+    bool validatedNotifies = false;
+    const double rate = clip.ticksPerSecond > 0 ? clip.ticksPerSecond : 1;
+    const auto finite = [](const auto& values) {
+        return std::all_of(values.begin(), values.end(), [](float x) { return std::isfinite(x); });
+    };
     for (const auto& key : keys) {
         if (!unique.emplace(key.notify, key.notify ? 0 : key.track, key.key).second) return false;
         if (key.notify) {
             if (key.key >= clip.notifies.size()) return false;
+            if (!validatedNotifies) {
+                for (const auto& notify : clip.notifies)
+                    if (!std::isfinite(notify.time) || !std::isfinite(notify.payload)
+                        || notify.time < 0 || notify.time > clip.duration) return false;
+                validatedNotifies = true;
+            }
             continue;
         }
         if (key.track >= clip.tracks.size()) return false;
@@ -38,6 +50,13 @@ bool validSelection(const AuthoredAnimation& clip, const std::vector<AnimationKe
         if (!width(track.valueType) || key.key >= track.times.size() || track.values.size() != count
             || (!track.inTangents.empty() && track.inTangents.size() != count)
             || (!track.outTangents.empty() && track.outTangents.size() != count)) return false;
+        if (validatedTracks.insert(key.track).second) {
+            if (!finite(track.times) || !finite(track.values)
+                || !finite(track.inTangents) || !finite(track.outTangents)) return false;
+            for (std::size_t i = 0; i < track.times.size(); ++i)
+                if (track.times[i] < 0 || track.times[i] / rate > clip.duration
+                    || (i && (track.times[i] - track.times[i-1]) / rate < kTimeEpsilon)) return false;
+        }
     }
     return true;
 }
@@ -72,6 +91,12 @@ std::vector<std::size_t> reorderNotifies(std::vector<AnimNotifyMarker>& notifies
     auto original = notifies;
     for (std::size_t i = 0; i < order.size(); ++i) notifies[i] = original[order[i]];
     return order;
+}
+
+std::vector<std::size_t> inverseOrder(const std::vector<std::size_t>& order) {
+    std::vector<std::size_t> inverse(order.size());
+    for (std::size_t i = 0; i < order.size(); ++i) inverse[order[i]] = i;
+    return inverse;
 }
 } // namespace
 
@@ -157,12 +182,13 @@ AnimationKeyEdit translateAnimationKeys(const ayt::resource::IAnimation& source,
     for (auto& [track, order] : remaps) {
         order = reorderTrack(clip.tracks[track], rate);
         if (order.empty()) return {{}, {}, "Key times overlap within a track."};
+        order = inverseOrder(order);
     }
-    const auto notifyOrder = notifyChanged ? reorderNotifies(clip.notifies) : std::vector<std::size_t>{};
+    const auto notifyOrder = notifyChanged ? inverseOrder(reorderNotifies(clip.notifies)) : std::vector<std::size_t>{};
     auto updated = keys;
     for (auto& key : updated) {
         const auto& order = key.notify ? notifyOrder : remaps.at(key.track);
-        key.key = static_cast<std::size_t>(std::find(order.begin(), order.end(), key.key) - order.begin());
+        key.key = order[key.key];
     }
     return {buildAuthoredAnimation(clip), std::move(updated), {}};
 }
@@ -229,12 +255,13 @@ AnimationKeyEdit retimeAnimationKeys(const ayt::resource::IAnimation& source,
     for (auto& [track, order] : remaps) {
         order = reorderTrack(clip.tracks[track], rate);
         if (order.empty()) return {{}, {}, "Time transform overlaps keys."};
+        order = inverseOrder(order);
     }
-    const auto notifyOrder = notifyChanged ? reorderNotifies(clip.notifies) : std::vector<std::size_t>{};
+    const auto notifyOrder = notifyChanged ? inverseOrder(reorderNotifies(clip.notifies)) : std::vector<std::size_t>{};
     auto updated = keys;
     for (auto& key : updated) {
         const auto& order = key.notify ? notifyOrder : remaps.at(key.track);
-        key.key = static_cast<std::size_t>(std::find(order.begin(), order.end(), key.key) - order.begin());
+        key.key = order[key.key];
     }
     return {buildAuthoredAnimation(clip), std::move(updated), {}};
 }

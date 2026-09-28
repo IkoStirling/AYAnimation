@@ -5,6 +5,8 @@
 #include <AYResource/assetsImpl/Mesh.h>
 #include <AYResource/assetsImpl/Skeleton.h>
 #include <AYTest.h>
+#include <AYTestFixtures.h>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -90,6 +92,39 @@ std::filesystem::path writePreviewMesh(const std::filesystem::path& root)
 } // namespace
 
 TEST_SUITE(AnimationPreviewSessionTests)
+
+TEST_CASE(clip_only_transport_seeks_plays_and_preserves_hot_edit_time) {
+    ayt::test::ScratchDirectory scratch("clip-only-preview");
+    Animation animation;
+    animation.setDuration(2); animation.setTicksPerSecond(1);
+    AnimTrack track;
+    track.nodeName = "hips"; track.property = "position";
+    track.valueType = AnimTrackType::Vector3;
+    track.times = {0, 2}; track.values = {0, 0, 0, 0, 2, 0};
+    animation.addTrack(track);
+    std::vector<ayt::math::UInt8> bytes;
+    CHECK(animation.saveToBinary(bytes));
+    const auto path = scratch.path() / "motion.ayanm";
+    CHECK(ayt::io::File::writeAllBytes(path.string(), bytes));
+    AnimationPreviewSession session;
+    std::string error;
+    CHECK(session.openAnimation(path.string(), &error));
+    CHECK(!session.skeleton());
+    CHECK(session.setTime(.5f));
+    CHECK(session.time() == .5f);
+    const auto version = session.revision();
+    session.play(); session.tick(.25f);
+    CHECK(session.time() == .75f);
+    CHECK(session.revision() == version);
+    CHECK(session.replaceAnimation(std::make_shared<Animation>(animation), true, &error));
+    CHECK(session.time() == .75f);
+    CHECK(session.isPlaying());
+    CHECK(!session.setTime(std::numeric_limits<float>::quiet_NaN()));
+    const auto time = session.time();
+    session.tick(std::numeric_limits<float>::infinity());
+    CHECK(session.time() == time);
+    session.stop(); CHECK(session.time() == 0); CHECK(!session.isPlaying());
+}
 
 TEST_CASE(animation_preview_infers_import_batch_and_previews_model_and_skeleton)
 {

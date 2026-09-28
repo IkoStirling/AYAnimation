@@ -28,6 +28,31 @@ std::shared_ptr<Animation> authoringFixture() {
 }
 TEST_SUITE(AnimationAuthoringTests)
 
+TEST_CASE(large_cross_track_selection_keeps_order_and_complete_remapping) {
+    AuthoredAnimation clip;
+    clip.duration = 20; clip.ticksPerSecond = 30;
+    std::vector<AnimationKeyReference> keys;
+    for (std::size_t row = 0; row < 100; ++row) {
+        AnimTrack track;
+        track.nodeName = "bone-" + std::to_string(row);
+        track.property = "weight"; track.valueType = AnimTrackType::Float;
+        for (std::size_t key = 0; key < 500; ++key) {
+            track.times.push_back(static_cast<float>(key));
+            track.values.push_back(static_cast<float>(key));
+            keys.push_back({row, key, false});
+        }
+        clip.tracks.push_back(std::move(track));
+    }
+    const auto source = buildAuthoredAnimation(clip);
+    const auto edit = translateAnimationKeys(*source, keys, .01);
+    CHECK(edit);
+    CHECK(edit.keys == keys);
+    CHECK(edit.animation->getTrackCount() == 100);
+    CHECK(edit.animation->getTrackKeyframeCount(99) == 500);
+    CHECK(edit.animation->getTrackValues(99)[499] == 499);
+    CHECK(std::fabs(edit.animation->getTrackTimes(99)[0] - .3f) < 1e-6f);
+}
+
 TEST_CASE(cross_track_notify_translation_preserves_spacing_and_source) {
     const auto source = authoringFixture();
     const auto edit = translateAnimationKeys(*source,
@@ -52,6 +77,12 @@ TEST_CASE(group_clamp_collision_and_invalid_selection_are_atomic) {
     CHECK(!translateAnimationKeys(*source, {{0, 1, true}}, .5, 0, 1));
     CHECK(!translateAnimationKeys(*source, {{0, 1, false}}, std::numeric_limits<double>::infinity()));
     CHECK(source->getTrackTimes(0)[1] == 2);
+    auto malformed = copyAnimationForAuthoring(*source);
+    malformed.tracks[0].times.back() = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!translateAnimationKeys(*buildAuthoredAnimation(malformed), {{0, 1, false}}, .5));
+    malformed = copyAnimationForAuthoring(*source);
+    malformed.notifies.back().time = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!translateAnimationKeys(*buildAuthoredAnimation(malformed), {{0, 1, true}}, .5));
 }
 
 TEST_CASE(reordering_remaps_keys_with_values_and_tangents) {
