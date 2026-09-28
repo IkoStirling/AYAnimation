@@ -51,6 +51,12 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 完整设计与当前交付状态见 [design.md](design.md)。
 
+作者核心 `AYAnimationEditorCore` 独立于 AYEditor/UI。AnimationAuthoring 支持跨轨/
+Notify 原子移动删除；AnimationClipboard 使用内存 payload（相对秒数、值及切线），
+不新增扩展名。跨 Clip 粘贴要求唯一兼容目标轨道，不覆盖已有关键帧、不自动映射骨骼。
+AYEditor 提供 Copy/Cut/Paste at Playhead/Duplicate After 与 Ctrl+C/X/V/D，
+剪切成功后才替换会话剪贴板；烘焙输出和旧格式仅允许预览/复制。
+
 运行时 fast/stress 与作者核心 integration 使用独立清单，见[统一测试契约](../../AYDocs/testing.md)。
 
 `KeySampler` 的 Hermite 段数学复用 `AYMath/CurveMath.h`；轨道插值策略、
