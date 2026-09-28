@@ -57,6 +57,11 @@ Notify 原子移动删除；AnimationClipboard 使用内存 payload（相对秒�
 AYEditor 提供 Copy/Cut/Paste at Playhead/Duplicate After 与 Ctrl+C/X/V/D，
 剪切成功后才替换会话剪贴板；烘焙输出和旧格式仅允许预览/复制。
 
+AnimationTimeTransform 对选中键执行秒制 anchor/scale 变换，斜率除以有符号 scale，
+负比例交换入出切线；整组碰撞/越界拒绝。Editor 提供锚点输入/Use Playhead、
+Scale Selection、以选择时间中点为轴的 Reverse Selection。
+现有 Step 仅支持 left-hold，精确倒放需要 right-hold，因此此版本拒绝 Step 倒放。
+
 运行时 fast/stress 与作者核心 integration 使用独立清单，见[统一测试契约](../../AYDocs/testing.md)。
 
 `KeySampler` 的 Hermite 段数学复用 `AYMath/CurveMath.h`；轨道插值策略、

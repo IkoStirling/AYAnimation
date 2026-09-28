@@ -1,4 +1,5 @@
 #include <AYAnimationEditor/AnimationAuthoring.h>
+#include <AYAnimationEditor/AnimationTimeTransform.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -184,5 +185,57 @@ AnimationKeyEdit removeAnimationKeys(const ayt::resource::IAnimation& source,
             if (!values->empty()) values->erase(values->begin() + key.key * count, values->begin() + (key.key + 1) * count);
     }
     return {buildAuthoredAnimation(clip), {}, {}};
+}
+AnimationKeyEdit retimeAnimationKeys(const ayt::resource::IAnimation& source,
+    const std::vector<AnimationKeyReference>& keys, double anchorSeconds, double scale) {
+    auto clip = copyAnimationForAuthoring(source);
+    if (!validSelection(clip, keys) || !std::isfinite(anchorSeconds)
+        || !std::isfinite(scale) || scale == 0 || scale == 1)
+        return {{}, {}, "Invalid/no-op animation time transform."};
+    const double rate = clip.ticksPerSecond > 0 ? clip.ticksPerSecond : 1;
+    std::map<std::size_t, std::vector<std::size_t>> remaps;
+    bool notifyChanged = false;
+    for (const auto& key : keys) {
+        const double oldTime = key.notify ? clip.notifies[key.key].time
+            : clip.tracks[key.track].times[key.key] / rate;
+        const double time = anchorSeconds + (oldTime - anchorSeconds) * scale;
+        if (!std::isfinite(oldTime) || oldTime < 0 || oldTime > clip.duration
+            || !std::isfinite(time) || time < 0 || time > clip.duration)
+            return {{}, {}, "Time transform leaves the clip duration."};
+        if (key.notify) {
+            clip.notifies[key.key].time = static_cast<float>(time);
+            notifyChanged = true;
+            continue;
+        }
+        auto& track = clip.tracks[key.track];
+        if (scale < 0 && track.interpolation == AnimInterpolation::Step)
+            return {{}, {}, "Step reversal requires right-hold, which this format cannot represent."};
+        track.times[key.key] = static_cast<float>(time * rate);
+        const auto count = width(track.valueType);
+        if (!track.inTangents.empty() || !track.outTangents.empty()) {
+            if (track.inTangents.empty()) track.inTangents.resize(track.values.size(), 0);
+            if (track.outTangents.empty()) track.outTangents.resize(track.values.size(), 0);
+            for (std::size_t c = 0; c < count; ++c) {
+                const auto i = key.key * count + c;
+                const auto incoming = track.inTangents[i], outgoing = track.outTangents[i];
+                track.inTangents[i] = static_cast<float>((scale < 0 ? outgoing : incoming) / scale);
+                track.outTangents[i] = static_cast<float>((scale < 0 ? incoming : outgoing) / scale);
+                if (!std::isfinite(track.inTangents[i]) || !std::isfinite(track.outTangents[i]))
+                    return {{}, {}, "Time transform overflows tangent slopes."};
+            }
+        }
+        remaps.try_emplace(key.track);
+    }
+    for (auto& [track, order] : remaps) {
+        order = reorderTrack(clip.tracks[track], rate);
+        if (order.empty()) return {{}, {}, "Time transform overlaps keys."};
+    }
+    const auto notifyOrder = notifyChanged ? reorderNotifies(clip.notifies) : std::vector<std::size_t>{};
+    auto updated = keys;
+    for (auto& key : updated) {
+        const auto& order = key.notify ? notifyOrder : remaps.at(key.track);
+        key.key = static_cast<std::size_t>(std::find(order.begin(), order.end(), key.key) - order.begin());
+    }
+    return {buildAuthoredAnimation(clip), std::move(updated), {}};
 }
 } // namespace ayt::anim::editor
