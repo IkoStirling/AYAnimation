@@ -1,4 +1,5 @@
 add_executable(AYAnimationEditorCore_UnitTests
+    Test_AnimationAuthoring.cpp
     Test_AnimationPreviewSession.cpp
     Test_SkeletonEditorCore.cpp
     Test_SkeletonBakePublication.cpp
