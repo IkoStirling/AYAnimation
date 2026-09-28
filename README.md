@@ -39,6 +39,8 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 完整设计与当前交付状态见 [design.md](design.md)。
 
+运行时 fast/stress 与作者核心 integration 使用独立清单，见[统一测试契约](../../AYDocs/testing.md)。
+
 `KeySampler` 的 Hermite 段数学复用 `AYMath/CurveMath.h`；轨道插值策略、
 Quaternion 最短弧与归一化仍由 AYAnimation 负责，不依赖作者控件。编辑器应通过
 自己的资源适配器调用正式 KeySampler，避免曲线图与实际播放使用不同采样语义。

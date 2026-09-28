@@ -54,4 +54,5 @@ target_include_directories(${MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
-ay_add_test(${MODULE_NAME})
+ay_add_test_tiers(${MODULE_NAME} PREFIX animation
+    STRESS_SUITES P4StressTests TIMEOUT 60)

@@ -747,7 +747,7 @@ TEST_CASE(skeleton_bake_job_rejects_blocked_and_isolates_generations)
 
 TEST_SUITE_END
 
-int main(int, char**)
+int main(int argc, char** argv)
 {
-    return ayt::test::runAllTests("AYAnimationEditorCore_UnitTests");
+    return ayt::test::runTests("AYAnimationEditorCore_UnitTests", argc, argv);
 }

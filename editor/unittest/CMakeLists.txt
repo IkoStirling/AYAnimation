@@ -8,4 +8,5 @@ target_link_libraries(AYAnimationEditorCore_UnitTests PRIVATE
     AYTest
 )
 
-ay_add_test(AYAnimationEditorCore_UnitTests)
+ay_add_test(AYAnimationEditorCore_UnitTests
+    LABELS "animation-editor;animation-editor-full;animation-editor-integration" TIMEOUT 120 RUN_SERIAL)
