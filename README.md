@@ -62,7 +62,9 @@ AnimationTimeTransform 对选中键执行秒制 anchor/scale 变换，斜率除�
 Scale Selection、以选择时间中点为轴的 Reverse Selection。
 现有 Step 仅支持 left-hold，精确倒放需要 right-hold，因此此版本拒绝 Step 倒放。
 
-运行时 fast/stress 与作者核心 integration 使用独立清单，见[统一测试契约](../../AYDocs/testing.md)。
+运行时 fast/stress 与作者核心 fast/integration/stress 使用独立清单。
+作者 API、所有权、性能和烘焙边界见[独立作者核心指南](editor/README.md)，
+用例统计见[统一测试契约](../../AYDocs/testing.md)。
 
 `KeySampler` 的 Hermite 段数学复用 `AYMath/CurveMath.h`；轨道插值策略、
 Quaternion 最短弧与归一化仍由 AYAnimation 负责，不依赖作者控件。编辑器应通过

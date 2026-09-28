@@ -1444,6 +1444,20 @@ AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及�
 
 ---
 
+### 7.6 动画作者与安全发布加固（2026-09-29，已实现）
+
+`AYAnimationEditorCore` 独立提供跨轨/Notify 原子移动删除、owned 内存剪贴板和
+秒制锚点缩放/反向。AYEditor 薄适配统一命令/历史/选择；拖动合并为 baseline/final，
+Undo/Redo 恢复重排选择。Quaternion 插入与预览使用正式 KeySampler，不当作四条标量。
+Step left-hold 倒放、自动建轨/骨骼映射粘贴和 duration 扩展明确不在交付范围。
+
+Clip-only transport 与可选模型/骨架绑定分离；播放头、loop/rate 不重建内容快照。
+公共 DopeSheet 使用按快照构建的行键索引，选择/排序映射避免嵌套扫描。
+AYTask owned bake 复核输入指纹、串行本进程输出 lanes、混合发布回滚并保留恢复失败备份；
+取消和 drain 分离，不保证跨进程或断电事务。详细 API/限制以
+[作者核心指南](editor/README.md)为准，验证与提交见
+[连续实施记录](../../AYDocs/animation-authoring-hardening.md)。
+
 ## 8. 自适应压缩（Phase 5 ── 未启动）
 
 Douglas-Peucker + adaptive keyframe reduction + dual-quat encoding ── 全部位于 **离线 Converter 阶段**（不属于 runtime AYAnimation）。
@@ -4898,6 +4912,7 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 | 日期 | 变更 |
 |------|------|
+| 2026-09-29 | 动画作者连续加固：宽条件跳转/采样/Notify/共享绑定缓存；AYTask owned 烘焙生命周期与失败回滚；跨轨/Notify 原子作者操作、内存 Clipboard、锚点时间变换；clip-only transport、历史选择及大数据缓存回归。独立作者核心 fast 13 / integration 31 / stress 1；详见 §7.6 与 editor/README.md。 |
 | 2026-09-21 | `.ayanm` v5 曲线运行时 ship：Linear/Step/Cubic Hermite 与 per-key in/out tangent 进入正式资源接口、运行时缓存和基础/加法层采样；Quaternion 保持最短弧并在 Hermite 后归一化，旧格式默认 Linear。 |
 | 2026-09-21 | `AnimationPreviewSession` 增加编辑器内存 clip revision 热替换：保留时间和绑定、立即刷新正式播放器姿势，为 `.ayanm` 轨道/关键帧作者功能提供 UI-free 预览边界；3 个预览用例纳入作者核心 354/354。 |
 | 2026-09-21 | **P4-6 / SKA-07～08 引用安全烘焙与发布闭环 ship**：骨架、动画、网格 palette/joint 和 Mask 以事务方式整组改写；receipt v2 记录精确依赖/产物及源修订指纹；AYResource 在构建执行时复验 scope、目标、profile、闭包和所有输入，排除作者源及陈旧产物。跨骨架蒙皮几何 rebind 未实现时明确阻止。作者核心 338/338、AYResource 2495/2495、编辑器骨骼扩展 86/86。 |

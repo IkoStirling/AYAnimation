@@ -26,7 +26,7 @@ std::shared_ptr<Animation> authoringFixture() {
     return buildAuthoredAnimation(clip);
 }
 }
-TEST_SUITE(AnimationAuthoringTests)
+TEST_SUITE(AnimationAuthoringStressTests)
 
 TEST_CASE(large_cross_track_selection_keeps_order_and_complete_remapping) {
     AuthoredAnimation clip;
@@ -52,6 +52,10 @@ TEST_CASE(large_cross_track_selection_keeps_order_and_complete_remapping) {
     CHECK(edit.animation->getTrackValues(99)[499] == 499);
     CHECK(std::fabs(edit.animation->getTrackTimes(99)[0] - .3f) < 1e-6f);
 }
+
+TEST_SUITE_END
+
+TEST_SUITE(AnimationAuthoringTests)
 
 TEST_CASE(cross_track_notify_translation_preserves_spacing_and_source) {
     const auto source = authoringFixture();

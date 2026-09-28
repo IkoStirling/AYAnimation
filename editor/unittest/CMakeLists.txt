@@ -11,5 +11,9 @@ target_link_libraries(AYAnimationEditorCore_UnitTests PRIVATE
     AYTest
 )
 
-ay_add_test(AYAnimationEditorCore_UnitTests CASE_REPORT
-    LABELS "animation-editor;animation-editor-full;animation-editor-integration" TIMEOUT 120 RUN_SERIAL)
+ay_add_test_tiers(AYAnimationEditorCore_UnitTests
+    PREFIX animation-editor DEFAULT_TIER integration
+    FAST_SUITES AnimationAuthoringTests AnimationClipboardTests
+        AnimationTimeTransformTests AnimationTimeQuaternionTests
+    STRESS_SUITES AnimationAuthoringStressTests
+    TIMEOUT 120 RUN_SERIAL)
