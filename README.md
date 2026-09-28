@@ -15,9 +15,21 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 统一条件见 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)，制作见 [low poly 实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。通用语义允许可选骨缺失；计划中的仓库参考资产使用完整 57 个角色，并冻结具体绑定数据。
 
-当前已实现显式映射和 15 个必需角色的语义祖先校验，默认映射为空；标准资产生成、MMD/Mixamo 内置映射、自动重定向与根运动提取尚未交付。实现不变量与测试历史见 [design.md](design.md) §7。
+当前已实现显式映射和 15 个必需角色的语义祖先校验，默认映射为空；标准参考资产生成、MMD/Mixamo 内置映射、自动猜测映射与根运动提取尚未交付。实现不变量与测试历史见 [design.md](design.md) §7。
 
-已提供 UI-free `AYAnimationEditorCore`：源骨架保持只读，映射作为可绑定的 `.aysmap` 作者资源保存，并支持手工/规范名模板映射、校验、历史和动画姿势预览；AYEditor 通过薄适配接入。实际重定向求解、清理烘焙和发布门禁仍按 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7 后续实施，模块职责见 [design.md](design.md) §7.5。
+已提供 UI-free `AYAnimationEditorCore`，AYEditor 通过薄适配接入：
+
+- 源骨架保持只读；手工/模板映射、参考姿势与骨轴修正保存在可绑定的 `.ayrig` RigProfile。
+  旧 `.aysmap` 仅作迁移输入，不再作为新建格式。
+- source→target 局部姿势/离线 Clip 求解、源目标同步预览、清理烘焙与引用闭包校验已接入。
+  发布使用 staging/receipt 与源指纹校验；未知 TRS、未映射动画骨、Additive 重定向明确拒绝。
+- 跨骨架网格几何重绑定尚未实现，带网格的 BakeToTarget 安全阻止；Cubic Quaternion
+  重定向尚未支持切线空间变换，不能当作 Linear 降级发布。
+- 动画预览支持模型/骨架及组合模式；轨道、关键帧分量、Linear/Step/Hermite 和切线编辑、
+  Notify、Clip 属性、撤销与保存已接入。Quaternion 使用运行时正式采样语义。
+
+资源管线详见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)，
+本轮加固与批量作者工具实施见 [连续实施记录](../../AYDocs/animation-authoring-hardening.md)。
 
 ## 公开接口
 
