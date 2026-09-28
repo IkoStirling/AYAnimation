@@ -1572,6 +1572,13 @@ SkeletonBakeDryRunPlan SkeletonEditorCore::dryRunBake(
                 ? "Skeleton-mask bone references will be rewritten."
                 : validationError});
     }
+    const auto rememberInput = [&](const std::string& path) {
+        if (!path.empty()) plan.inputs.push_back({path, fileFingerprint(path)});
+    };
+    rememberInput(plan.skeletonPath);
+    rememberInput(plan.targetSkeletonPath);
+    rememberInput(plan.mappingPath);
+    for (const auto& dependency : plan.dependencies) rememberInput(dependency.path);
     return plan;
 }
 
@@ -1638,6 +1645,8 @@ std::string SkeletonEditorCore::dryRunManifestJson(
             });
         }
     }
+    Json inputs = Json::array();
+    for (const auto& input : plan.inputs) inputs.push_back({{"path", input.path}, {"fingerprint", input.fingerprint}});
     const Json root = {
         {"type", "SkeletonBakeDryRun"},
         {"version", plan.schemaVersion},
@@ -1662,6 +1671,7 @@ std::string SkeletonEditorCore::dryRunManifestJson(
         {"bones", std::move(operations)},
         {"retargetRoles", std::move(retargetRoles)},
         {"dependencies", std::move(dependencies)},
+        {"inputs", std::move(inputs)},
         {"preflight", std::move(issues)},
     };
     return root.dump(2) + "\n";

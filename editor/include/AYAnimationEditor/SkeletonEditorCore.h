@@ -131,6 +131,11 @@ struct SkeletonBakeDependency {
     std::string message;
 };
 
+struct SkeletonBakeInputRevision {
+    std::string path;
+    std::string fingerprint; // existing size:mtime contract; empty means absent
+};
+
 struct SkeletonBakeDryRunPlan {
     std::uint32_t schemaVersion = kSkeletonBakePlanSchemaVersion;
     std::string skeletonPath;
@@ -146,6 +151,7 @@ struct SkeletonBakeDryRunPlan {
     SkeletonPreflightReport preflight;
     std::vector<SkeletonBakeBoneOperation> boneOperations;
     std::vector<SkeletonBakeDependency> dependencies;
+    std::vector<SkeletonBakeInputRevision> inputs;
 
     [[nodiscard]] std::size_t boneActionCount(
         SkeletonBakeBoneAction action) const noexcept;

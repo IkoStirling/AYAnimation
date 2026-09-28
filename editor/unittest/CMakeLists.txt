@@ -1,6 +1,7 @@
 add_executable(AYAnimationEditorCore_UnitTests
     Test_AnimationPreviewSession.cpp
     Test_SkeletonEditorCore.cpp
+    Test_SkeletonBakePublication.cpp
 )
 
 target_link_libraries(AYAnimationEditorCore_UnitTests PRIVATE

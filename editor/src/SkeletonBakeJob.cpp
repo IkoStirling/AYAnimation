@@ -1,10 +1,13 @@
 #include <AYAnimationEditor/SkeletonBakeJob.h>
 
 #include "SkeletonBakeReferences.h"
+#include "SkeletonBakePublication.h"
 
 #include <AYAnimation/HumanoidRetarget.h>
 
 #include <AYIO/File.h>
+#include <AYIO/PathSafety.h>
+#include <AYTask/BackgroundJob.h>
 #include <AYResource/assetsImpl/Animation.h>
 #include <AYResource/assetsImpl/Mesh.h>
 #include <AYResource/assetsImpl/Skeleton.h>
@@ -14,7 +17,8 @@
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
-#include <future>
+#include <chrono>
+#include <random>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -60,6 +64,58 @@ struct RunState {
     std::vector<std::string> outputPaths;
 };
 
+struct OutputLane { std::mutex mutex; };
+
+std::shared_ptr<OutputLane> outputLane(const std::string& output)
+{
+    static std::mutex lanesMutex;
+    static std::vector<std::pair<std::filesystem::path, std::weak_ptr<OutputLane>>> lanes;
+    auto path = std::filesystem::weakly_canonical(std::filesystem::absolute(output));
+    while (path.has_relative_path() && path.filename().empty()) path = path.parent_path();
+    std::lock_guard lock(lanesMutex);
+    for (auto it = lanes.begin(); it != lanes.end();) {
+        auto lane = it->second.lock();
+        if (!lane) { it = lanes.erase(it); continue; }
+        if (ayt::io::path::isLexicallyWithin(it->first, path)
+            && ayt::io::path::isLexicallyWithin(path, it->first)) return lane;
+        ++it;
+    }
+    auto lane = std::make_shared<OutputLane>();
+    lanes.emplace_back(path, lane);
+    return lane;
+}
+
+struct BakeWorkspace {
+    std::filesystem::path root;
+    std::filesystem::path path;
+    bool retain = false;
+    explicit BakeWorkspace(const std::filesystem::path& outputRoot) : root(std::filesystem::canonical(outputRoot)) {
+        static thread_local std::mt19937_64 random{std::random_device{}()};
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            auto candidate = root / (".~aybake-" + std::to_string(random()));
+            std::error_code error;
+            if (std::filesystem::create_directory(candidate, error)) {
+                std::filesystem::path checked;
+                std::string pathError;
+                if (!ayt::io::path::resolveWithinRoot(root, candidate, checked, pathError))
+                    throw std::runtime_error("Invalid bake workspace: " + pathError);
+                path = std::move(checked);
+                return;
+            }
+            if (error) throw std::filesystem::filesystem_error("reserve bake workspace", candidate, error);
+        }
+        throw std::runtime_error("Unable to reserve unique bake workspace.");
+    }
+    ~BakeWorkspace() {
+        if (retain || path.empty()) return;
+        std::error_code ignored;
+        if (!ayt::io::path::isLexicallyWithin(root, path) || root == path) return;
+        const auto status = std::filesystem::symlink_status(path, ignored);
+        if (ignored || !std::filesystem::is_directory(status)) return;
+        std::filesystem::remove_all(path, ignored); // verified, exclusively-created child only
+    }
+};
+
 void setDetails(const std::shared_ptr<RunState>& run, std::string message,
                 std::vector<std::string> outputs = {})
 {
@@ -103,90 +159,6 @@ struct StagedFile {
     std::filesystem::path temporary;
     std::filesystem::path destination;
 };
-
-bool commitFilesTransaction(const std::vector<StagedFile>& files,
-                            std::uint64_t generation,
-                            std::string& error)
-{
-    struct Entry {
-        const StagedFile* file = nullptr;
-        std::filesystem::path backup;
-        bool hadOriginal = false;
-        bool committed = false;
-    };
-    std::vector<Entry> entries;
-    entries.reserve(files.size());
-    for (const StagedFile& file : files) {
-        Entry entry;
-        entry.file = &file;
-        entry.backup = file.destination.string() + ".g"
-            + std::to_string(generation) + ".rollback";
-        std::error_code filesystemError;
-        entry.hadOriginal = std::filesystem::exists(
-            file.destination, filesystemError) && !filesystemError;
-        if (filesystemError) {
-            error = "Unable to inspect existing bake output: "
-                + normalizedPath(file.destination);
-            return false;
-        }
-        std::filesystem::remove(entry.backup, filesystemError);
-        if (filesystemError) {
-            error = "Unable to clear stale bake rollback file: "
-                + normalizedPath(entry.backup);
-            return false;
-        }
-        entries.push_back(std::move(entry));
-    }
-
-    const auto rollback = [&entries]() {
-        for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
-            std::error_code ignored;
-            if (it->committed) {
-                std::filesystem::remove(it->file->destination, ignored);
-            }
-            if (it->hadOriginal && std::filesystem::exists(it->backup)) {
-                ignored.clear();
-                std::filesystem::rename(
-                    it->backup, it->file->destination, ignored);
-            }
-        }
-    };
-
-    for (Entry& entry : entries) {
-        std::error_code filesystemError;
-        if (entry.hadOriginal) {
-            std::filesystem::rename(
-                entry.file->destination, entry.backup, filesystemError);
-            if (filesystemError) {
-                error = "Unable to preserve previous bake output: "
-                    + normalizedPath(entry.file->destination);
-                rollback();
-                return false;
-            }
-        }
-        filesystemError.clear();
-        std::filesystem::rename(entry.file->temporary,
-            entry.file->destination, filesystemError);
-        if (filesystemError) {
-            if (entry.hadOriginal) {
-                std::error_code ignored;
-                std::filesystem::rename(
-                    entry.backup, entry.file->destination, ignored);
-            }
-            error = "Unable to commit bake output: "
-                + normalizedPath(entry.file->destination);
-            rollback();
-            return false;
-        }
-        entry.committed = true;
-    }
-    for (const Entry& entry : entries) {
-        if (!entry.hadOriginal) continue;
-        std::error_code ignored;
-        std::filesystem::remove(entry.backup, ignored);
-    }
-    return true;
-}
 
 bool validateStagedFile(const StagedFile& file, std::string& error)
 {
@@ -361,8 +333,6 @@ void executeBake(const std::shared_ptr<RunState>& run,
                  SkeletonBakeDryRunPlan plan,
                  std::string outputDirectory)
 {
-    run->sourceFingerprint = plan.sourceFingerprint;
-    run->profileFingerprint = plan.profileFingerprint;
     if (!plan.canBake()) {
         fail(run, "Bake preflight contains blocking errors.");
         return;
@@ -371,6 +341,22 @@ void executeBake(const std::shared_ptr<RunState>& run,
         fail(run, "Bake output directory is empty.");
         return;
     }
+    if (plan.inputs.empty()) {
+        fail(run, "Bake plan has no captured input revisions; rebuild preflight.");
+        return;
+    }
+    const auto inputsCurrent = [&] {
+        if (fileRevision(plan.skeletonPath) != plan.sourceFingerprint) {
+            fail(run, "Source skeleton changed since bake planning: " + plan.skeletonPath);
+            return false;
+        }
+        for (const auto& input : plan.inputs) if (fileRevision(input.path) != input.fingerprint) {
+            fail(run, "Bake input changed since planning: " + input.path);
+            return false;
+        }
+        return true;
+    };
+    if (!inputsCurrent()) return;
     for (const auto& dependency : plan.dependencies) {
         if (dependency.impact == SkeletonBakeDependencyImpact::Blocked) {
             fail(run, "A bake dependency is blocked: " + dependency.path);
@@ -463,7 +449,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
         fail(run, "Unable to create bake output directory.");
         return;
     }
-    const std::string suffix = ".g" + std::to_string(run->generation) + ".tmp";
+    BakeWorkspace workspace(std::filesystem::absolute(outputRoot));
     std::vector<StagedFile> files;
     std::unordered_map<std::string, std::string> destinationOwners;
     const auto addStaged = [&](StagedFile::Kind kind,
@@ -473,6 +459,17 @@ void executeBake(const std::shared_ptr<RunState>& run,
                                std::string& error) -> bool {
         const std::string key = normalizedPath(
             std::filesystem::absolute(destination));
+        std::filesystem::path checkedDestination;
+        if (!ayt::io::path::resolveWithinRoot(workspace.root, destination, checkedDestination, error)) return false;
+        for (const auto& input : plan.inputs) {
+            const auto source = std::filesystem::weakly_canonical(std::filesystem::absolute(input.path));
+            const auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(destination));
+            if (ayt::io::path::isLexicallyWithin(source, target)
+                && ayt::io::path::isLexicallyWithin(target, source)) {
+                error = "Bake output would overwrite an input: " + key;
+                return false;
+            }
+        }
         if (!destinationOwners.emplace(key, sourcePath).second) {
             error = "Multiple bake inputs resolve to the same output path: " + key;
             return false;
@@ -481,7 +478,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
         file.kind = kind;
         file.sourcePath = sourcePath;
         file.destination = destination;
-        file.temporary = destination.string() + suffix;
+        file.temporary = workspace.path / ("new-" + std::to_string(files.size()));
         if (!writeBytes(file.temporary, bytes)) {
             error = "Unable to write bake temporary file: "
                 + normalizedPath(file.temporary);
@@ -590,6 +587,27 @@ void executeBake(const std::shared_ptr<RunState>& run,
     const auto receiptOutput = plan.receiptPath.empty()
         ? outputRoot / (skeletonStem + scopeSuffix + ".bake-result.json")
         : std::filesystem::path(plan.receiptPath);
+    std::filesystem::path checkedReceipt;
+    std::string receiptError;
+    const auto receiptRoot = plan.receiptPath.empty() ? std::filesystem::absolute(outputRoot)
+        : std::filesystem::absolute(std::filesystem::path(plan.skeletonPath)).parent_path();
+    if (!ayt::io::path::resolveWithinRoot(receiptRoot, receiptOutput, checkedReceipt, receiptError)) {
+        fail(run, "Unsafe bake receipt: " + receiptError);
+        return;
+    }
+    for (const auto& input : plan.inputs) {
+        const auto source = std::filesystem::weakly_canonical(std::filesystem::absolute(input.path));
+        if (ayt::io::path::isLexicallyWithin(source, checkedReceipt)
+            && ayt::io::path::isLexicallyWithin(checkedReceipt, source)) {
+            fail(run, "Bake receipt would overwrite an input: " + input.path);
+            return;
+        }
+    }
+    std::filesystem::create_directories(receiptOutput.parent_path(), directoryError);
+    if (directoryError) {
+        fail(run, "Unable to create bake receipt directory: " + directoryError.message());
+        return;
+    }
     Json receipt = {
         {"type", "SkeletonBakeResult"},
         {"version", 2u},
@@ -607,7 +625,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
     StagedFile receiptFile;
     receiptFile.kind = StagedFile::Kind::Receipt;
     receiptFile.destination = receiptOutput;
-    receiptFile.temporary = receiptOutput.string() + suffix;
+    receiptFile.temporary = workspace.path / ("new-" + std::to_string(files.size()));
     const std::string receiptKey = normalizedPath(
         std::filesystem::absolute(receiptOutput));
     if (!destinationOwners.emplace(receiptKey, "receipt").second
@@ -631,6 +649,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
         cleanupTemps();
         return;
     }
+    if (!inputsCurrent()) return;
     run->progress.store(0.9f);
     RunState::Phase expected = RunState::Phase::Building;
     if (!run->phase.compare_exchange_strong(
@@ -638,13 +657,18 @@ void executeBake(const std::shared_ptr<RunState>& run,
         cleanupTemps();
         return;
     }
-    std::string commitError;
-    if (!commitFilesTransaction(files, run->generation, commitError)) {
+    std::vector<detail::BakePublicationFile> publications;
+    for (const auto& file : files) publications.push_back({file.temporary, file.destination});
+    const auto published = detail::publishBakeFiles(publications, workspace.path);
+    workspace.retain = !published.retainedBackup.empty();
+    if (!published.committed) {
         cleanupTemps();
-        fail(run, std::move(commitError));
+        fail(run, published.error);
         return;
     }
-    setDetails(run, "Skeleton bake completed.", std::move(outputs));
+    std::string completion = "Skeleton bake completed.";
+    for (const auto& warning : published.warnings) completion += " Warning: " + warning;
+    setDetails(run, std::move(completion), std::move(outputs));
     run->progress.store(1.0f);
     run->state.store(SkeletonBakeJobState::Succeeded);
     run->phase.store(RunState::Phase::Finished);
@@ -653,26 +677,55 @@ void executeBake(const std::shared_ptr<RunState>& run,
 } // namespace
 
 struct SkeletonBakeJob::Impl {
+    struct Worker {
+        std::shared_ptr<RunState> run;
+        ayt::task::BackgroundJob<void> handle;
+    };
     mutable std::mutex mutex;
+    ayt::task::ITaskScheduler* scheduler = nullptr;
     std::uint64_t nextGeneration = 1u;
     std::shared_ptr<RunState> current;
-    std::vector<std::future<void>> workers;
+    std::vector<Worker> workers;
+
+    static void consume(Worker& worker) {
+        try { worker.handle.get(); }
+        catch (const std::exception& error) { fail(worker.run, "Bake worker failed: " + std::string(error.what())); }
+        catch (...) { fail(worker.run, "Bake worker failed with an unknown exception."); }
+    }
+    void reap() {
+        for (auto it = workers.begin(); it != workers.end();) {
+            if (it->handle.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) { ++it; continue; }
+            consume(*it);
+            it = workers.erase(it);
+        }
+    }
 };
 
 SkeletonBakeJob::SkeletonBakeJob() : _impl(std::make_unique<Impl>()) {}
 
+SkeletonBakeJob::SkeletonBakeJob(ayt::task::ITaskScheduler& scheduler) : SkeletonBakeJob()
+{
+    _impl->scheduler = &scheduler;
+}
+
 SkeletonBakeJob::~SkeletonBakeJob()
 {
     cancel();
-    for (auto& worker : _impl->workers) {
-        if (worker.valid()) worker.wait();
-    }
+    drain();
+}
+
+void SkeletonBakeJob::drain()
+{
+    std::lock_guard lock(_impl->mutex);
+    for (auto& worker : _impl->workers) Impl::consume(worker);
+    _impl->workers.clear();
 }
 
 std::uint64_t SkeletonBakeJob::start(SkeletonBakeDryRunPlan plan,
                                      std::string outputDirectory)
 {
     std::lock_guard lock(_impl->mutex);
+    _impl->reap();
     if (_impl->current != nullptr) {
         RunState::Phase expected = RunState::Phase::Building;
         if (_impl->current->phase.compare_exchange_strong(
@@ -680,6 +733,8 @@ std::uint64_t SkeletonBakeJob::start(SkeletonBakeDryRunPlan plan,
             _impl->current->cancelled.store(true);
             _impl->current->state.store(SkeletonBakeJobState::Cancelled);
             setDetails(_impl->current, "Superseded by a newer bake generation.");
+            for (auto& worker : _impl->workers)
+                if (worker.run == _impl->current) worker.handle.cancel();
         }
     }
     auto run = std::make_shared<RunState>();
@@ -687,15 +742,33 @@ std::uint64_t SkeletonBakeJob::start(SkeletonBakeDryRunPlan plan,
     run->sourceFingerprint = plan.sourceFingerprint;
     run->profileFingerprint = plan.profileFingerprint;
     _impl->current = run;
-    _impl->workers.push_back(std::async(std::launch::async,
-        [run, plan = std::move(plan), output = std::move(outputDirectory)]() mutable {
-            executeBake(run, std::move(plan), std::move(output));
-            if (run->cancelled.load()
-                && run->state.load() == SkeletonBakeJobState::Running) {
-                run->state.store(SkeletonBakeJobState::Cancelled);
-                setDetails(run, "Skeleton bake cancelled.");
-            }
-        }));
+    try {
+        _impl->workers.reserve(_impl->workers.size() + 1);
+        std::vector<std::shared_ptr<OutputLane>> lanes{outputLane(outputDirectory)};
+        if (!plan.receiptPath.empty()) lanes.push_back(outputLane(std::filesystem::path(plan.receiptPath).parent_path().string()));
+        std::sort(lanes.begin(), lanes.end(), [](const auto& a, const auto& b) {
+            return std::less<const OutputLane*>{}(a.get(), b.get());
+        });
+        lanes.erase(std::unique(lanes.begin(), lanes.end()), lanes.end());
+        auto& scheduler = _impl->scheduler ? *_impl->scheduler : ayt::task::ITaskScheduler::defaultScheduler();
+        auto handle = ayt::task::launchBackground(
+            [run, lanes = std::move(lanes), plan = std::move(plan), output = std::move(outputDirectory)](ayt::task::CancellationToken token) mutable {
+                try {
+                    std::vector<std::unique_lock<std::mutex>> outputLocks;
+                    outputLocks.reserve(lanes.size());
+                    for (auto& lane : lanes) outputLocks.emplace_back(lane->mutex);
+                    if (run->cancelled.load()) return;
+                    token.report(0.0f, "Executing skeleton bake.");
+                    executeBake(run, std::move(plan), std::move(output));
+                    token.report(run->progress.load(), "Skeleton bake worker completed.");
+                } catch (const std::exception& error) {
+                    fail(run, "Bake worker failed: " + std::string(error.what()));
+                } catch (...) { fail(run, "Bake worker failed with an unknown exception."); }
+            }, scheduler);
+        _impl->workers.push_back({run, std::move(handle)});
+    } catch (const std::exception& error) {
+        fail(run, "Unable to launch bake worker: " + std::string(error.what()));
+    } catch (...) { fail(run, "Unable to launch bake worker."); }
     return run->generation;
 }
 
@@ -719,6 +792,8 @@ void SkeletonBakeJob::cancel()
     run->cancelled.store(true);
     run->state.store(SkeletonBakeJobState::Cancelled);
     setDetails(run, "Skeleton bake cancelled.");
+    std::lock_guard lock(_impl->mutex);
+    for (auto& worker : _impl->workers) if (worker.run == run) worker.handle.cancel();
 }
 
 SkeletonBakeJobSnapshot SkeletonBakeJob::poll() const
@@ -726,12 +801,19 @@ SkeletonBakeJobSnapshot SkeletonBakeJob::poll() const
     std::shared_ptr<RunState> run;
     {
         std::lock_guard lock(_impl->mutex);
+        _impl->reap();
         run = _impl->current;
     }
     if (run == nullptr) return {};
     SkeletonBakeJobSnapshot snapshot;
     snapshot.generation = run->generation;
+    {
+        std::lock_guard lock(_impl->mutex);
+        snapshot.pendingWorkers = _impl->workers.size();
+    }
     snapshot.state = run->state.load();
+    snapshot.cancellable = snapshot.state == SkeletonBakeJobState::Running
+        && run->phase.load() == RunState::Phase::Building;
     snapshot.progress = run->progress.load();
     snapshot.sourceFingerprint = run->sourceFingerprint;
     snapshot.profileFingerprint = run->profileFingerprint;

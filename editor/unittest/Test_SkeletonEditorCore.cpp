@@ -7,6 +7,8 @@
 #include <AYResource/assetsImpl/Skeleton.h>
 #include <AYResource/assetsImpl/SkeletonMask.h>
 #include <AYTest.h>
+#include <AYTestFixtures.h>
+#include <AYTask/TaskScheduler.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -20,13 +22,38 @@ using namespace ayt::resource;
 
 namespace {
 
+class ManualBakeScheduler final : public ayt::task::ITaskScheduler {
+public:
+    std::vector<std::shared_ptr<ayt::task::ITask>> queued;
+    bool reject = false;
+    bool submitOwned(std::shared_ptr<ayt::task::ITask> task) override {
+        if (reject) return false;
+        queued.push_back(std::move(task));
+        return true;
+    }
+    void submit(ayt::task::ITask*) override { throw std::logic_error("Owned work required"); }
+    void submit(std::initializer_list<ayt::task::ITask*>) override { throw std::logic_error("Owned work required"); }
+    void wait(ayt::task::ITask*) override { waitAll(); }
+    void waitAll() override {
+        // Reverse order deliberately: stale queued work must never publish last.
+        while (!queued.empty()) {
+            auto task = std::move(queued.back());
+            queued.pop_back();
+            task->execute();
+            task->setComplete();
+        }
+    }
+    void shutdown() override { reject = true; queued.clear(); }
+    bool isShuttingDown() const override { return reject; }
+    size_t numThreads() const override { return 0; }
+    size_t numQueuedTasks() const override { return queued.size(); }
+    size_t numRunningTasks() const override { return 0; }
+};
+
 std::filesystem::path fixtureRoot()
 {
-    const auto path = std::filesystem::temp_directory_path()
-        / "ay_animation_skeleton_editor_core";
-    std::error_code error;
-    std::filesystem::create_directories(path, error);
-    return path;
+    static ayt::test::ScratchDirectory scratch{"animation-skeleton-core"};
+    return scratch.path();
 }
 
 std::filesystem::path writeSkeleton(bool addHelper = false,
@@ -583,7 +610,7 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(snapshot.generation == generation);
-    CHECK(snapshot.state == SkeletonBakeJobState::Succeeded);
+    CHECK_MSG(snapshot.state == SkeletonBakeJobState::Succeeded, snapshot.message.c_str());
     CHECK(snapshot.progress == 1.0f);
     CHECK(snapshot.outputPaths.size() == 5u);
 
@@ -743,6 +770,114 @@ TEST_CASE(skeleton_bake_job_rejects_blocked_and_isolates_generations)
     CHECK(snapshot.generation == second);
     CHECK(snapshot.state == SkeletonBakeJobState::Failed);
     CHECK(snapshot.message.find("preflight") != std::string::npos);
+}
+
+TEST_CASE(queued_generations_cancel_without_writes_and_completed_workers_are_reaped) {
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto plan = core.dryRunBake();
+    CHECK(plan.canBake());
+    ManualBakeScheduler scheduler;
+    SkeletonBakeJob job(scheduler);
+    const auto output = fixtureRoot() / "QueuedBake";
+    job.start(plan, output.string());
+    const auto latest = job.start(plan, output.string());
+    CHECK(job.poll().pendingWorkers == 2u);
+    CHECK(job.poll().cancellable);
+    scheduler.waitAll();
+    const auto completed = job.poll();
+    CHECK_MSG(completed.state == SkeletonBakeJobState::Succeeded, completed.message.c_str());
+    CHECK(completed.generation == latest);
+    CHECK(completed.pendingWorkers == 0u);
+    CHECK(!completed.cancellable);
+    job.start(plan, output.string());
+    job.cancel();
+    CHECK(job.poll().state == SkeletonBakeJobState::Cancelled);
+    scheduler.waitAll();
+    job.drain();
+    CHECK(job.poll().pendingWorkers == 0u);
+    CHECK(std::none_of(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{},
+        [](const auto& entry) { return entry.path().filename().string().find(".~aybake-") == 0; }));
+}
+
+TEST_CASE(scheduler_rejection_and_output_failure_always_produce_terminal_state) {
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto plan = core.dryRunBake();
+    ManualBakeScheduler scheduler;
+    scheduler.reject = true;
+    SkeletonBakeJob job(scheduler);
+    job.start(plan, (fixtureRoot() / "RejectedBake").string());
+    CHECK(job.poll().state == SkeletonBakeJobState::Failed);
+    CHECK(job.poll().message.find("launch") != std::string::npos);
+    CHECK(job.poll().pendingWorkers == 0u);
+    scheduler.reject = false;
+    const auto output = fixtureRoot() / "NotADirectory";
+    CHECK(ayt::io::File::writeAllText(output.string(), "do not overwrite"));
+    job.start(plan, output.string());
+    scheduler.waitAll();
+    CHECK(job.poll().state == SkeletonBakeJobState::Failed);
+    CHECK(ayt::io::File::readAllText(output.string()) == "do not overwrite");
+}
+
+TEST_CASE(concurrent_instances_and_successive_jobs_publish_complete_receipts) {
+    SkeletonEditorCore core;
+    std::string error;
+    CHECK(core.open(writeSkeleton().string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto plan = core.dryRunBake();
+    ayt::task::TaskScheduler scheduler(4);
+    SkeletonBakeJob first(scheduler), second(scheduler);
+    const auto output = fixtureRoot() / "ConcurrentBake";
+    first.start(plan, output.string());
+    second.start(plan, (output / ".").string());
+    CHECK(ayt::test::waitUntil([&] { return first.poll().finished() && second.poll().finished(); }));
+    first.drain();
+    second.drain();
+    CHECK_MSG(first.poll().state == SkeletonBakeJobState::Succeeded, first.poll().message.c_str());
+    CHECK_MSG(second.poll().state == SkeletonBakeJobState::Succeeded, second.poll().message.c_str());
+    for (int i = 0; i < 8; ++i) first.start(plan, output.string());
+    CHECK(ayt::test::waitUntil([&] { return first.poll().finished(); }));
+    first.drain();
+    CHECK_MSG(first.poll().state == SkeletonBakeJobState::Succeeded, first.poll().message.c_str());
+    CHECK(first.poll().pendingWorkers == 0u);
+    const auto receipt = nlohmann::json::parse(ayt::io::File::readAllText(plan.receiptPath));
+    CHECK(receipt.at("generation").get<std::uint64_t>() == first.poll().generation);
+    for (const auto& path : receipt.at("outputs")) CHECK(std::filesystem::is_regular_file(path.get<std::string>()));
+    CHECK(std::none_of(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{},
+        [](const auto& entry) { return entry.path().filename().string().find(".~aybake-") == 0; }));
+}
+
+TEST_CASE(queued_input_changes_and_receipt_input_collision_reject_before_publication) {
+    SkeletonEditorCore core;
+    std::string error;
+    const auto source = writeSkeleton();
+    const auto clip = writeAnimationForNode("hips", "queued-input.ayanm");
+    CHECK(core.open(source.string(), &error));
+    CHECK(core.applyCanonicalNameTemplate());
+    const auto plan = core.dryRunBake({clip.string()});
+    CHECK(plan.canBake());
+    ManualBakeScheduler scheduler;
+    SkeletonBakeJob job(scheduler);
+    const auto output = fixtureRoot() / "ChangedInputBake";
+    job.start(plan, output.string());
+    CHECK(ayt::io::File::writeAllText(clip.string(), "changed after preflight"));
+    scheduler.waitAll();
+    CHECK(job.poll().state == SkeletonBakeJobState::Failed);
+    CHECK(job.poll().message.find("changed since planning") != std::string::npos);
+    CHECK(!std::filesystem::exists(output));
+    const auto before = ayt::io::File::readAllBytes(source.string());
+    auto collision = core.dryRunBake();
+    collision.receiptPath = source.string();
+    job.start(collision, (fixtureRoot() / "InputCollisionBake").string());
+    scheduler.waitAll();
+    CHECK(job.poll().state == SkeletonBakeJobState::Failed);
+    CHECK(job.poll().message.find("overwrite an input") != std::string::npos);
+    CHECK(ayt::io::File::readAllBytes(source.string()) == before);
 }
 
 TEST_SUITE_END

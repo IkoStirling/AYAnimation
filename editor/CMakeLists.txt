@@ -3,6 +3,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_library(AYAnimationEditorCore STATIC
     src/AnimationPreviewSession.cpp
     src/SkeletonBakeJob.cpp
+    src/SkeletonBakePublication.cpp
     src/SkeletonBakeReferences.cpp
     src/SkeletonEditorCore.cpp
 )
@@ -15,6 +16,7 @@ target_link_libraries(AYAnimationEditorCore PUBLIC
     AYAnimation
     AYResource
     AYIO
+    AYTask
     nlohmann_json::nlohmann_json
 )
 
