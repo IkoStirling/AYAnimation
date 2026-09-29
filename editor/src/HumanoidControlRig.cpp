@@ -120,7 +120,7 @@ bool HumanoidControlRig::bind(const ISkeleton &skeleton,
     // Body/roots and limb FK handles; fingers/eyes are an explicit later
     // extension.
     if (spec.role <= HumanoidBone::Head ||
-        (spec.role >= HumanoidBone::LeftUpperArm &&
+        (spec.role >= HumanoidBone::LeftShoulder &&
          spec.role <= HumanoidBone::RightToes))
       next._handles.push_back(
           {spec.role, bone, spec.role <= HumanoidBone::Hips});
@@ -570,6 +570,7 @@ std::shared_ptr<Animation> HumanoidControlRig::bake(const IAnimation &source,
   AnimationPlayer player;
   player.setSkeleton(skeleton);
   player.play(&source);
+  player.setLoop(false); // Bake the endpoint, not the wrapped first frame.
   player.pause();
   // Replace only controlled TRS tracks; unrelated tracks/Notify/metadata
   // survive.

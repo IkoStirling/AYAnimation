@@ -26,6 +26,41 @@ struct RigFixture {
 bool near(FVector3 a,FVector3 b,float epsilon=2e-4f) { return (a-b).length()<epsilon; }
 }
 TEST_SUITE(HumanoidControlRigTests)
+TEST_CASE(bake_samples_original_clip_endpoint_without_loop_wrapping) {
+    RigFixture f; HumanoidControlRig rig; CHECK(rig.bind(*f.skeleton,f.mapping)); rig.enabled=true;
+    Animation source; source.setDuration(1); source.setTicksPerSecond(1);
+    AnimTrack track; track.nodeName=std::string(getHumanoidBoneName(HumanoidBone::Hips)); track.property="position";
+    track.valueType=AnimTrackType::Vector3; track.times={0,1}; track.values={0,0,0,0,5,0}; source.addTrack(track);
+    const auto baked=rig.bake(source,30); CHECK(baked); if(!baked) return;
+    AnimationPlayer player; player.setSkeleton(f.skeleton); player.play(baked.get()); player.setLoop(false); player.setTime(1); player.evaluate();
+    CHECK(near(player.getBoneWorldMatrices()[0].transformPoint({}),{0,5,0}));
+}
+TEST_CASE(all_four_limb_semantics_clamp_reach_and_reject_nonuniform_scale) {
+    const HumanoidBone roles[4][3]={{HumanoidBone::LeftUpperArm,HumanoidBone::LeftLowerArm,HumanoidBone::LeftHand},
+        {HumanoidBone::RightUpperArm,HumanoidBone::RightLowerArm,HumanoidBone::RightHand},
+        {HumanoidBone::LeftUpperLeg,HumanoidBone::LeftLowerLeg,HumanoidBone::LeftFoot},
+        {HumanoidBone::RightUpperLeg,HumanoidBone::RightLowerLeg,HumanoidBone::RightFoot}};
+    for (unsigned limb=0;limb<4;++limb) {
+        RigFixture f; HumanoidBoneMap mapping; CHECK(mapping.bind(HumanoidBone::Hips,0));
+        for (int j=0;j<3;++j) CHECK(mapping.bind(roles[limb][j],j+1));
+        HumanoidControlRig rig; CHECK(rig.bind(*f.skeleton,mapping)); rig.enabled=true;
+        auto pose=rig.pose(); pose.limbs[limb].ik=true; pose.limbs[limb].target={100,1,0}; pose.limbs[limb].pole={0,1,3}; CHECK(rig.setPose(pose));
+        HumanoidLocalPose local; std::vector<Float4x4> world; CHECK(rig.evaluate(f.world,local,world));
+        const auto tip=world[3].transformPoint({}),root=world[1].transformPoint({});
+        CHECK(std::fabs((tip-root).length()-2*std::sqrt(2.f))<1e-3f); CHECK(tip.x<3);
+        pose.fk.scales[1]={1,2,1}; CHECK(!rig.setPose(pose));
+    }
+}
+TEST_CASE(left_and_right_shoulders_generate_symmetric_fk_handles) {
+    Skeleton skeleton; HumanoidBoneMap mapping;
+    for (const auto role:{HumanoidBone::LeftShoulder,HumanoidBone::RightShoulder}) {
+        Bone b; b.name=std::string(getHumanoidBoneName(role)); b.parentIndex=-1;
+        b.localRotation=FQuaternion::identity(); b.localScale={1,1,1}; b.inverseBindMatrix=Float4x4::identity();
+        CHECK(mapping.bind(role,int(skeleton.getBoneCount()))); skeleton.addBone(b);
+    }
+    HumanoidControlRig rig; CHECK(rig.bind(skeleton,mapping)); CHECK(rig.handles().size()==2);
+    CHECK(rig.handles()[0].role==HumanoidBone::LeftShoulder); CHECK(rig.handles()[1].role==HumanoidBone::RightShoulder);
+}
 TEST_CASE(explicit_mapping_generates_partial_controls_without_source_changes) {
     RigFixture f; HumanoidControlRig rig; const auto bone=f.skeleton->getBones()[2];
     CHECK(rig.bind(*f.skeleton,f.mapping)); CHECK(rig.handles().size()==4); CHECK(rig.limbBone(RigLimb::LeftArm,2)==3);

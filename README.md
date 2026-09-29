@@ -27,6 +27,9 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
   重定向尚未支持切线空间变换，不能当作 Linear 降级发布。
 - 动画预览支持模型/骨架及组合模式；轨道、关键帧分量、Linear/Step/Hermite 和切线编辑、
   Notify、Clip 属性、撤销与保存已接入。Quaternion 使用运行时正式采样语义。
+- 小型人形控制 Rig 已接入预览：躯干 FK、四肢可选 IK/FK、目标/Pole/末端旋转、
+  手柄和数值编辑、整套控制器姿势键、保存重开与普通 Clip 烘焙；独立核心与薄适配
+  见 [作者核心](editor/README.md)，边界与验证见[控制器实施记录](../../AYDocs/control-rig-implementation.md)。
 
 资源管线详见 [骨骼动画资源管线设计](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md)，
 本轮加固与批量作者工具实施见 [连续实施记录](../../AYDocs/animation-authoring-hardening.md)。

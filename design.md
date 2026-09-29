@@ -4910,6 +4910,21 @@ guard 同 FABRIK；targetEff 同 FABRIK
 
 ## 16. Changelog
 
+### 人形控制器作者增量（2026-09-29）
+
+`AYAnimationEditorCore::HumanoidControlRig` 已提供明确映射的躯干/肩/四肢 FK、
+四肢可选 IK/FK、目标/Pole/末端旋转和切换匹配。定义与姿势为 owned snapshot；
+AYEditor 只负责预览叠加、手柄/数值、统一历史、控制器姿势 DopeSheet 和持久化。
+控制层不加入 Skeleton 的骨数组，不改变 `AnimationPlayer` 的运行时 IK 接口。
+
+控制器键为整套姿势，模式/override 阶跃、位置/权重线性、旋转 shortest-arc；
+烘焙 detached 普通 Linear TRS Clip，关闭控制层避免双重叠加，Save 才改磁盘。
+不增加资源扩展名：沿用 `.ayrig` 映射和已有动画预览项目元数据。
+第一版不含逐控制器曲线、角度限制、手指/眼睛或 DCC 约束图，只支持正均匀 scale。
+文件级恢复不能容纳 Rig，明确要求手动 Save；不宣称断电两文件事务。
+完整契约/步骤及实际验证见[作者核心](editor/README.md)和
+[控制器实施记录](../../AYDocs/control-rig-implementation.md)。
+
 | 日期 | 变更 |
 |------|------|
 | 2026-09-29 | 动画作者连续加固：宽条件跳转/采样/Notify/共享绑定缓存；AYTask owned 烘焙生命周期与失败回滚；跨轨/Notify 原子作者操作、内存 Clipboard、锚点时间变换；clip-only transport、历史选择及大数据缓存回归。独立作者核心 fast 13 / integration 31 / stress 1；详见 §7.6 与 editor/README.md。 |

@@ -35,6 +35,8 @@ struct RigControlHandle {
 /// end rotation.
 class HumanoidControlRig {
 public:
+  /// Bind an owned definition using explicit humanoid semantics. Missing roles
+  /// are optional; invalid hierarchy/scale/mapping leaves this rig unchanged.
   bool bind(const ayt::resource::ISkeleton &, const HumanoidBoneMap &,
             std::string *error = nullptr);
   bool bound() const noexcept { return !_bones.empty(); }

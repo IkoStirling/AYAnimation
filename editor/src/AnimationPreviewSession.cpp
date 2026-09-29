@@ -108,12 +108,23 @@ bool AnimationPreviewSession::replaceAnimation(
         setError(error, "Animation revision is null.");
         return false;
     }
+    if (_controlRig && !_controlRig->keys().empty()
+        && _controlRig->keys().back().seconds > animation->getDuration()) {
+        setError(error, "Move or delete control keys before shortening the clip.");
+        return false;
+    }
+    const auto liveRig = preserveTime && _controlRig
+        ? std::make_shared<HumanoidControlRig>(*_controlRig) : nullptr;
     const float previousTime = preserveTime ? time() : 0.0f;
     const bool wasPlaying = _playing;
     _animation = std::move(animation);
     _playing = false;
     bindPlayer();
     (void)setTime(std::clamp(previousTime, 0.0f, duration()));
+    if (liveRig) {
+        _controlRig = liveRig;
+        rebuildPoseFromPlayer();
+    }
     if (wasPlaying) play();
     rebuildDiagnostics();
     ++_revision;
@@ -129,14 +140,30 @@ bool AnimationPreviewSession::bindSkeleton(const std::string& path,
         setError(error, "Unable to load skeleton resource: " + path);
         return false;
     }
+    std::shared_ptr<HumanoidControlRig> preserved;
+    if (_controlRig) {
+        preserved = std::make_shared<HumanoidControlRig>();
+        if (!preserved->restore(*skeleton, _controlRig->encode(), error)) {
+            setError(error, "Clear the control rig before binding a different skeleton definition.");
+            return false;
+        }
+    }
     const auto previousTime = time();
     const auto wasPlaying = _playing;
     _skeleton = std::move(skeleton);
+    _controlRig = preserved ? std::make_shared<HumanoidControlRig>(*preserved) : nullptr;
+    _controlRigError.clear();
     _bindings.skeletonPath = normalizedAbsolute(path);
     rebuildBones();
     rebuildBindPose();
     bindPlayer();
     (void)setTime(previousTime);
+    if (preserved) {
+        // Rebinding equivalent data must not replace an unkeyed live edit with
+        // the sampled pose (bindPlayer/setTime seek the rig).
+        _controlRig = preserved;
+        rebuildPoseFromPlayer();
+    }
     if (wasPlaying) play();
     rebuildDiagnostics();
     ++_revision;
@@ -163,6 +190,8 @@ bool AnimationPreviewSession::bindMesh(const std::string& path,
 
 void AnimationPreviewSession::unbindSkeleton()
 {
+    _controlRig.reset();
+    _controlRigError.clear();
     const auto previousTime = time();
     const auto wasPlaying = _playing;
     _playing = false;
@@ -372,6 +401,7 @@ void AnimationPreviewSession::tick(float dt)
     if (!_playing || !std::isfinite(dt) || dt <= 0.0f || _animation == nullptr
         || !std::isfinite(dt * _playRate) || !std::isfinite(time() + dt * _playRate)) return;
     _player.tick(dt);
+    if (_controlRig) (void)_controlRig->seek(time());
     _player.evaluate();
     rebuildPoseFromPlayer();
     if (!_looping && time() >= duration()) {
@@ -383,7 +413,11 @@ void AnimationPreviewSession::tick(float dt)
 bool AnimationPreviewSession::setTime(float seconds)
 {
     if (_animation == nullptr || !std::isfinite(seconds)) return false;
+    // Authoring seeks include the closed endpoint even with loop playback on.
+    _player.setLoop(false);
     _player.setTime(std::clamp(seconds, 0.0f, duration()));
+    _player.setLoop(_looping);
+    if (_controlRig) (void)_controlRig->seek(time());
     _player.evaluate();
     rebuildPoseFromPlayer();
     return true;
@@ -463,6 +497,7 @@ void AnimationPreviewSession::bindPlayer()
         _player.setLoop(_looping);
         _player.setPlayRate(_playRate);
         _player.setTime(0.0f);
+        if (_controlRig) (void)_controlRig->seek(0);
         _player.evaluate();
         _player.pause();
         rebuildPoseFromPlayer();
@@ -528,7 +563,40 @@ void AnimationPreviewSession::rebuildPoseFromPlayer()
         if (skin != nullptr) _skin.assign(skin, skin + count);
         else _skin.clear();
     }
+    _controlRigError.clear();
+    if (_controlRig && _controlRig->enabled && _skeleton && !_poseWorld.empty()) {
+        HumanoidLocalPose local;
+        std::vector<ayt::math::Float4x4> solved;
+        if (_controlRig->evaluate(_poseWorld, local, solved, &_controlRigError)) {
+            _poseWorld = std::move(solved);
+            const auto* inverseBind = _skeleton->getInverseBindMatrices();
+            if (inverseBind) {
+                _skin.resize(_poseWorld.size());
+                for (std::size_t i=0; i<_skin.size(); ++i) _skin[i]=_poseWorld[i]*inverseBind[i];
+            }
+        }
+    }
     ++_poseRevision;
+}
+
+bool AnimationPreviewSession::setControlRig(std::shared_ptr<const HumanoidControlRig> rig,
+    std::string* error) {
+    std::shared_ptr<HumanoidControlRig> next;
+    if (rig) {
+        if (!_skeleton) { setError(error,"Bind a skeleton before creating controls."); return false; }
+        next=std::make_shared<HumanoidControlRig>();
+        if (!next->restore(*_skeleton,rig->encode(),error)) return false;
+        if (!next->keys().empty() && next->keys().back().seconds>duration()) {
+            setError(error,"Control keys exceed the clip duration."); return false;
+        }
+    }
+    const auto before=_controlRig;
+    _controlRig=std::move(next);
+    rebuildPoseFromPlayer();
+    if (!_controlRigError.empty()) {
+        const auto message=_controlRigError; _controlRig=before; rebuildPoseFromPlayer(); setError(error,message); return false;
+    }
+    ++_revision; if (error) error->clear(); return true;
 }
 
 void AnimationPreviewSession::rebuildDiagnostics()

@@ -14,6 +14,7 @@
 | `AnimationAuthoring.h` | detached 作者数据、跨轨/Notify 原子移动和删除 |
 | `AnimationClipboard.h` | owned 内存剪贴板，兼容已有轨道的粘贴 |
 | `AnimationTimeTransform.h` | 秒制锚点缩放、反向与 Hermite 切线修正 |
+| `HumanoidControlRig.h` | 显式人形映射、FK/IK/Pole、整套姿势键及 Clip 烘焙 |
 
 `AuthoredAnimation` 是短生命周期编辑副本，不是平行运行时资源系统。
 变换返回新的 `Animation` 和与输入选择位置对应的新 `AnimationKeyReference`；
@@ -79,7 +80,7 @@ worker 不借用页面或 job 的 Impl。这里只提供进程内排他和运行
 
 ## 测试分层
 
-45 个作者核心用例：fast 13（作者操作/剪贴板/时间变换），integration 31
+53 个作者核心用例：fast 21（作者操作/剪贴板/时间变换/人形 Rig），integration 31
 （预览、映射、引用闭包、后台生命周期及发布回滚），stress 1（5 万键）。
 完整层是三个互斥分区的并集；直接运行 executable 默认仍覆盖所有注册用例。
 
@@ -91,3 +92,23 @@ ctest --test-dir out/build/windows-debug -L '^animation-editor-full$' --output-o
 
 模块入口/统计见[统一测试契约](../../../AYDocs/testing.md)；连续阶段证据见
 [实施记录](../../../AYDocs/animation-authoring-hardening.md)。
+
+## 人形控制器第一版
+
+动画页面先绑定骨架，在 CONTROL RIG 区填现有 `.ayrig` 映射路径（相对项目根），
+或留空使用确切规范骨名，再 Create controls。源骨架只读，不添加控制骨。
+根/骨盆提供位置与局部 quaternion；躯干/颈/头/肩及四肢提供 FK，完整四肢链可切 IK。
+绿色方块拖动位置/目标，紫色方块为肘膝 Pole，圆环绕当前视角轴旋转；
+任意轴可用 X/Y/Z/W quaternion 数值设置。换模式匹配当前显示姿势，拖动支持取消/撤销。
+数值 FK 编辑先捕获显示姿势，避免用 rest pose 覆盖未录键的源动画。
+
+Key pose 记录整套控制器；控制器 DopeSheet 可选择、移动、删除，模式为阶跃，
+位置/权重线性、旋转 shortest-arc。不是逐控制器分量曲线编辑器。
+Bake to Clip 按 30 Hz 生成普通 Linear TRS Clip 并关闭控制层，可一次撤销。
+核心 `bake(source, rate)` 支持 1..240 Hz。Save 同时写 Clip 与已有项目编辑器元数据；
+重新打开自动恢复 Rig，不新增扩展名。清除控制器可撤销，换不同骨架前需先清除。
+
+只支持正均匀缩放/model space，不含关节限位、手指/眼睛、任意约束图或 DCC Rig 导入。
+烘焙为有限采样，不承诺任意时间精确匹配。单文件崩溃恢复不能容纳控制器元数据，
+含 Rig 时明确报错，须手动 Save；Clip+metadata 不构成断电事务。
+实现与验证见[控制器实施记录](../../../AYDocs/control-rig-implementation.md)。

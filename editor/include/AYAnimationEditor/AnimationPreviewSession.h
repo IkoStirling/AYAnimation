@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AYAnimation/AnimationPlayer.h>
+#include <AYAnimationEditor/HumanoidControlRig.h>
 #include <AYMath/MathTypes.h>
 
 #include <cstdint>
@@ -146,6 +147,10 @@ public:
         diagnostics() const noexcept { return _diagnostics; }
     [[nodiscard]] std::size_t missingTrackCount() const noexcept;
 
+    const HumanoidControlRig* controlRig() const noexcept { return _controlRig.get(); }
+    bool setControlRig(std::shared_ptr<const HumanoidControlRig>, std::string* error = nullptr);
+    const std::string& controlRigError() const noexcept { return _controlRigError; }
+
     // Content/binding revision: playhead, rate and looping changes do not invalidate authoring snapshots.
     [[nodiscard]] std::uint64_t revision() const noexcept { return _revision; }
     [[nodiscard]] std::uint64_t poseRevision() const noexcept {
@@ -181,6 +186,8 @@ private:
     float _playRate = 1.0f;
     std::uint64_t _revision = 1u;
     std::uint64_t _poseRevision = 1u;
+    std::shared_ptr<HumanoidControlRig> _controlRig;
+    std::string _controlRigError;
 };
 
 } // namespace ayt::anim::editor
