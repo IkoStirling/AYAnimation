@@ -525,6 +525,7 @@ std::shared_ptr<Animation> HumanoidControlRig::bake(const IAnimation &source,
     return {};
   }
   auto output = copyAnimationForAuthoring(source);
+  const double timeTolerance = 1e-6 * std::max(1.0, duration);
   std::set<std::pair<std::string, std::string>> tracks;
   for (const auto &t : output.tracks) {
     const unsigned width = t.valueType == AnimTrackType::Quaternion ? 4
@@ -545,7 +546,7 @@ std::shared_ptr<Animation> HumanoidControlRig::bake(const IAnimation &source,
       return {};
     }
     for (std::size_t i = 0; i < t.times.size(); ++i)
-      if (t.times[i] < 0 || t.times[i] / output.ticksPerSecond > duration ||
+      if (t.times[i] < 0 || t.times[i] / output.ticksPerSecond > duration + timeTolerance ||
           (i && t.times[i] <= t.times[i - 1])) {
         fail(error, "Invalid rig bake track times.");
         return {};

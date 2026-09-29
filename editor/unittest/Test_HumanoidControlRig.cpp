@@ -34,6 +34,11 @@ TEST_CASE(bake_samples_original_clip_endpoint_without_loop_wrapping) {
     const auto baked=rig.bake(source,30); CHECK(baked); if(!baked) return;
     AnimationPlayer player; player.setSkeleton(f.skeleton); player.play(baked.get()); player.setLoop(false); player.setTime(1); player.evaluate();
     CHECK(near(player.getBoneWorldMatrices()[0].transformPoint({}),{0,5,0}));
+    // Binary float duration 1.3 and exact tick endpoint 39/30 differ slightly.
+    Animation fractional; fractional.setDuration(1.3f); fractional.setTicksPerSecond(30); track.times={0,39}; fractional.addTrack(track);
+    const auto fractionalBake=rig.bake(fractional,30); CHECK(fractionalBake);
+    if (fractionalBake) { player.play(fractionalBake.get()); player.setLoop(false); player.setTime(1.3f); player.evaluate();
+        CHECK(near(player.getBoneWorldMatrices()[0].transformPoint({}),{0,5,0})); }
 }
 TEST_CASE(all_four_limb_semantics_clamp_reach_and_reject_nonuniform_scale) {
     const HumanoidBone roles[4][3]={{HumanoidBone::LeftUpperArm,HumanoidBone::LeftLowerArm,HumanoidBone::LeftHand},
