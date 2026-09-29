@@ -4,6 +4,7 @@ add_library(AYAnimationEditorCore STATIC
     src/AnimationAuthoring.cpp
     src/AnimationClipboard.cpp
     src/AnimationPreviewSession.cpp
+    src/HumanoidControlRig.cpp
     src/SkeletonBakeJob.cpp
     src/SkeletonBakePublication.cpp
     src/SkeletonBakeReferences.cpp
