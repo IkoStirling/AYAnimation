@@ -1,4 +1,5 @@
 #include <AYAnimationEditor/SkeletonBakeJob.h>
+#include <AYAssetFormat/AssetFormat.h>
 
 #include "SkeletonBakeReferences.h"
 #include "SkeletonBakePublication.h"
@@ -544,7 +545,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
             rewritten = rewriteMeshDependency(
                 dependency.path, referenceContext, dependencyBytes, error);
             stagedKind = StagedFile::Kind::Mesh;
-            extension = ".aymesh";
+            extension = std::string(ayt::asset_format::suffix(ayt::asset_format::Id::Mesh));
             break;
         case SkeletonBakeDependencyKind::SkeletonMask:
             rewritten = rewriteSkeletonMaskDependency(

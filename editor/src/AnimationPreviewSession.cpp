@@ -1,4 +1,5 @@
 #include <AYAnimationEditor/AnimationPreviewSession.h>
+#include <AYAssetFormat/AssetFormat.h>
 
 #include <AYIO/File.h>
 #include <AYResource/assetsImpl/Animation.h>
@@ -314,7 +315,7 @@ AnimationPreviewBindings AnimationPreviewSession::inferCompanionAssets() const
         const auto meshDir = assetRoot / "meshes";
         for (std::filesystem::directory_iterator it(meshDir, error), end;
              !error && it != end; it.increment(error)) {
-            if (lower(it->path().extension().string()) == ".aymesh"
+            if (ayt::asset_format::matchesPath(it->path().string(), ayt::asset_format::Id::Mesh)
                 && lower(it->path().stem().string()).rfind(lower(stem), 0u) == 0u) {
                 result.meshPath = normalizedAbsolute(it->path());
                 break;
