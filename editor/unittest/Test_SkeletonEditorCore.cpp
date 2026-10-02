@@ -102,6 +102,8 @@ std::filesystem::path writeSkeleton(bool addHelper = false,
     auto rigPath = path;
     rigPath.replace_extension(".ayrig");
     std::filesystem::remove(rigPath, ignored);
+    rigPath.replace_extension(".rig");
+    std::filesystem::remove(rigPath, ignored);
     auto legacyPath = path;
     legacyPath.replace_extension(".aysmap");
     std::filesystem::remove(legacyPath, ignored);
@@ -194,7 +196,7 @@ TEST_CASE(skeleton_editor_core_opens_synthetic_hierarchy)
 TEST_CASE(skeleton_editor_core_mapping_is_undoable_and_persistent)
 {
     const auto skeletonPath = writeSkeleton();
-    const auto mappingPath = fixtureRoot() / "synthetic.ayrig";
+    const auto mappingPath = fixtureRoot() / "synthetic.rig";
     std::error_code ignored;
     std::filesystem::remove(mappingPath, ignored);
     SkeletonEditorCore core;
@@ -258,7 +260,7 @@ TEST_CASE(skeleton_editor_core_migrates_legacy_mapping_non_destructively)
     CHECK(core.openedLegacyMapping());
     CHECK(core.isDirty());
     CHECK(core.legacyMappingPath() == legacyPath.generic_string());
-    CHECK(std::filesystem::path(core.mappingPath()).extension() == ".ayrig");
+    CHECK(std::filesystem::path(core.mappingPath()).extension() == ".rig");
     CHECK(core.mapping().getSourceBoneIndex(HumanoidBone::Hips) == 2);
     CHECK(core.status().bake == SkeletonBakeState::NotBaked);
     CHECK(core.saveMapping(&error));
@@ -428,7 +430,7 @@ TEST_CASE(skeleton_editor_core_authors_retarget_profile_without_fake_bake)
     const auto sourcePath = writeSkeleton();
     const auto targetPath = writeSkeleton(
         false, false, "target.ayskel", 2.0f);
-    const auto profilePath = fixtureRoot() / "synthetic-retarget.ayrig";
+    const auto profilePath = fixtureRoot() / "synthetic-retarget.rig";
     SkeletonEditorCore core;
     std::string error;
     CHECK(core.open(sourcePath.string(), &error));
@@ -568,7 +570,7 @@ TEST_CASE(skeleton_bake_dry_run_is_auditable_and_does_not_modify_sources)
     CHECK(plan.dependencies[0].kind == SkeletonBakeDependencyKind::Animation);
     CHECK(plan.dependencies[1].kind == SkeletonBakeDependencyKind::Mesh);
 
-    const auto manifestPath = fixtureRoot() / "synthetic.ayrig.bake-plan.json";
+    const auto manifestPath = fixtureRoot() / "synthetic.rig.bake-plan.json";
     CHECK(core.writeDryRunManifest(plan, manifestPath.string(), &error));
     const auto manifest = nlohmann::json::parse(
         ayt::io::File::readAllText(manifestPath.string()));
@@ -617,7 +619,7 @@ TEST_CASE(authored_clip_preview_reload_and_bake_preserve_key_revision) {
     CHECK_MSG(snapshot.state == SkeletonBakeJobState::Succeeded, snapshot.message.c_str());
     bool foundAnimation = false;
     for (const auto& path : snapshot.outputPaths) {
-        if (std::filesystem::path(path).extension() != ".ayanm") continue;
+        if (std::filesystem::path(path).extension() != ".anm") continue;
         foundAnimation = true;
         Animation baked;
         const auto bytes = ayt::io::File::readAllBytes(path);
@@ -662,13 +664,13 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
     CHECK(snapshot.outputPaths.size() == 5u);
 
     Skeleton baked;
-    CHECK(baked.load((output / "synthetic.baked.ayskel").string()));
+    CHECK(baked.load((output / "synthetic.baked.skl").string()));
     CHECK(baked.getBoneCount() == 17u);
     CHECK(baked.findBone("head") == 4);
     CHECK(baked.findBone("headAccessoryHelper") == -1);
     Animation animation;
     const auto bakedAnimationBytes = ayt::io::File::readAllBytes(
-        (output / "head_motion.baked.ayanm").string());
+        (output / "head_motion.baked.anm").string());
     CHECK(animation.loadFromBinary(
         bakedAnimationBytes.data(), bakedAnimationBytes.size()));
     CHECK(animation.getTrackNodeName(0) != nullptr);
@@ -676,14 +678,14 @@ TEST_CASE(skeleton_bake_job_writes_cleaned_outputs_and_records_current_state)
         CHECK(std::string(animation.getTrackNodeName(0)) == "head");
     }
     Mesh mesh;
-    CHECK(mesh.load((output / "character.baked.aymesh").string()));
+    CHECK(mesh.load((output / "character.baked.msh").string()));
     CHECK(mesh.getSkinPaletteJointCount() == mesh.getSubmeshCount());
     CHECK(mesh.getSkinPaletteJointCount() > 0u);
     if (mesh.getSkinPaletteJointCount() > 0u) {
         CHECK(mesh.getSkinPaletteJoints()[0] == 4u);
     }
     SkeletonMask mask;
-    CHECK(mask.load((output / "upper_body.baked.aymask").string()));
+    CHECK(mask.load((output / "upper_body.baked.skm").string()));
     CHECK(mask.getAuthoredBoneCount() == 1u);
     if (mask.getAuthoredBoneCount() == 1u) {
         CHECK(mask.getEntries()[0].name == "head");
@@ -774,12 +776,12 @@ TEST_CASE(skeleton_bake_job_retargets_animation_to_target_skeleton)
     const auto animationOutput = std::find_if(
         snapshot.outputPaths.begin(), snapshot.outputPaths.end(),
         [](const std::string& path) {
-            return std::filesystem::path(path).extension() == ".ayanm";
+            return std::filesystem::path(path).extension() == ".anm";
         });
     const auto skeletonOutput = std::find_if(
         snapshot.outputPaths.begin(), snapshot.outputPaths.end(),
         [](const std::string& path) {
-            return std::filesystem::path(path).extension() == ".ayskel";
+            return std::filesystem::path(path).extension() == ".skl";
         });
     CHECK(animationOutput != snapshot.outputPaths.end());
     CHECK(skeletonOutput != snapshot.outputPaths.end());

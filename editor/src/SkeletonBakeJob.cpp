@@ -498,7 +498,8 @@ void executeBake(const std::shared_ptr<RunState>& run,
     const std::string scopeSuffix = plan.scopeTag.empty()
         ? std::string{} : "." + plan.scopeTag;
     const auto skeletonOutput = outputRoot
-        / (skeletonStem + scopeSuffix + ".baked.ayskel");
+        / (skeletonStem + scopeSuffix + ".baked"
+            + std::string(ayt::asset_format::suffix(ayt::asset_format::Id::Skeleton)));
     std::string stagingError;
     if (!addStaged(StagedFile::Kind::Skeleton, plan.skeletonPath,
                    skeletonOutput, skeletonBytes, stagingError)) {
@@ -539,7 +540,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
                 : rewriteAnimation(
                     dependency.path, byName, dependencyBytes, error);
             stagedKind = StagedFile::Kind::Animation;
-            extension = ".ayanm";
+            extension = std::string(ayt::asset_format::suffix(ayt::asset_format::Id::Animation));
             break;
         case SkeletonBakeDependencyKind::Mesh:
             rewritten = rewriteMeshDependency(
@@ -551,7 +552,7 @@ void executeBake(const std::shared_ptr<RunState>& run,
             rewritten = rewriteSkeletonMaskDependency(
                 dependency.path, referenceContext, dependencyBytes, error);
             stagedKind = StagedFile::Kind::SkeletonMask;
-            extension = ".aymask";
+            extension = std::string(ayt::asset_format::suffix(ayt::asset_format::Id::SkeletonMask));
             break;
         }
         if (!rewritten) {

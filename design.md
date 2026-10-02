@@ -1431,7 +1431,7 @@ P4-3 交付角色表、空映射容器和结构校验；P4-4 已追加 UI-free �
 
 编辑器允许保留原始骨架；导入、手工和模板设置保存可绑定骨架的作者配置，不立即改写源资源。
 `HumanoidBoneMap` 仍是已实现的运行时语义映射容器；新增持久化 SkeletonMapping 与 RetargetProfile
-由 `.ayrig` `RigProfile(kind=mapping/retarget)` 承载；Legacy `.aysmap` 只读并迁移，不能用同名映射替代姿态求解。`HumanoidRetarget` 已按明确的源/目标绑定和逐角色参考姿势/骨轴修正输出目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图；编辑器预览和离线烘焙必须复用它。
+由 `.rig` `RigProfile(kind=mapping/retarget)` 承载；Legacy `.ayrig`、`.aysmap` 只读并迁移，不能用同名映射替代姿态求解。`HumanoidRetarget` 已按明确的源/目标绑定和逐角色参考姿势/骨轴修正输出目标局部 TRS，不依赖编辑器 UI、Renderer 或 DCC 图；编辑器预览和离线烘焙必须复用它。
 
 AYAnimation 负责 SKA-02/06 的角色校验和 headless 转换数学，以及后续 SKA-11/12 的根运动、
 分链比例和 Twist 策略。资源 IO、全引用清理、构建摘要与发布门禁归 AYResource/离线编排层；
@@ -4919,7 +4919,7 @@ AYEditor 只负责预览叠加、手柄/数值、统一历史、控制器姿势 
 
 控制器键为整套姿势，模式/override 阶跃、位置/权重线性、旋转 shortest-arc；
 烘焙 detached 普通 Linear TRS Clip，关闭控制层避免双重叠加，Save 才改磁盘。
-不增加资源扩展名：沿用 `.ayrig` 映射和已有动画预览项目元数据。
+不增加资源扩展名：沿用 `.rig` 映射和已有动画预览项目元数据。
 第一版不含逐控制器曲线、角度限制、手指/眼睛或 DCC 约束图，只支持正均匀 scale。
 文件级恢复不能容纳 Rig，明确要求手动 Save；不宣称断电两文件事务。
 完整契约/步骤及实际验证见[作者核心](editor/README.md)和

@@ -95,7 +95,7 @@ ctest --test-dir out/build/windows-debug -L '^animation-editor-full$' --output-o
 
 ## 人形控制器第一版
 
-动画页面先绑定骨架，在 CONTROL RIG 区填现有 `.ayrig` 映射路径（相对项目根），
+动画页面先绑定骨架，在 CONTROL RIG 区填现有 `.rig` 映射路径（相对项目根；旧 `.ayrig` 可读取），
 或留空使用确切规范骨名，再 Create controls。源骨架只读，不添加控制骨。
 根/骨盆提供位置与局部 quaternion；躯干/颈/头/肩及四肢提供 FK，完整四肢链可切 IK。
 绿色方块拖动位置/目标，紫色方块为肘膝 Pole，圆环绕当前视角轴旋转；

@@ -247,8 +247,7 @@ AnimationPreviewBindings AnimationPreviewSession::inferCompanionAssets() const
     for (std::filesystem::directory_iterator it(assetRoot, error), end;
          !error && it != end; it.increment(error)) {
         if (!it->is_regular_file(error)
-            || lower(it->path().filename().string()).find(".aydep.json")
-                == std::string::npos) {
+            || !ayt::asset_format::matchesPath(it->path().string(), ayt::asset_format::Id::ImportDependency)) {
             continue;
         }
         try {
@@ -303,7 +302,7 @@ AnimationPreviewBindings AnimationPreviewSession::inferCompanionAssets() const
         const auto skeletonDir = assetRoot / "skeletons";
         for (std::filesystem::directory_iterator it(skeletonDir, error), end;
              !error && it != end; it.increment(error)) {
-            if (lower(it->path().extension().string()) == ".ayskel"
+            if (ayt::asset_format::matchesPath(it->path().string(), ayt::asset_format::Id::Skeleton)
                 && lower(it->path().stem().string()).rfind(lower(stem), 0u) == 0u) {
                 result.skeletonPath = normalizedAbsolute(it->path());
                 break;

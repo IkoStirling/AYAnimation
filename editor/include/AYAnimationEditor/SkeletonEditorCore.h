@@ -23,7 +23,7 @@ namespace ayt::anim::editor {
 inline constexpr std::uint32_t kRigProfileSchemaVersion = 1u;
 inline constexpr std::uint32_t kLegacySkeletonMappingSchemaVersion = 1u;
 inline constexpr std::uint32_t kSkeletonBakePlanSchemaVersion = 1u;
-inline constexpr const char* kRigProfileExtension = ".ayrig";
+inline constexpr const char* kRigProfileExtension = ".rig";
 inline constexpr const char* kLegacySkeletonMappingExtension = ".aysmap";
 
 enum class SkeletonAdaptationState : std::uint8_t {

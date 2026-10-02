@@ -203,6 +203,7 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
     const std::filesystem::path requested(inputPath);
     const std::string extension = lowerExtension(requested);
     const bool mappingFirst = extension == kRigProfileExtension
+        || extension == ".ayrig"
         || extension == kLegacySkeletonMappingExtension;
     Snapshot loaded;
     std::string skeletonReference;
@@ -226,7 +227,7 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
         }
         const std::filesystem::path absoluteRequested =
             std::filesystem::absolute(requested);
-        if (extension == kLegacySkeletonMappingExtension) {
+        if (extension == kLegacySkeletonMappingExtension || extension == ".ayrig") {
             _legacyMappingPath = normalizedPath(absoluteRequested);
             _mappingPath = defaultMappingPath(_legacyMappingPath);
         } else {
@@ -245,7 +246,11 @@ bool SkeletonEditorCore::open(const std::string& inputPath, std::string* error)
                 return false;
             }
         } else {
-            const std::string legacyPath = defaultLegacyMappingPath(_skeletonPath);
+            std::filesystem::path oldProfile(_skeletonPath);
+            oldProfile.replace_extension(".ayrig");
+            const std::string legacyPath = std::filesystem::is_regular_file(oldProfile)
+                ? normalizedPath(oldProfile)
+                : defaultLegacyMappingPath(_skeletonPath);
             existsError.clear();
             if (std::filesystem::exists(legacyPath, existsError)) {
                 loadedMappingPath = legacyPath;
@@ -683,10 +688,10 @@ bool SkeletonEditorCore::saveMappingAs(const std::string& path,
     }
     std::filesystem::path destination(path);
     const std::string extension = lowerExtension(destination);
-    if (extension == kLegacySkeletonMappingExtension) {
+    if (extension == kLegacySkeletonMappingExtension || extension == ".ayrig") {
         destination.replace_extension(kRigProfileExtension);
     } else if (extension != kRigProfileExtension) {
-        setError(error, "RigProfile files must use the .ayrig extension.");
+        setError(error, "RigProfile files must use the .rig extension.");
         return false;
     } else if (destination.extension().string() != kRigProfileExtension) {
         destination.replace_extension(kRigProfileExtension);

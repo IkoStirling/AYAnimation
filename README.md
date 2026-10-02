@@ -19,8 +19,8 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 已提供 UI-free `AYAnimationEditorCore`，AYEditor 通过薄适配接入：
 
-- 源骨架保持只读；手工/模板映射、参考姿势与骨轴修正保存在可绑定的 `.ayrig` RigProfile。
-  旧 `.aysmap` 仅作迁移输入，不再作为新建格式。
+- 源骨架保持只读；手工/模板映射、参考姿势与骨轴修正保存在可绑定的 `.rig` RigProfile。
+  旧 `.ayrig`、`.aysmap` 仅作迁移输入，不再作为新建格式。
 - source→target 局部姿势/离线 Clip 求解、源目标同步预览、清理烘焙与引用闭包校验已接入。
   发布使用 staging/receipt 与源指纹校验；未知 TRS、未映射动画骨、Additive 重定向明确拒绝。
 - 跨骨架网格几何重绑定尚未实现，带网格的 BakeToTarget 安全阻止；Cubic Quaternion
