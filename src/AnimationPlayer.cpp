@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 
 namespace ayt::anim
@@ -248,6 +249,9 @@ void AnimationPlayer::setSkeleton(
         std::fflush(stderr);
         return;
     }
+    _rootMotionTrack = -1;
+    _rootMotionBone = -1;
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
 
     // P1.7 — retain a strong reference so the player's lifetime is
     // bounded by the source of truth (SkeletonComponent in ECS, test
@@ -374,6 +378,69 @@ void AnimationPlayer::setSkeleton(
     if (!_ikChains.empty()) {
         resolveIKChains();
     }
+    resolveRootMotionTrack();
+}
+
+bool AnimationPlayer::setRootMotionBone(const char* boneName)
+{
+    _rootMotionBoneName = boneName != nullptr ? boneName : "";
+    resolveRootMotionTrack();
+    return _rootMotionTrack >= 0;
+}
+
+void AnimationPlayer::clearRootMotionBone()
+{
+    _rootMotionBoneName.clear();
+    _rootMotionTrack = -1;
+    _rootMotionBone = -1;
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
+}
+
+ayt::math::FVector3 AnimationPlayer::consumeRootMotionTranslation()
+{
+    const auto result = _rootMotionPending;
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
+    return result;
+}
+
+void AnimationPlayer::resolveRootMotionTrack()
+{
+    _rootMotionTrack = -1;
+    _rootMotionBone = -1;
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
+    if (_rootMotionBoneName.empty() || _skeleton == nullptr || _baseClip == nullptr) return;
+    const int bone = _skeleton->findBone(_rootMotionBoneName.c_str());
+    if (bone < 0 || _skeleton->getParentBoneIndex(static_cast<size_t>(bone)) != -1) return;
+    for (size_t i = 0; i < _tracks.size(); ++i) {
+        const TrackSlice& tr = _tracks[i];
+        if (tr.nodeName != _rootMotionBoneName || tr.property != "position") continue;
+        if (tr.type != ayt::resource::AnimTrackType::Vector3 ||
+            tr.blendMode != ayt::resource::AnimBlendMode::Override ||
+            tr.vec3Values.empty()) {
+            _rootMotionTrack = -1;
+            return;
+        }
+        // Ambiguous duplicate root translation tracks cannot be safely
+        // separated from the evaluated pose.
+        if (_rootMotionTrack >= 0) {
+            _rootMotionTrack = -1;
+            return;
+        }
+        _rootMotionTrack = static_cast<int32_t>(i);
+        _rootMotionBone = bone;
+    }
+}
+
+ayt::math::FVector3 AnimationPlayer::sampleRootMotion(float time) const
+{
+    ayt::math::FVector3 result(0.0f, 0.0f, 0.0f);
+    if (_rootMotionTrack < 0) return result;
+    const TrackSlice& tr = _tracks[static_cast<size_t>(_rootMotionTrack)];
+    sampleTrackVector3(tr.vec3Values.data(), tr.timesSec.size(), tr.timesSec,
+                       time, result, tr.interpolation,
+                       tr.vec3InTangents.empty() ? nullptr : tr.vec3InTangents.data(),
+                       tr.vec3OutTangents.empty() ? nullptr : tr.vec3OutTangents.data());
+    return result;
 }
 
 // P1.4 — bone-index cache helpers. See TrackSlice header for the
@@ -431,7 +498,10 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
     _notifyStartPending = true;
 
     _tracks.clear();
-    if (anim == nullptr) return;
+    if (anim == nullptr) {
+        resolveRootMotionTrack();
+        return;
+    }
 
     // Pre-normalize track times ticks → seconds once. Per-frame sampling
     // then works in seconds without per-key division.
@@ -518,6 +588,7 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
         }
         _tracks.push_back(std::move(slice));
     }
+    resolveRootMotionTrack();
 
     // P1.3 / P1.5 — state machine contract: play() keeps the additive
     // layers persistent. Swapping the base clip does NOT touch any
@@ -533,6 +604,9 @@ void AnimationPlayer::stop()
     _paused = false;
     _prevTickTime = 0.0f;
     _pendingNotifies.clear();
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
+    _rootMotionTrack = -1;
+    _rootMotionBone = -1;
 
     // P1.5 — stop() disposes ALL slots. State machine contract: stop
     // is "playback halted + sources unbound". Each slot's clip is nulled
@@ -608,6 +682,7 @@ void AnimationPlayer::setTime(float t)
     _prevTickTime = _time;
     _notifyStartPending = false;
     _pendingNotifies.clear();
+    _rootMotionPending = {0.0f, 0.0f, 0.0f};
 
     // P1.5 — multi-slot seek loop. Each slot jumps independently per
     // its loop flag, clears its pending notify queue, and resets its
@@ -697,6 +772,31 @@ void AnimationPlayer::tick(float dt)
             _paused = true;   // clamp to end-of-clip when not looping
         } else if (_time < 0.0f) {
             _time = 0.0f;
+        }
+    }
+
+    if (_rootMotionTrack >= 0 && d > 0.0f && travel != 0.0f) {
+        const auto before = sampleRootMotion(prev);
+        const auto after = sampleRootMotion(_time);
+        double cycles = 0.0;
+        if (_loop) {
+            cycles = std::floor((static_cast<double>(prev) + travel) / d);
+        }
+        const auto start = sampleRootMotion(0.0f);
+        const auto end = sampleRootMotion(d);
+        const double dx = static_cast<double>(after.x) - before.x + cycles * (end.x - start.x);
+        const double dy = static_cast<double>(after.y) - before.y + cycles * (end.y - start.y);
+        const double dz = static_cast<double>(after.z) - before.z + cycles * (end.z - start.z);
+        const double pendingX = static_cast<double>(_rootMotionPending.x) + dx;
+        const double pendingY = static_cast<double>(_rootMotionPending.y) + dy;
+        const double pendingZ = static_cast<double>(_rootMotionPending.z) + dz;
+        if (std::isfinite(pendingX) && std::isfinite(pendingY) && std::isfinite(pendingZ) &&
+            std::abs(pendingX) <= std::numeric_limits<float>::max() &&
+            std::abs(pendingY) <= std::numeric_limits<float>::max() &&
+            std::abs(pendingZ) <= std::numeric_limits<float>::max()) {
+            _rootMotionPending = {static_cast<float>(pendingX),
+                                  static_cast<float>(pendingY),
+                                  static_cast<float>(pendingZ)};
         }
     }
 
@@ -1206,6 +1306,20 @@ void AnimationPlayer::evaluate()
                 }
                 break;
             }
+        }
+    }
+
+    // Remove only the base clip's traveled root offset, before additive
+    // pose layers and masks. The host applies the consumed displacement
+    // through its character controller so the visual skeleton stays in place.
+    if (_rootMotionTrack >= 0) {
+        if (_rootMotionBone >= 0) {
+            const auto start = sampleRootMotion(0.0f);
+            const auto now = sampleRootMotion(_time);
+            const size_t p = static_cast<size_t>(_rootMotionBone) * 3;
+            _localPos[p]     -= now.x - start.x;
+            _localPos[p + 1] -= now.y - start.y;
+            _localPos[p + 2] -= now.z - start.z;
         }
     }
 

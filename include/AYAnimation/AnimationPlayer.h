@@ -709,6 +709,20 @@ public:
     bool  isPaused() const            { return _paused; }
     bool  isValid() const             { return _skeleton != nullptr && _baseClip != nullptr; }
 
+    /// Extract translation from an Override position track on a skeleton root.
+    /// The selected root stays at its clip-start position in evaluate(), while
+    /// each tick accumulates its local-space translation for the host to apply
+    /// through character collision. Returns false if the current clip/skeleton
+    /// lacks exactly one matching root track; the name remains configured for
+    /// later clip/skeleton binds. Additive layers do not drive authoritative
+    /// movement. Rotation extraction is not supported.
+    bool setRootMotionBone(const char* boneName);
+    void clearRootMotionBone();
+    bool hasRootMotionTrack() const { return _rootMotionTrack >= 0; }
+    /// Drains all translation produced since the previous consume. Play,
+    /// stop, seek, and source rebind clear the accumulator without moving.
+    ayt::math::FVector3 consumeRootMotionTranslation();
+
     /// Advances finite time; Notify excludes the previous boundary (initial
     /// play includes its start). Seek fires none. Reverse/long loop ticks
     /// deliver each crossed marker at most once per tick, not once per cycle.
@@ -777,6 +791,8 @@ private:
     // frame the cache is hot and the branch falls through in O(1).
     void invalidateBoneIndexCache();
     void resolveBoneIdxOnce(TrackSlice& slice);
+    void resolveRootMotionTrack();
+    ayt::math::FVector3 sampleRootMotion(float time) const;
 
     // P1.5 — Multi-source stack helpers.
     //
@@ -921,6 +937,10 @@ private:
     // P1.5 _additiveSlots member can refer to it without a forward-decl
     // dependency.
     std::vector<TrackSlice> _tracks;
+    std::string _rootMotionBoneName;
+    int32_t _rootMotionTrack = -1;
+    int32_t _rootMotionBone = -1;
+    ayt::math::FVector3 _rootMotionPending{0.0f, 0.0f, 0.0f};
 
     FloatCurveSink _floatSink;
 

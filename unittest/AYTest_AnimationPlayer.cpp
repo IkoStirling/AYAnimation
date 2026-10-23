@@ -3171,4 +3171,81 @@ TEST_SUITE(AnimationPlayerTests)
         CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[1].transformPoint({0,0,0}).x, 10, 1e-5f);
     }
 
+    TEST_CASE(root_motion_extracts_in_place_pose_and_accumulates_fixed_ticks) {
+        Animation clip;
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(1.0f);
+        clip.addTrack(makeRootPosTrack());
+        AnimationPlayer player;
+        player.setSkeleton(makeTwoBoneSkeletonShared());
+        player.play(&clip);
+        CHECK(player.setRootMotionBone("Root"));
+        player.tick(0.25f);
+        player.tick(0.25f);
+        player.evaluate();
+        CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[0].transformPoint({0,0,0}).x, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[1].transformPoint({0,0,0}).x, 0.0f, 1e-4f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 5.0f, 1e-4f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+        player.pause();
+        player.tick(0.25f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+        player.resume();
+        player.setTime(0.75f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+    }
+
+    TEST_CASE(root_motion_wrap_reverse_clamp_and_rebind) {
+        Animation clip;
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(1.0f);
+        clip.addTrack(makeRootPosTrack());
+        AnimationPlayer player;
+        player.setSkeleton(makeTwoBoneSkeletonShared());
+        player.play(&clip);
+        CHECK(player.setRootMotionBone("Root"));
+        player.tick(2.25f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 22.5f, 1e-4f);
+        player.setPlayRate(-1.0f);
+        player.tick(0.5f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, -5.0f, 1e-4f);
+        player.setLoop(false);
+        player.setPlayRate(1.0f);
+        player.setTime(0.75f);
+        player.tick(0.5f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 2.5f, 1e-4f);
+        player.play(&clip);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+        CHECK(player.hasRootMotionTrack());
+        player.setSkeleton({});
+        CHECK(!player.hasRootMotionTrack());
+        player.tick(0.5f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+    }
+
+    TEST_CASE(root_motion_rejects_non_root_and_missing_track) {
+        Animation clip;
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(1.0f);
+        clip.addTrack(makeRootPosTrack());
+        AnimationPlayer player;
+        player.setSkeleton(makeTwoBoneSkeletonShared());
+        player.play(&clip);
+        CHECK(!player.setRootMotionBone("Child"));
+        CHECK(!player.setRootMotionBone("Missing"));
+        CHECK(player.setRootMotionBone("Root"));
+        player.clearRootMotionBone();
+        CHECK(!player.hasRootMotionTrack());
+        player.tick(0.5f);
+        player.evaluate();
+        CHECK_FLOAT_EQ(player.getBoneWorldMatrices()[0].transformPoint({0,0,0}).x, 5.0f, 1e-4f);
+        Animation ambiguous;
+        ambiguous.setTicksPerSecond(30.0f);
+        ambiguous.setDuration(1.0f);
+        ambiguous.addTrack(makeRootPosTrack());
+        ambiguous.addTrack(makeRootPosTrack());
+        player.play(&ambiguous);
+        CHECK(!player.setRootMotionBone("Root"));
+    }
+
     TEST_SUITE_END

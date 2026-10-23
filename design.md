@@ -1393,13 +1393,13 @@ AYAnimation 采用**一套与性别、年龄无关的 AYHumanoid 语义骨架**�
 - [H-Anim](https://www.web3d.org/documents/specifications/19774/V1.0/HAnim/concepts.html) 是正式的 ISO/Web3D 人体结构参考，但其关节/分段模型不是 MMD、Mixamo、VRM 资产共同使用的最小运行时层级；本阶段不直接采用其完整层级。
 - MMD 与 Mixamo 是重要**来源适配器**，不是 AYAnimation 的权威层级。运行时只认识语义角色和源骨索引，不依赖 PMX/VMD 或 Mixamo 命名。
 
-P4-3 交付角色表、空映射容器和结构校验；P4-4 已追加 UI-free 局部姿势/clip 求解、参考坐标与骨轴补偿、身高比例根位移以及 `BakeToTarget` 离线输出。根运动提取、分链比例/Twist、加法 clip 显式参考姿势烘焙仍 deferred。
+P4-3 交付角色表、空映射容器和结构校验；P4-4 已追加 UI-free 局部姿势/clip 求解、参考坐标与骨轴补偿、身高比例根位移以及 `BakeToTarget` 离线输出。基础 Clip 根骨平移提取见 §7.7；分链比例/Twist、加法 clip 显式参考姿势烘焙仍 deferred。
 
 ### 7.2 规范入口与参考资产
 
 骨架角色、层级、参考尺寸/绑定、根运动、动画兼容、模型与多纹理条件统一维护于 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)。该文档区分现有通用语义的 15 个必需角色与未来参考骨架的完整 57 角色，不改变当前可选角色和祖先校验语义。
 
-参考骨架将冻结精确绑定数据，模型外观与渲染 fixture 独立版本化；同名骨骼不保证动画可直接共享。低模资产交付步骤见 [实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。标准资产和根运动提取仍待实施；通用离线重定向数学不依赖该资产。
+参考骨架将冻结精确绑定数据，模型外观与渲染 fixture 独立版本化；同名骨骼不保证动画可直接共享。低模资产交付步骤见 [实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。标准资产仍待实施；当前基础根骨平移提取不依赖该资产，通用离线重定向数学亦然。
 
 ### 7.3 映射与层级校验契约
 
@@ -1457,6 +1457,12 @@ AYTask owned bake 复核输入指纹、串行本进程输出 lanes、混合发�
 取消和 drain 分离，不保证跨进程或断电事务。详细 API/限制以
 [作者核心指南](editor/README.md)为准，验证与提交见
 [连续实施记录](../../AYDocs/animation-authoring-hardening.md)。
+
+### 7.7 固定步基础根骨平移提取（2026-10-24）
+
+`AnimationPlayer` 可按名称绑定基础 Clip 上唯一的骨架根骨 Override position 轨道。绑定时校验骨架拓扑与轨道唯一性，缓存轨道/骨索引；换 Clip、换骨架时重解析，失败则提取关闭。`tick()` 使用采样端点和循环次数计算位移，含多圈循环和倒放；每步累加，`consumeRootMotionTranslation()` 读取并清空。播放、停止、seek、重绑及显式关闭清空未读位移。暂停或无有效轨道不产出位移。`evaluate()` 在加法层前减去基础轨道相对首帧的平移，使该层保持原位；其他加法层、骨骼遮罩和 IK 仍按现有顺序处理。
+
+此入口只输出局部平移，不处理根旋转、多源混合的权威运动、碰撞、角色朝向或跨实体提交。宿主在 FixedPrePhysics 将其转到世界空间并交给控制器的单步位移入口，FixedPostPhysics 读取实际碰撞后位置。技能取消/新动作播放不会追补已清空的动画路程。骨骼姿态仅作表现，控制器位置才是权威结果。
 
 ## 8. 自适应压缩（Phase 5 ── 未启动）
 
@@ -1583,7 +1589,7 @@ AYAnimation/
 - [ ] IK 约束 (angle / distance / rotation)
 - [ ] Pole vector / 局部空间目标 / per-chain mask 门控
 - [ ] **P0 / SKA-01～09**：源/配置资源、统一映射校验、编辑器作者工作区与双标志、最小离线重定向、派生清理、CLI 发布门禁及全程回归；跨模块职责与依赖见 [统一队列](../../AYDocs/SKELETAL-ANIMATION-RESOURCE-PIPELINE.md) §7.1。
-- [ ] **P1 / SKA-10～13**：批量 clip 与经真实资产验证的模板、根运动提取/消费、分链比例与 Twist、动画库兼容和迁移；见统一队列 §7.2。
+- [ ] **P1 / SKA-10～13**：基础 Clip 根骨平移提取已具备；多源混合/旋转与游戏集成消费、批量 clip 与真实资产模板、分链比例/Twist、动画库兼容和迁移仍待完成；见统一队列 §7.2。
 - [ ] **P2 / SKA-14～16**：接触修正、可选运行时重定向、骨骼 LOD/平台压缩；见统一队列 §7.3。默认发布采用离线烘焙，不要求首版实现运行时重定向。
 
 ### Phase 5: 优化 + 压缩 ── ⏳ 排队
