@@ -4961,3 +4961,14 @@ AYEditor 只负责预览叠加、手柄/数值、统一历史、控制器姿势 
 | 2026-08-10 | **P5 polish — DSL 四则运算 + - * / ship**：§4.23 全 12-section（8 算子 → 13 三层贯通：`CondOp` + `CondOpByte` 各追加 5 值旧值不变 + lexer 负号消歧 INV-65 + precedence 5/6 INV-69 + parseUnary 一元减 INV-66 + `CondBinaryExpr::evaluateAsFloat` override + `CondUnaryExpr::evaluateAsFloat` Neg + 除零 0.0f 双路径 fail-soft INV-67 + bytecode evaluator 5 新分支 + 0 public API change + ECS bridge 0 touch）+ 14 new unit tests（§8.1.6 11 + §P5 3：13-case parity 表 INV-68 + 尾 opcode 编码 + short-circuit 与算术共存 + reserved `CurrentStateTime * 2 > 1` 组合 + SM 集成 bytecode hot path）+ §14.3 算术 row ✅ + §4.16/§4.17 历史决策标 RESOLVED + §11 P5 polish row + roadmap P3 表 P5 polish row + 状态抬头同步 2831/2831 + 421/421 + 1039/1039 3-run stable；**INV-64..69** (算术语义 + 负号消歧 + 一元减 + 除零 fail-soft + bytecode parity + 优先级) 全部 NEW。教训：测试期望值手算避开恰好相等组合（2 处 FAIL 为期望值算错）+ 插测试块先 grep section 头位置（§8.1.5 头在文件顶部，误插 TEST_SUITE_END 落中间 → C2065）。详见 §4.23 + §11 P5 polish row |
 | 2026-08-10 | **P6 polish — INV-60 flip debug assert + release 配置落地 ship**：§4.24 全 12-section（A: `setThreadSafe` 离开 thread-safe 模式 try_lock probe + debug assert——try_lock 失败 ⟺ 另一线程持锁在 cache 内，正是 INV-60 危险翻转；非阻塞绝不锁死；false→true 方向不可证明保持 startup 约定 + B: `out/build/x64-Release` 首次 configure（Ninja + MSVC /O2 + vcpkg toolchain + AY_BUILD_BENCHMARKS=ON）+ AYAnimation_UnitTests release 2843/2843 × 3 全绿 + Scenario G/H release 首测）+ 1 new unit test（`P6_AssetBoneCache_SetThreadSafe_FlipKeepsData`：双翻转 × 2 轮 entries 存活；单线程 UT 无法构造 assert 触发路径，P3 翻转测试回归兜底）+ §4.21.12 Q2 + §4.20.12/§4.21.12/§4.22.12 Q1 标 resolved + §14.2 release-build row ✅ + §11 P6 polish row + roadmap 剩项同步（setTriggerByHash 永久挂起）+ 状态抬头同步 debug 2843/2843 + 421/421 + 1039/1039 3-run stable + release 2843/2843 × 3；**INV-70** (翻转离开 thread-safe 模式 debug assert) NEW。Benchmark（release 首测）：Scenario G true 18.3ns / short 20.6ns（vs debug 86.2/75.9，~4.7x/~3.7x）；Scenario H lock-free 1.40x~2.46x（vs debug 1.06x/1.12x——lock delta 在 release 显著化，兑现 §4.21 论断；lookup 14~18ns 接近裸 unordered_map 成本）。教训：try_lock probe vs `_lockCount` 计数（0 新成员 + 可证明方向正是危险翻转）+ run-to-run 噪声 ±2.5x 必须 min-of-5 报区间（单次 50.8ns 离群）。详见 §4.24 + §11 P6 polish row |
  |
+# Root rotation and evaluated sockets (2026-10-24)
+
+`setRootRotationBone` selects one Override quaternion track on a skeleton
+root. `tick` accumulates normalized relative rotation over forward, reverse
+and looped playback; `consumeRootMotionRotation` drains that delta. Seek,
+source rebind and stop reset it. `evaluate` removes traveled root rotation
+from the base pose before additive layers. The host must decide how and when
+to apply the delta to Entity/Physics; the animation player does not write a
+body transform. `socketWorldTransform` composes actor world, evaluated bone
+world and authored socket-local matrices, rejecting invalid indices and
+non-finite input/output without changing the caller's output.

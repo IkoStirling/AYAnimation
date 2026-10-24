@@ -252,6 +252,9 @@ void AnimationPlayer::setSkeleton(
     _rootMotionTrack = -1;
     _rootMotionBone = -1;
     _rootMotionPending = {0.0f, 0.0f, 0.0f};
+    _rootRotationTrack = -1;
+    _rootRotationBone = -1;
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
 
     // P1.7 — retain a strong reference so the player's lifetime is
     // bounded by the source of truth (SkeletonComponent in ECS, test
@@ -379,6 +382,7 @@ void AnimationPlayer::setSkeleton(
         resolveIKChains();
     }
     resolveRootMotionTrack();
+    resolveRootRotationTrack();
 }
 
 bool AnimationPlayer::setRootMotionBone(const char* boneName)
@@ -401,6 +405,82 @@ ayt::math::FVector3 AnimationPlayer::consumeRootMotionTranslation()
     const auto result = _rootMotionPending;
     _rootMotionPending = {0.0f, 0.0f, 0.0f};
     return result;
+}
+
+bool AnimationPlayer::setRootRotationBone(const char* boneName)
+{
+    _rootRotationBoneName = boneName != nullptr ? boneName : "";
+    resolveRootRotationTrack();
+    return _rootRotationTrack >= 0;
+}
+
+void AnimationPlayer::clearRootRotationBone()
+{
+    _rootRotationBoneName.clear();
+    _rootRotationTrack = -1;
+    _rootRotationBone = -1;
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
+}
+
+ayt::math::FQuaternion AnimationPlayer::consumeRootMotionRotation()
+{
+    const auto result = _rootRotationPending;
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
+    return result;
+}
+
+void AnimationPlayer::resolveRootRotationTrack()
+{
+    _rootRotationTrack = -1;
+    _rootRotationBone = -1;
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
+    if (_rootRotationBoneName.empty() || !_skeleton || !_baseClip) return;
+    const int bone = _skeleton->findBone(_rootRotationBoneName.c_str());
+    if (bone < 0 || _skeleton->getParentBoneIndex(static_cast<size_t>(bone)) != -1) return;
+    for (size_t i = 0; i < _tracks.size(); ++i) {
+        const auto& track = _tracks[i];
+        if (track.nodeName != _rootRotationBoneName || track.property != "rotation") continue;
+        if (track.type != ayt::resource::AnimTrackType::Quaternion
+            || track.blendMode != ayt::resource::AnimBlendMode::Override
+            || track.quatValues.empty() || _rootRotationTrack >= 0) {
+            _rootRotationTrack = -1;
+            return;
+        }
+        _rootRotationTrack = static_cast<int32_t>(i);
+        _rootRotationBone = bone;
+    }
+}
+
+ayt::math::FQuaternion AnimationPlayer::sampleRootRotation(float time) const
+{
+    ayt::math::FQuaternion result(0.0f, 0.0f, 0.0f, 1.0f);
+    if (_rootRotationTrack < 0) return result;
+    const auto& track = _tracks[static_cast<size_t>(_rootRotationTrack)];
+    sampleTrackQuaternion(track.quatValues.data(), track.timesSec.size(),
+        track.timesSec, time, result, track.interpolation,
+        track.quatInTangents.empty() ? nullptr : track.quatInTangents.data(),
+        track.quatOutTangents.empty() ? nullptr : track.quatOutTangents.data());
+    return result;
+}
+
+bool AnimationPlayer::socketWorldTransform(size_t boneIndex,
+    const ayt::math::Float4x4& actorWorld,
+    const ayt::math::Float4x4& socketLocal,
+    ayt::math::Float4x4& out) const
+{
+    auto finiteMatrix = [](const ayt::math::Float4x4& matrix) {
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                if (!std::isfinite(matrix(row, col))) return false;
+        return true;
+    };
+    if (boneIndex >= _world.size() || !finiteMatrix(actorWorld)
+        || !finiteMatrix(socketLocal) || !finiteMatrix(_world[boneIndex]))
+        return false;
+    const auto candidate = actorWorld * _world[boneIndex] * socketLocal;
+    if (!finiteMatrix(candidate)) return false;
+    out = candidate;
+    return true;
 }
 
 void AnimationPlayer::resolveRootMotionTrack()
@@ -500,6 +580,7 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
     _tracks.clear();
     if (anim == nullptr) {
         resolveRootMotionTrack();
+        resolveRootRotationTrack();
         return;
     }
 
@@ -589,6 +670,7 @@ void AnimationPlayer::play(const ayt::resource::IAnimation* anim)
         _tracks.push_back(std::move(slice));
     }
     resolveRootMotionTrack();
+    resolveRootRotationTrack();
 
     // P1.3 / P1.5 — state machine contract: play() keeps the additive
     // layers persistent. Swapping the base clip does NOT touch any
@@ -607,6 +689,9 @@ void AnimationPlayer::stop()
     _rootMotionPending = {0.0f, 0.0f, 0.0f};
     _rootMotionTrack = -1;
     _rootMotionBone = -1;
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
+    _rootRotationTrack = -1;
+    _rootRotationBone = -1;
 
     // P1.5 — stop() disposes ALL slots. State machine contract: stop
     // is "playback halted + sources unbound". Each slot's clip is nulled
@@ -683,6 +768,7 @@ void AnimationPlayer::setTime(float t)
     _notifyStartPending = false;
     _pendingNotifies.clear();
     _rootMotionPending = {0.0f, 0.0f, 0.0f};
+    _rootRotationPending = {0.0f, 0.0f, 0.0f, 1.0f};
 
     // P1.5 — multi-slot seek loop. Each slot jumps independently per
     // its loop flag, clears its pending notify queue, and resets its
@@ -797,6 +883,39 @@ void AnimationPlayer::tick(float dt)
             _rootMotionPending = {static_cast<float>(pendingX),
                                   static_cast<float>(pendingY),
                                   static_cast<float>(pendingZ)};
+        }
+    }
+
+    if (_rootRotationTrack >= 0 && d > 0.0f && travel != 0.0f) {
+        const double cyclesDouble = _loop
+            ? std::floor((static_cast<double>(prev) + travel) / d) : 0.0;
+        if (std::isfinite(cyclesDouble) && std::abs(cyclesDouble) <= 9007199254740991.0) {
+            auto before = sampleRootRotation(prev);
+            auto after = sampleRootRotation(_time);
+            auto start = sampleRootRotation(0.0f);
+            auto end = sampleRootRotation(d);
+            const auto valid = [](const ayt::math::FQuaternion& q) {
+                return std::isfinite(q.x) && std::isfinite(q.y)
+                    && std::isfinite(q.z) && std::isfinite(q.w)
+                    && std::isfinite(q.length()) && q.length() > 1e-6f;
+            };
+            if (valid(before) && valid(after) && valid(start) && valid(end)
+                && valid(_rootRotationPending)) {
+                before = before.normalize(); after = after.normalize();
+                start = start.normalize(); end = end.normalize();
+                auto cycle = end * start.inverse();
+                auto count = static_cast<std::uint64_t>(std::abs(cyclesDouble));
+                if (cyclesDouble < 0) cycle = cycle.inverse();
+                ayt::math::FQuaternion total(0.0f, 0.0f, 0.0f, 1.0f);
+                while (count) {
+                    if (count & 1u) total = (total * cycle).normalize();
+                    count >>= 1u;
+                    if (count) cycle = (cycle * cycle).normalize();
+                }
+                const auto delta = total * after * before.inverse();
+                const auto pending = delta * _rootRotationPending;
+                if (valid(pending)) _rootRotationPending = pending.normalize();
+            }
         }
     }
 
@@ -1321,6 +1440,14 @@ void AnimationPlayer::evaluate()
             _localPos[p + 1] -= now.y - start.y;
             _localPos[p + 2] -= now.z - start.z;
         }
+    }
+    if (_rootRotationTrack >= 0 && _rootRotationBone >= 0) {
+        const auto start = sampleRootRotation(0.0f);
+        const size_t p = static_cast<size_t>(_rootRotationBone) * 4;
+        _localRot[p] = start.x;
+        _localRot[p + 1] = start.y;
+        _localRot[p + 2] = start.z;
+        _localRot[p + 3] = start.w;
     }
 
     // INV-7 — capture post-Phase-1a base for every ref-pose slot.

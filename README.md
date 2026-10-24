@@ -16,7 +16,7 @@ AYAnimation 是角色和骨骼动画运行时，提供动画播放、混合空�
 
 统一条件见 [AYHumanoid 标准骨架与参考模型规范](../../AYDocs/AYHUMANOID-STANDARD.md)，制作见 [low poly 实施计划](../../AYDocs/AYHUMANOID-IMPLEMENTATION-PLAN.md)。通用语义允许可选骨缺失；计划中的仓库参考资产使用完整 57 个角色，并冻结具体绑定数据。
 
-当前已实现显式映射和 15 个必需角色的语义祖先校验，默认映射为空；标准参考资产生成、MMD/Mixamo 内置映射、自动猜测映射仍未交付。根运动仅支持基础 Clip 的根骨平移提取，旋转、多层混合与角色物理提交由宿主处理。实现不变量与测试历史见 [design.md](design.md) §7。
+当前已实现显式映射和 15 个必需角色的语义祖先校验，默认映射为空；标准参考资产生成、MMD/Mixamo 内置映射、自动猜测映射仍未交付。根运动可从基础 Clip 的根骨覆盖轨道分别提取平移和旋转；`socketWorldTransform` 用最近一次评估的骨骼姿态与角色变换组合挂点。多层混合不产生权威根运动，旋转及平移向角色物理的提交由宿主处理。实现不变量与测试历史见 [design.md](design.md) §7。
 
 `AnimationPlayer::setRootMotionBone("Root")` 选择基础 Clip 中唯一的根骨 Override position 轨道。每次固定步 `tick(dt)` 后通过 `consumeRootMotionTranslation()` 取得自上次读取起的本地位移；`evaluate()` 将基础 Clip 的位移从姿态根骨扣除，避免宿主应用后双重移动。播放切换、跳转、停止及骨架重绑清空未读位移；循环跨越和倒放计算实际走过的距离。无轨道、非根骨及重复轨道会拒绝提取。宿主将本地位移转到世界坐标并通过角色碰撞提交，权威位置来自物理步完成后的控制器状态。
 

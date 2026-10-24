@@ -723,6 +723,17 @@ public:
     /// stop, seek, and source rebind clear the accumulator without moving.
     ayt::math::FVector3 consumeRootMotionTranslation();
 
+    /// Select an Override quaternion track on a skeleton root. On each tick
+    /// its relative rotation is accumulated for the host to apply to the
+    /// actor, while evaluate() keeps the visual root at its clip-start pose.
+    /// The host owns collision/body rotation and may decline the delta.
+    bool setRootRotationBone(const char* boneName);
+    void clearRootRotationBone();
+    bool hasRootRotationTrack() const { return _rootRotationTrack >= 0; }
+    /// Drain rotation accumulated since the previous consume. Source changes,
+    /// stop and seek reset the pending delta to identity.
+    ayt::math::FQuaternion consumeRootMotionRotation();
+
     /// Advances finite time; Notify excludes the previous boundary (initial
     /// play includes its start). Seek fires none. Reverse/long loop ticks
     /// deliver each crossed marker at most once per tick, not once per cycle.
@@ -736,6 +747,15 @@ public:
     const ayt::math::Float4x4* getBoneWorldMatrices() const { return _world.data(); }
     const ayt::math::Float4x4* getBoneSkinMatrices()  const { return _skin.data();  }
     size_t                     getBoneCount()         const { return _world.size(); }
+
+    /// Compose a socket from the last evaluated bone pose, the actor's world
+    /// transform and a socket-local offset. Cache a validated bone index from
+    /// the bound skeleton; call evaluate() before reading this frame's pose.
+    /// Invalid index or non-finite matrices leave out unchanged.
+    bool socketWorldTransform(size_t boneIndex,
+        const ayt::math::Float4x4& actorWorld,
+        const ayt::math::Float4x4& socketLocal,
+        ayt::math::Float4x4& out) const;
 
     // === Float curve sink ===
     // Replace the sink. Pass an empty std::function to disable.
@@ -792,6 +812,8 @@ private:
     void invalidateBoneIndexCache();
     void resolveBoneIdxOnce(TrackSlice& slice);
     void resolveRootMotionTrack();
+    void resolveRootRotationTrack();
+    ayt::math::FQuaternion sampleRootRotation(float time) const;
     ayt::math::FVector3 sampleRootMotion(float time) const;
 
     // P1.5 — Multi-source stack helpers.
@@ -941,6 +963,10 @@ private:
     int32_t _rootMotionTrack = -1;
     int32_t _rootMotionBone = -1;
     ayt::math::FVector3 _rootMotionPending{0.0f, 0.0f, 0.0f};
+    std::string _rootRotationBoneName;
+    int32_t _rootRotationTrack = -1;
+    int32_t _rootRotationBone = -1;
+    ayt::math::FQuaternion _rootRotationPending{0.0f, 0.0f, 0.0f, 1.0f};
 
     FloatCurveSink _floatSink;
 

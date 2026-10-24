@@ -126,6 +126,18 @@ AnimTrack makeFloatWeightTrack()
 // here) and AYMath doesn't ship one, so we define it locally.
 static const float kPi = 3.14159265358979f;
 
+AnimTrack makeRootRotationTrack()
+{
+    AnimTrack track;
+    track.nodeName = "Root";
+    track.property = "rotation";
+    track.valueType = AnimTrackType::Quaternion;
+    track.times = {0.0f, 30.0f};
+    const auto end = FQuaternion::fromAxisAngle(FVector3(0, 1, 0), kPi * 0.5f);
+    track.values = {0, 0, 0, 1, end.x, end.y, end.z, end.w};
+    return track;
+}
+
 // P1.4 — Additive ramp clip builder. Mirrors `makeRootPosTrack()` above
 // but uses the Additive blendMode so a host can choose any blendWeight ∈
 // [0, 1] to scale the delta. The track has two keys: at t=0 the value is
@@ -208,6 +220,16 @@ TEST_SUITE(AnimationPlayerTests)
         CHECK_FLOAT_EQ(childT.x, 5.0f, 1e-4f);
         CHECK_FLOAT_EQ(childT.y, 0.0f, 1e-4f);
         CHECK_FLOAT_EQ(childT.z, 0.0f, 1e-4f);
+
+        const Float4x4 actor = Float4x4::translation(FVector3(10, 0, 0));
+        const Float4x4 grip = Float4x4::translation(FVector3(1, 0, 0));
+        Float4x4 socket = Float4x4::identity();
+        CHECK(player.socketWorldTransform(1, actor, grip, socket));
+        CHECK_FLOAT_EQ(socket.transformPoint(FVector3(0, 0, 0)).x, 16.0f, 1e-4f);
+        const auto before = socket;
+        CHECK(!player.socketWorldTransform(99, actor, grip, socket));
+        CHECK_FLOAT_EQ(socket.transformPoint(FVector3(0, 0, 0)).x,
+                       before.transformPoint(FVector3(0, 0, 0)).x, 1e-4f);
     }
 
     TEST_CASE(parent_child_world_composition) {
@@ -3193,6 +3215,50 @@ TEST_SUITE(AnimationPlayerTests)
         player.resume();
         player.setTime(0.75f);
         CHECK_FLOAT_EQ(player.consumeRootMotionTranslation().x, 0.0f, 1e-4f);
+    }
+
+    TEST_CASE(root_rotation_extracts_loop_delta_and_keeps_visual_root_in_place) {
+        Animation clip;
+        clip.setTicksPerSecond(30.0f);
+        clip.setDuration(1.0f);
+        clip.addTrack(makeRootRotationTrack());
+        AnimationPlayer player;
+        player.setSkeleton(makeTwoBoneSkeletonShared());
+        player.play(&clip);
+        CHECK(player.setRootRotationBone("Root"));
+        CHECK(!player.setRootRotationBone("Child"));
+        CHECK(player.setRootRotationBone("Root"));
+        player.tick(0.5f);
+        player.evaluate();
+        const auto rootForward = player.getBoneWorldMatrices()[0].transformPoint({1,0,0});
+        CHECK_FLOAT_EQ(rootForward.x, 1.0f, 1e-4f);
+        CHECK_FLOAT_EQ(rootForward.z, 0.0f, 1e-4f);
+        const auto first = player.consumeRootMotionRotation();
+        CHECK_FLOAT_EQ(first.w, std::cos(kPi / 8), 1e-4f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionRotation().w, 1.0f, 1e-4f);
+        player.tick(0.5f);
+        const auto second = player.consumeRootMotionRotation();
+        CHECK_FLOAT_EQ(second.w, std::cos(kPi / 8), 1e-4f);
+        player.tick(0.5f);
+        const auto wrapped = player.consumeRootMotionRotation();
+        CHECK_FLOAT_EQ(wrapped.w, std::cos(kPi / 8), 1e-4f);
+        player.setTime(0.25f);
+        CHECK_FLOAT_EQ(player.consumeRootMotionRotation().w, 1.0f, 1e-4f);
+        player.setTime(0.75f);
+        player.setPlayRate(-1.0f);
+        player.tick(0.5f);
+        const auto reverse = player.consumeRootMotionRotation();
+        CHECK_FLOAT_EQ(reverse.w, std::cos(kPi / 8), 1e-4f);
+        CHECK_FLOAT_EQ(reverse.y, -std::sin(kPi / 8), 1e-4f);
+        player.play(&clip);
+        player.setPlayRate(1.0f);
+        player.tick(2.25f);
+        const auto repeated = player.consumeRootMotionRotation();
+        const auto expected = FQuaternion::fromAxisAngle(
+            FVector3(0, 1, 0), 2.25f * kPi * 0.5f);
+        CHECK_FLOAT_EQ(std::abs(repeated.dot(expected)), 1.0f, 1e-4f);
+        player.stop();
+        CHECK(!player.hasRootRotationTrack());
     }
 
     TEST_CASE(root_motion_wrap_reverse_clamp_and_rebind) {
